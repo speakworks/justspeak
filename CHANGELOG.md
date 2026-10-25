@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Initial repository scaffold and project documentation.
+- Added the technical research and decision documents for the v0.1 plan. Technical research
+  and decisions are indexed in [docs/TECH-DECISIONS.md](docs/TECH-DECISIONS.md).
 
 ## [0.1.0] - TBD
 

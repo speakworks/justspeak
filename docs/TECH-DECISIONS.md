@@ -42,6 +42,8 @@ accepted as a design baseline for v0.1, not shipped behavior.
   repository with an internal `core` boundary; split criteria for v0.2.
 - [ADR-0002: Technology stack](ADR-0002-tech-stack.md) — Electron/TypeScript stack and
   native-helper approach.
+- [ADR-0003: Replaceable provider boundaries](ADR-0003-provider-boundaries.md) — ASR,
+  capture, injection, and hotkey adapters behind stable interfaces.
 - [ARCHITECTURE: v0.1 architecture](ARCHITECTURE.md) — process model, data flow, trust
   boundaries, failure handling.
 - [ASR-RESEARCH: ASR strategy](ASR-RESEARCH.md) — local-first model/runtime options,
@@ -70,22 +72,23 @@ accepted as a design baseline for v0.1, not shipped behavior.
 | Decision | Status | Document | One-line rationale | Open question |
 |---|---|---|---|---|
 | Core boundary and single-repository strategy: one repo with an internal `core`; app → core dependency rule; split only when a trigger is met | Accepted | [ADR-0001](ADR-0001-core-boundary.md) | Avoids premature packaging while keeping a future split a refactor rather than a rewrite | When to extract `packages/core` or a separate SpeakPilot repository (v0.2); concrete layout once the stack is fixed |
-| Desktop stack: Electron 45 + TypeScript + React 19 + electron-vite 6 + Swift helper | Accepted | [ADR-0002](ADR-0002-tech-stack.md) | TypeScript velocity plus an out-of-process native helper for OS I/O, with a Windows-later path | Audio capture owner (#1 below); minimum macOS version; bundle/memory budget; overlay strategy; storage choice; Electron upgrade policy; telemetry scope |
-| Process model and trust boundaries: sandboxed renderer, narrow preload, orchestrating main process, framework-neutral core, OS-only helper | Accepted | [ARCHITECTURE](ARCHITECTURE.md) | Enforceable boundaries keep product logic testable and OS capabilities out of the renderer | Capture ownership (#1); injection order (#2); per-app injection compatibility |
-| Local-first ASR with optional cloud BYOK adapters | Pending benchmark | [ASR-RESEARCH](ASR-RESEARCH.md) | On-device default preserves privacy and offline use; cloud is an explicit escape hatch, never a silent fallback | Model/runtime lock; benchmark gates (CER/WER, latency, memory, cold start); cloud provider terms |
-| Default ASR prior: SenseVoice Small int8 ONNX via sherpa-onnx, Whisper small/medium fallback | Pending benchmark | [ASR-RESEARCH](ASR-RESEARCH.md) | Best expected Chinese/mixed-language quality per latency and disk without a GPU, with a comparable fallback | Benchmark not run; SenseVoice license/attribution; Whisper fallback selection; WhisperKit kept as candidate only |
+| Desktop stack: Electron 45 + TypeScript + React 19 + electron-vite 6 + Swift helper | Accepted | [ADR-0002](ADR-0002-tech-stack.md) | TypeScript velocity plus an out-of-process native helper for OS I/O, with a Windows-later path | Renderer-first capture baseline (#1 resolved); minimum macOS version; bundle/memory budget; overlay strategy; storage choice; Electron upgrade policy; telemetry scope |
+| Process model and trust boundaries: sandboxed renderer, narrow preload, orchestrating main process, framework-neutral core, OS-only helper | Accepted | [ARCHITECTURE](ARCHITECTURE.md) | Enforceable boundaries keep product logic testable and OS capabilities out of the renderer | Per-app injection compatibility; architecture amendments for renderer-first and clipboard-first (#1/#2 resolved) |
+| Local-first ASR with optional cloud BYOK adapters | Accepted | [ASR-RESEARCH](ASR-RESEARCH.md) | On-device default preserves privacy and offline use; cloud is an explicit escape hatch, never a silent fallback | Model/runtime lock; benchmark gates (CER/WER, latency, memory, cold start); cloud provider terms |
+| Default ASR prior: Qwen3-ASR 0.6B Q8_0 via transcribe.cpp; SenseVoice Small lightweight tier; Whisper small/medium fallback | Pending benchmark | [ASR-RESEARCH](ASR-RESEARCH.md) | Best same-pipeline Chinese/Cantonese quality with a permissive Apache-2.0 default; SenseVoice is smaller/faster but needs FunASR legal review | Final model/quant lock; SenseVoice license/attribution; Whisper fallback selection; Parakeet English-only |
+| Replaceable provider boundaries: `AsrProvider`, `CaptureSource`, `InjectionStrategy`, `HotkeySource` | Accepted | [ADR-0003](ADR-0003-provider-boundaries.md) | Model/runtime/platform swaps become adapter changes instead of UI/core rewrites | IPC transport; process ownership; streaming interface; model-registry signing |
 | Final-only transcripts; no live partials in v0.1 | Accepted | [ASR-RESEARCH](ASR-RESEARCH.md), [AUDIO-PIPELINE](AUDIO-PIPELINE.md) | Simplifies the provider contract and avoids hiding latency behind optimistic partials | Live partial transcripts deferred; whether v0.2 adds them (#6) |
-| Audio pipeline: renderer Web Audio capture + AudioWorklet, Silero VAD, final-only local ASR | Accepted (capture path); VAD/chunk parameters pending spike | [AUDIO-PIPELINE](AUDIO-PIPELINE.md) | One TypeScript audio stack and low stop latency; helper-side capture remains comparator and fallback | Capture ownership conflict (#1); VAD model/thresholds, chunk size, resampler placement, audio spike gates |
-| Hotkeys and injection: Electron `globalShortcut` toggle; clipboard + `Cmd+V` default; Accessibility insert later opt-in | Accepted | [TEXT-INJECTION-HOTKEYS](TEXT-INJECTION-HOTKEYS.md) | Predictable cross-app injection with secure-field safeguards and a copy-only fallback | Injection order conflict (#2); default shortcut conflict sweep; app compatibility matrix; timing of AX opt-in |
+| Audio pipeline: renderer Web Audio capture + AudioWorklet, Silero VAD optional, final-only local ASR, `CaptureSource` fallback to Swift `AVAudioEngine` | Accepted (renderer-first; VAD/chunk parameters pending spike) | [AUDIO-PIPELINE](AUDIO-PIPELINE.md), [ADR-0003](ADR-0003-provider-boundaries.md) | One TypeScript audio stack and low stop latency; helper-side capture remains comparator and fallback behind the same interface | VAD model/thresholds, chunk size, resampler placement, audio spike gates; ARCHITECTURE/ADR-0002 amendment |
+| Hotkeys and injection: Electron `globalShortcut` toggle; clipboard + `Cmd+V` default; Accessibility insert later opt-in | Accepted (clipboard-first; AX later) | [TEXT-INJECTION-HOTKEYS](TEXT-INJECTION-HOTKEYS.md), [ADR-0003](ADR-0003-provider-boundaries.md) | Predictable cross-app injection with secure-field safeguards and a copy-only fallback | Default shortcut conflict sweep; app compatibility matrix; timing of AX opt-in; ARCHITECTURE step 6 amendment |
 | Post-processing: rule-based baseline on by default + opt-in BYOK cloud LLM + mandatory deterministic validator | Accepted (baseline); provider/model pending benchmark | [LLM-POSTPROCESSING](LLM-POSTPROCESSING.md) | Improves cleanup quality without breaking local-first or privacy; validator prevents bad rewrites | Provider/model choice; prompt text and guard thresholds; tone-by-app defaults; local LLM deferred |
 | Privacy/security baseline: minimal context, local-first, no retention or telemetry by default, direct distribution | Accepted | [PRIVACY-SECURITY](PRIVACY-SECURITY.md) | Least-data collection satisfies the privacy promise while keeping dictation useful | Telemetry/crash provider; encryption at rest; surrounding-text caps; consent copy review |
-| Packaging/release: electron-vite + electron-builder, Developer ID signing + notarization, DMG + ZIP, electron-updater via GitHub Releases, first-run model download | Proposed | [PACKAGING-RELEASE](PACKAGING-RELEASE.md) | Direct distribution is the only v0.1-compatible path; free CI plus a local fallback fits a solo maintainer | Signing/notarization spike; update feed operations; model download and offline pack; notices filename (#4) |
-| Windows port: reuse Electron and `src/core`; C#/.NET helper leading candidate; WASAPI helper capture; clipboard + `Ctrl+V`; NSIS + Authenticode | Proposed | [WINDOWS-PORT](WINDOWS-PORT.md) | Maximum reuse with a reversible helper-language decision and renderer capture as fallback | Helper language pending spike; audio path conflict (#1); Windows 10 best-effort scope; signing identity |
-| Testing/CI: Vitest, Playwright Electron E2E, pnpm frozen lockfile, GitHub Actions macOS arm64, ASR benchmark harness | Proposed | [TESTING-STRATEGY](TESTING-STRATEGY.md) | Fake-first tests and required CI gates catch boundary regressions before OS-level manual checks | Package manager conflict (#3); Playwright Electron support is experimental; performance ceilings still unmeasured |
-| v0.2 SpeakPilot: reuse Electron + Swift helper with hardening; `src/agent`, isolated planner, brokered tools | Proposed | [V0.2-SPEAKPILOT](V0.2-SPEAKPILOT.md) | Reuses the shipped shell/core while isolating privileged planning and actions behind policy and confirmation | Capabilities not frozen; v0.1 entry gate; repository split trigger; permission and audit details |
-| Licensing and compliance: MIT project plus per-dependency/model license matrix and legal review before commercial release | Open | [LICENSING](LICENSING.md) | Application dependencies are largely MIT-compatible, but model-weight terms vary and require attribution and legal review | Legal review pending; SenseVoice/Parakeet/Vosk adoption; notices filename (#4); model-license nuance (#5) |
+| Packaging/release: electron-vite + electron-builder, Developer ID signing + notarization, DMG + ZIP, electron-updater via GitHub Releases, first-run model download | Accepted | [PACKAGING-RELEASE](PACKAGING-RELEASE.md) | Direct distribution is the only v0.1-compatible path; free CI plus a local fallback fits a solo maintainer | Signing/notarization spike; update feed operations; model download and offline pack; notices filename migration (#4 resolved) |
+| Windows port: reuse Electron and `src/core`; C#/.NET helper leading candidate; WASAPI helper capture; clipboard + `Ctrl+V`; NSIS + Authenticode | Accepted (strategy; helper language pending spike) | [WINDOWS-PORT](WINDOWS-PORT.md) | Maximum reuse with a reversible helper-language decision and renderer capture as fallback | Helper language pending spike; cross-platform capture amendment (#1 resolved); Windows 10 best-effort scope; signing identity |
+| Testing/CI: Vitest, Playwright Electron E2E, pnpm frozen lockfile, GitHub Actions macOS arm64, ASR benchmark harness | Accepted | [TESTING-STRATEGY](TESTING-STRATEGY.md) | Fake-first tests and required CI gates catch boundary regressions before OS-level manual checks | Packaging doc npm-to-pnpm migration (#3 resolved); Playwright Electron support is experimental; performance ceilings still unmeasured |
+| v0.2 SpeakPilot: reuse Electron + Swift helper with hardening; `src/agent`, isolated planner, brokered tools | Accepted (plan; performance gates) | [V0.2-SPEAKPILOT](V0.2-SPEAKPILOT.md) | Reuses the shipped shell/core while isolating privileged planning and actions behind policy and confirmation | Capabilities not frozen; v0.1 entry gate; repository split trigger; permission and audit details; native action service if hot path demands |
+| Licensing and compliance: MIT project plus per-dependency/model license matrix and legal review before commercial release | Accepted (design; legal review open) | [LICENSING](LICENSING.md) | Application dependencies are largely MIT-compatible, but model-weight terms vary and require attribution and legal review | Legal review pending; SenseVoice/Parakeet/Vosk adoption; notices filename migration (#4 resolved); model-license nuance (#5) |
 
-Status roll-up: 8 Accepted, 2 Pending benchmark, 4 Proposed, 1 Open (15 decisions).
+Status roll-up: 15 Accepted, 1 Pending benchmark, 0 Proposed, 0 Open (16 decisions).
 Mixed-status rows are counted by their leading status.
 
 ## Open cross-document decisions
@@ -94,60 +97,51 @@ These are known inconsistencies between the source documents. They are recorded 
 open questions and are **not** edited in the source docs by this index. Each needs a
 follow-up documentation change, and some need a spike or legal review before a decision.
 
-### 1. Capture ownership
+### 1. Capture ownership — resolved (design)
 
-- [AUDIO-PIPELINE](AUDIO-PIPELINE.md) selects renderer Web Audio capture
-  (`getUserMedia` → `AudioContext` → `AudioWorklet`) for v0.1 and explicitly records this
-  as a deviation from the accepted architecture.
-- [ARCHITECTURE](ARCHITECTURE.md) assigns microphone capture (`AVAudioEngine`) to the Swift
-  helper. [ADR-0002](ADR-0002-tech-stack.md) open question 2 recommends the helper and
-  defers validation to a latency spike. [WINDOWS-PORT](WINDOWS-PORT.md) recommends
-  helper-side WASAPI capture with renderer Web Audio as fallback.
-- Question: which component owns capture in v0.1, and which path is the documented
-  fallback? Resolve with the audio spike, then amend ARCHITECTURE/ADR-0002 or
-  AUDIO-PIPELINE so the baseline is unambiguous.
+- Accepted: renderer Web Audio/AudioWorklet is the v0.1 default; Swift `AVAudioEngine` is
+  the fallback behind `CaptureSource` ([ADR-0003](ADR-0003-provider-boundaries.md)).
+- Windows later uses WASAPI helper capture with renderer Web Audio fallback; the
+  cross-platform difference is accepted as an architecture amendment item.
+- Remaining: the audio spike measures renderer p95; amend ARCHITECTURE/ADR-0002 to match
+  the accepted renderer-first baseline.
 
-### 2. Injection order
+### 2. Injection order — resolved (design)
 
-- [TEXT-INJECTION-HOTKEYS](TEXT-INJECTION-HOTKEYS.md) ships clipboard + `Cmd+V` as the
-  v0.1 default and defers Accessibility (`axInsert`) to a later opt-in mode for
-  whitelisted apps.
-- [ARCHITECTURE](ARCHITECTURE.md) step 6 describes Accessibility insertion at the focused
-  range first, then clipboard + synthesized paste as the fallback.
-- Question: is the default Accessibility-first or clipboard-first, and in what order do
-  fallbacks run? Define the per-app compatibility rules and the failure behavior before
-  implementation.
+- Accepted: clipboard + `Cmd+V` is the v0.1 default; Accessibility direct insertion is a
+  later opt-in behind `InjectionStrategy`; CGEvent typing is a per-app fallback.
+- Remaining: per-app compatibility matrix, secure-input/terminal behavior, and the
+  ARCHITECTURE step 6 amendment to clipboard-first + AX upgrade.
 
-### 3. Package manager
+### 3. Package manager — resolved (design)
 
-- [TESTING-STRATEGY](TESTING-STRATEGY.md) freezes pnpm, pinned through Corepack, and uses
-  `pnpm install --frozen-lockfile`.
-- [PACKAGING-RELEASE](PACKAGING-RELEASE.md) release steps use `npm ci`.
-- Question: pick one package manager and one lockfile policy, then update the other
-  document before the scaffold. This is recorded in both docs as a known inconsistency.
+- Accepted: pnpm with a frozen lockfile, pinned through Corepack
+  ([TESTING-STRATEGY](TESTING-STRATEGY.md)).
+- Remaining: update `PACKAGING-RELEASE.md` release steps from `npm ci` to pnpm before the
+  scaffold.
 
-### 4. Third-party notices filename
+### 4. Third-party notices filename — resolved (design)
 
-- [LICENSING](LICENSING.md) proposes `THIRD_PARTY_NOTICES.md` as the canonical notices path.
-- [PACKAGING-RELEASE](PACKAGING-RELEASE.md) references `THIRD-PARTY-NOTICES` in the shipped
-  app.
-- Question: what is the canonical filename and extension, where does it live in the
-  package, and how is it linked from the About window?
+- Accepted: `THIRD_PARTY_NOTICES.md` at the repository root
+  ([LICENSING](LICENSING.md)).
+- Remaining: update `PACKAGING-RELEASE.md` and the packaged app/About-window links from
+  `THIRD-PARTY-NOTICES` to the canonical name.
 
-### 5. License nuance
+### 5. License nuance — accepted with legal gate
 
-- SenseVoice weights are under the FunASR Model Open Source License, not MIT.
-- Parakeet weights are CC-BY-4.0 if Parakeet is adopted.
-- Moonshine legacy non-English models are non-commercial and are excluded.
-- Vosk model licenses are unverified.
-- Legal review is pending. Nothing in [LICENSING](LICENSING.md) or this index is a legal
-  conclusion.
-- Question: which obligations are acceptable, and which models may ship in v0.1 or in an
-  optional offline pack? Counsel should confirm redistribution and attribution wording.
+- Qwen3-ASR 0.6B is Apache-2.0 and the quality default.
+- SenseVoice Small weights are under the FunASR Model Open Source License, not MIT; it is
+  the lightweight tier and requires legal review.
+- Parakeet weights are CC-BY-4.0 if adopted; Moonshine legacy non-English models are
+  non-commercial and excluded; Vosk model licenses are per-model.
+- Nothing in [LICENSING](LICENSING.md) or this index is a legal conclusion. Legal review
+  remains a release gate; no model ships without cleared terms.
 
 ### 6. Pending decisions
 
-- ASR benchmark and model/runtime lock ([ASR-RESEARCH](ASR-RESEARCH.md)).
+- Final ASR model/quantization lock after the benchmark ([ASR-RESEARCH](ASR-RESEARCH.md)).
+- Provider-boundary implementation: adapters, model registry, contract tests
+  ([ADR-0003](ADR-0003-provider-boundaries.md)).
 - Packaging, signing, notarization, and the update feed ([PACKAGING-RELEASE](PACKAGING-RELEASE.md)).
 - Windows helper language after the spike ([WINDOWS-PORT](WINDOWS-PORT.md)).
 - v0.2 capabilities and the v0.1 entry gate ([V0.2-SPEAKPILOT](V0.2-SPEAKPILOT.md)).

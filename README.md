@@ -37,6 +37,7 @@ The v0.1 technical plan is documented under `docs/`. Start with the
 questions for each decision.
 
 - [Technology stack ADR](docs/ADR-0002-tech-stack.md)
+- [Provider boundaries ADR](docs/ADR-0003-provider-boundaries.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [ASR research](docs/ASR-RESEARCH.md)
 - [Audio pipeline](docs/AUDIO-PIPELINE.md)

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial repository scaffold and project documentation.
 - Added the technical research and decision documents for the v0.1 plan. Technical research
   and decisions are indexed in [docs/TECH-DECISIONS.md](docs/TECH-DECISIONS.md).
+- Added ADR-0003 provider boundaries and refreshed the decision index to reflect the
+  accepted v0.1 choices.
 
 ## [0.1.0] - TBD
 

@@ -30,6 +30,26 @@ See [docs/ROADMAP.md](docs/ROADMAP.md).
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 
+## Technical plan
+
+The v0.1 technical plan is documented under `docs/`. Start with the
+[technical decisions index](docs/TECH-DECISIONS.md), which records the status and open
+questions for each decision.
+
+- [Technology stack ADR](docs/ADR-0002-tech-stack.md)
+- [Provider boundaries ADR](docs/ADR-0003-provider-boundaries.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [ASR research](docs/ASR-RESEARCH.md)
+- [Audio pipeline](docs/AUDIO-PIPELINE.md)
+- [Text injection and hotkeys](docs/TEXT-INJECTION-HOTKEYS.md)
+- [LLM post-processing](docs/LLM-POSTPROCESSING.md)
+- [Privacy and security](docs/PRIVACY-SECURITY.md)
+- [Packaging and release](docs/PACKAGING-RELEASE.md)
+- [Windows port](docs/WINDOWS-PORT.md)
+- [Testing strategy](docs/TESTING-STRATEGY.md)
+- [v0.2 SpeakPilot plan](docs/V0.2-SPEAKPILOT.md)
+- [Licensing and compliance](docs/LICENSING.md)
+
 ## Disclaimer
 
 JustSpeak is an independent open-source project. It is **not affiliated with** JustSpeak AI Tutor, justspeaktoit, justspeak.io, or SpeakWorks, Inc. Any similarity in name is coincidental; these projects and companies are separate.

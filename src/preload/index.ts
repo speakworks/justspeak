@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AppState,
+  AppStatus,
   JustSpeakApi,
   RecordingCommand,
   RecordingSummary,
@@ -9,7 +10,8 @@ import type {
 
 const api: JustSpeakApi = {
   toggleRecording: () => ipcRenderer.send('recording:toggle'),
-  getState: () => ipcRenderer.invoke('state:get') as Promise<AppState>,
+  getState: () => ipcRenderer.invoke('state:get') as Promise<AppStatus>,
+  sendRendererReady: () => ipcRenderer.send('renderer:ready'),
   sendCaptureStarted: (atMs: number) => ipcRenderer.send('capture:started', atMs),
   sendCaptureStopped: (summary: RecordingSummary) => ipcRenderer.send('capture:stopped', summary),
   sendCaptureFailed: (message: string) => ipcRenderer.send('capture:failed', message),

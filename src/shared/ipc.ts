@@ -4,9 +4,14 @@ export type RecordingCommand = 'start' | 'stop'
 
 export interface RecordingSummary {
   durationMs: number
-  frames: number
+  samples: number
   sampleRate: number
   rms: number
+}
+
+export interface AppStatus {
+  state: AppState
+  message?: string
 }
 
 export interface TranscriptEvent {
@@ -18,7 +23,8 @@ export interface TranscriptEvent {
 
 export interface JustSpeakApi {
   toggleRecording: () => void
-  getState: () => Promise<AppState>
+  getState: () => Promise<AppStatus>
+  sendRendererReady: () => void
   sendCaptureStarted: (atMs: number) => void
   sendCaptureStopped: (summary: RecordingSummary) => void
   sendCaptureFailed: (message: string) => void

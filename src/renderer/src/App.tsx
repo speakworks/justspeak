@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppState, RecordingSummary, TranscriptEvent } from '../../shared/ipc'
 
 const WORKLET_CODE = `
@@ -38,74 +38,21 @@ export function App(): React.JSX.Element {
   const nodeRef = useRef<AudioWorkletNode | null>(null)
   const gainRef = useRef<GainNode | null>(null)
   const startedAtRef = useRef(0)
-  const framesRef = useRef(0)
+  const samplesRef = useRef(0)
+  const rmsBlocksRef = useRef(0)
   const rmsSumRef = useRef(0)
+  const lastLevelAtRef = useRef(0)
+  const sessionRef = useRef(0)
+  const startingRef = useRef(false)
+  const cancelledRef = useRef(false)
 
-  const startCapture = useCallback(async (): Promise<void> => {
-    if (contextRef.current) return
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false
-      }
-    })
-    const context = new AudioContext({ sampleRate: 16000 })
-    const url = URL.createObjectURL(new Blob([WORKLET_CODE], { type: 'text/javascript' }))
-
-    try {
-      await context.audioWorklet.addModule(url)
-    } finally {
-      URL.revokeObjectURL(url)
-    }
-
-    const source = context.createMediaStreamSource(stream)
-    const node = new AudioWorkletNode(context, 'pcm-collector')
-    const gain = context.createGain()
-    gain.gain.value = 0
-
-    framesRef.current = 0
-    rmsSumRef.current = 0
-    node.port.onmessage = (event: MessageEvent<{ rms: number; samples: number }>) => {
-      framesRef.current += event.data.samples
-      rmsSumRef.current += event.data.rms
-      setLevel(event.data.rms)
-    }
-
-    source.connect(node)
-    node.connect(gain)
-    gain.connect(context.destination)
-
-    contextRef.current = context
-    streamRef.current = stream
-    sourceRef.current = source
-    nodeRef.current = node
-    gainRef.current = gain
-    startedAtRef.current = performance.now()
-    console.log('[capture] started', context.sampleRate)
-    window.justspeak.sendCaptureStarted(startedAtRef.current)
-  }, [])
-
-  const stopCapture = useCallback(async (): Promise<void> => {
+  const releaseCapture = useCallback(async (): Promise<void> => {
     const context = contextRef.current
-    if (!context) return
-
-    const durationMs = Math.round(performance.now() - startedAtRef.current)
-    const summary: RecordingSummary = {
-      durationMs,
-      frames: framesRef.current,
-      sampleRate: 16000,
-      rms: framesRef.current > 0 ? rmsSumRef.current / (framesRef.current / 160) : 0
-    }
-
     nodeRef.current?.port.close()
     nodeRef.current?.disconnect()
     sourceRef.current?.disconnect()
     gainRef.current?.disconnect()
     streamRef.current?.getTracks().forEach((track) => track.stop())
-    void context.close()
 
     contextRef.current = null
     streamRef.current = null
@@ -113,11 +60,121 @@ export function App(): React.JSX.Element {
     nodeRef.current = null
     gainRef.current = null
     setLevel(0)
-    console.log('[capture] stopped', summary)
-    window.justspeak.sendCaptureStopped(summary)
+
+    if (context && context.state !== 'closed') {
+      void context.close().catch(() => {})
+    }
   }, [])
 
+  const startCapture = useCallback(async (): Promise<void> => {
+    if (startingRef.current || contextRef.current) return
+
+    const session = sessionRef.current + 1
+    sessionRef.current = session
+    cancelledRef.current = false
+    startingRef.current = true
+
+    let stream: MediaStream | null = null
+    let context: AudioContext | null = null
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        }
+      })
+      if (cancelledRef.current || session !== sessionRef.current) {
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
+
+      context = new AudioContext({ sampleRate: 16000 })
+      const url = URL.createObjectURL(new Blob([WORKLET_CODE], { type: 'text/javascript' }))
+      try {
+        await context.audioWorklet.addModule(url)
+      } finally {
+        URL.revokeObjectURL(url)
+      }
+      if (cancelledRef.current || session !== sessionRef.current) {
+        stream.getTracks().forEach((track) => track.stop())
+        await context.close().catch(() => {})
+        return
+      }
+
+      const source = context.createMediaStreamSource(stream)
+      const node = new AudioWorkletNode(context, 'pcm-collector')
+      const gain = context.createGain()
+      gain.gain.value = 0
+
+      samplesRef.current = 0
+      rmsBlocksRef.current = 0
+      rmsSumRef.current = 0
+      lastLevelAtRef.current = 0
+      node.port.onmessage = (event: MessageEvent<{ rms: number; samples: number }>) => {
+        samplesRef.current += event.data.samples
+        rmsBlocksRef.current += 1
+        rmsSumRef.current += event.data.rms
+        const now = performance.now()
+        if (now - lastLevelAtRef.current > 50) {
+          lastLevelAtRef.current = now
+          setLevel(event.data.rms)
+        }
+      }
+
+      source.connect(node)
+      node.connect(gain)
+      gain.connect(context.destination)
+
+      contextRef.current = context
+      streamRef.current = stream
+      sourceRef.current = source
+      nodeRef.current = node
+      gainRef.current = gain
+      startedAtRef.current = performance.now()
+      console.log('[capture] started', context.sampleRate)
+      window.justspeak.sendCaptureStarted(startedAtRef.current)
+    } catch (error) {
+      stream?.getTracks().forEach((track) => track.stop())
+      if (context && context.state !== 'closed') {
+        await context.close().catch(() => {})
+      }
+      throw error
+    } finally {
+      startingRef.current = false
+    }
+  }, [])
+
+  const stopCapture = useCallback(async (): Promise<void> => {
+    if (startingRef.current) {
+      cancelledRef.current = true
+      sessionRef.current += 1
+      window.justspeak.sendCaptureFailed('录音启动被取消，请重试。')
+      return
+    }
+
+    const context = contextRef.current
+    if (!context) {
+      window.justspeak.sendCaptureFailed('没有可停止的录音，请重试。')
+      return
+    }
+
+    const summary: RecordingSummary = {
+      durationMs: Math.round(performance.now() - startedAtRef.current),
+      samples: samplesRef.current,
+      sampleRate: context.sampleRate,
+      rms: rmsBlocksRef.current > 0 ? rmsSumRef.current / rmsBlocksRef.current : 0
+    }
+
+    await releaseCapture()
+    console.log('[capture] stopped', summary)
+    window.justspeak.sendCaptureStopped(summary)
+  }, [releaseCapture])
+
   useEffect(() => {
+    let disposed = false
     const unsubState = window.justspeak.onState((next, nextMessage) => {
       setState(next)
       setMessage(nextMessage)
@@ -137,14 +194,34 @@ export function App(): React.JSX.Element {
       }
     })
 
-    void window.justspeak.getState().then(setState)
+    window.justspeak.sendRendererReady()
+
+    void window.justspeak
+      .getState()
+      .then((status) => {
+        if (disposed) return
+        setState(status.state)
+        setMessage(status.message)
+        if (status.state === 'recording') {
+          void startCapture().catch((error: unknown) => {
+            const detail = error instanceof Error ? error.message : String(error)
+            setMessage(detail)
+            window.justspeak.sendCaptureFailed(detail)
+          })
+        }
+      })
+      .catch((error: unknown) => {
+        setMessage(error instanceof Error ? error.message : String(error))
+      })
 
     return () => {
+      disposed = true
       unsubState()
       unsubTranscript()
       unsubCommand()
+      void releaseCapture()
     }
-  }, [startCapture, stopCapture])
+  }, [releaseCapture, startCapture, stopCapture])
 
   const isBusy = state === 'transcribing' || state === 'pasting'
 

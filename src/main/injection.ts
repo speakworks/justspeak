@@ -36,30 +36,35 @@ export async function pasteText(text: string): Promise<void> {
   await clipboard.writeText(text)
   await delay(60)
 
+  let pasted = false
   try {
     await execFileAsync(
       'osascript',
       ['-e', 'tell application "System Events" to keystroke "v" using command down'],
       { timeout: 3000 }
     )
+    pasted = true
     await delay(350)
-  } catch {
+  } catch (error) {
     throw new Error(
-      '粘贴失败：请在“系统设置 → 隐私与安全性 → 辅助功能”中允许 JustSpeak（开发时是 Electron）控制键盘。'
+      '粘贴失败：请在“系统设置 → 隐私与安全性 → 辅助功能”中允许 JustSpeak（开发时是 Electron）控制键盘。文本已保留在剪贴板，可手动 Cmd+V。',
+      { cause: error }
     )
   } finally {
-    const current = await clipboard.readText()
-    if (current === text) {
-      try {
-        if (previous.length > 0) await clipboard.write(previous)
-        else clipboard.clear()
-      } catch (error) {
-        console.warn('[clipboard] full restore failed; trying text fallback', error)
+    if (pasted) {
+      const current = await clipboard.readText()
+      if (current === text) {
         try {
-          if (previousText) await clipboard.writeText(previousText)
+          if (previous.length > 0) await clipboard.write(previous)
           else clipboard.clear()
-        } catch (fallbackError) {
-          console.warn('[clipboard] text fallback failed; leaving transcript', fallbackError)
+        } catch (error) {
+          console.warn('[clipboard] full restore failed; trying text fallback', error)
+          try {
+            if (previousText) await clipboard.writeText(previousText)
+            else console.warn('[clipboard] no text fallback; leaving transcript')
+          } catch (fallbackError) {
+            console.warn('[clipboard] text fallback failed; leaving transcript', fallbackError)
+          }
         }
       }
     }

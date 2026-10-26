@@ -64,6 +64,8 @@ interface TranscriptionResult {
   modelId: string;
   runtimeId: string;
   warnings: ProviderWarning[];
+  fallbackUsed?: boolean;
+  fallbackFrom?: string;
 }
 ```
 
@@ -121,14 +123,6 @@ interface InjectionStrategy {
   readonly capabilities: InjectionCapabilities;
   canInsert(target: FocusTarget): Promise<boolean>;
   insert(text: string, target: FocusTarget): Promise<InjectionResult>;
-}
-
-interface InjectionCapabilities {
-  clipboard: boolean;
-  accessibility: boolean;
-  directTyping: boolean;
-  secureInputSafe: boolean;
-  preservesClipboard: boolean;
 }
 ```
 
@@ -269,6 +263,18 @@ interface CaptureError {
   message: string;
   retryable: boolean;
 }
+
+interface CaptureCapabilities {
+  deviceSelection: boolean;
+  routeChange: boolean;
+  echoCancellation: boolean;
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+  maxBufferMs: number;
+  requiresAccessibility: boolean;
+}
+
+type Unsubscribe = () => void;
 
 interface InjectionCapabilities {
   clipboard: boolean;

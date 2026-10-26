@@ -642,7 +642,7 @@ comparable.
 | Hotkey → recording indicator visible | ≤ 100 ms | Hotkey timestamp → renderer paint timestamp | Indicator is optimistic; it does not wait for capture |
 | Stop → last PCM frame delivered to core | ≤ 80 ms | Stop timestamp → last frame timestamp | 20 ms batch + worklet flush |
 | VAD endpoint confirmation (hands-free) | 300–500 ms trailing silence | Last speech frame → VAD end timestamp | Tunable; manual stop bypasses |
-| ASR inference (10 s utterance, local) | p50 ≤ 1.2 s, p95 ≤ 2.5 s | ASR start → ASR result timestamp | SenseVoice int8 class; measure on base Apple Silicon |
+| ASR inference (10 s utterance, local) | p50 ≤ 1.2 s, p95 ≤ 2.5 s | ASR start → ASR result timestamp | Qwen3-ASR 0.6B Q8_0 class (SenseVoice lite fallback); measure on base Apple Silicon |
 | Post-processing (rule-based) | ≤ 150 ms | ASR result → post-processed text | Optional LLM polish is separate: ≤ 800 ms and opt-in |
 | **Stop → final transcript** | p50 ≤ 1.5 s, p95 ≤ 3 s | Stop timestamp → post-processed text | Architecture target; includes VAD flush, ASR, post-processing |
 | Final text → injection acknowledged | ≤ 100 ms | Injection command → helper ack | Accessibility insert; clipboard fallback may add time |

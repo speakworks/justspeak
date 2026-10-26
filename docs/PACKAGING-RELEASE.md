@@ -76,7 +76,7 @@ which matters because signing and notarization behavior changes with Xcode and m
 modules, supports `asarUnpack` for files that must remain outside the archive, and
 supports `extraResources` for the Swift helper and ASR sidecar binaries. JustSpeak's
 design deliberately keeps native code out of the Electron main process: the Swift helper
-and the sherpa-onnx sidecar are separate executables. That reduces ABI work, but those
+and the transcribe.cpp sidecar are separate executables. That reduces ABI work, but those
 executables still must be signed, hardened, and placed correctly in `Contents/MacOS` or
 `Contents/Resources`.
 
@@ -391,7 +391,7 @@ Adopt the following for JustSpeak v0.1:
    notarization, and update metadata.
 2. **Distribute directly with Developer ID Application signing, hardened runtime, and
    Apple notarization.** Sign every nested executable, including the Swift helper and the
-   sherpa-onnx sidecar. Notarize the app, staple the ticket, and verify with Gatekeeper
+   transcribe.cpp sidecar. Notarize the app, staple the ticket, and verify with Gatekeeper
    before publishing.
 3. **Ship a DMG for humans and a ZIP for auto-update.** Both contain the same signed,
    notarized app. Do not ship a PKG in v0.1.
@@ -675,9 +675,9 @@ feed change.
   architecture, file list, sizes, SHA-256 per file, license identifier, minimum app
   version, and download URL(s). The catalog is versioned with the app and is not fetched
   from an arbitrary user URL.
-- The default local model is the benchmark-selected SenseVoice int8 model through
-  sherpa-onnx, subject to the ASR benchmark gates. The catalog design must also support a
-  Whisper fallback sidecar.
+- The default local model is Qwen3-ASR 0.6B Q8_0 through transcribe.cpp; SenseVoice Small
+  is the lightweight tier and Whisper small/medium is the multilingual fallback, subject
+  to the ASR benchmark and legal gates. The catalog also supports those fallback artifacts.
 - On first use, show model name, approximate download size, disk requirement, license,
   and destination. Download only after explicit consent.
 - Download to a temporary directory, verify each file's size and SHA-256, then move the
@@ -929,7 +929,7 @@ macOS design does not paint the project into a corner.
   Swift helper. The packaging design must sign it and place it beside the app, not inside
   the asar archive.
 - **Models:** reuse the same catalog, checksums, and first-run download model. The
-  sherpa-onnx sidecar is cross-platform, so the model distribution logic should not be
+  transcribe.cpp sidecar is cross-platform, so the model distribution logic should not be
   macOS-specific.
 - **Open issue:** whether a single release process can publish both NSIS and MSIX or
   whether MSIX belongs to a separate Store pipeline. Decide in the Windows card.

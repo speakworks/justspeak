@@ -1,7 +1,7 @@
 # ASR Strategy Research for JustSpeak v0.1
 
-- Status: Accepted prior: Qwen3-ASR 0.6B through transcribe.cpp; final model/quantization
-  lock pending benchmark
+- Status: Pending benchmark (prior: Qwen3-ASR 0.6B through transcribe.cpp; final
+  model/quantization lock pending)
 - Date: 2026-10-26
 - Decision owner: FD2008
 - Scope: local, cloud, and hybrid automatic speech recognition (ASR) options for the
@@ -192,36 +192,15 @@ Adopt a **local-first default with optional cloud BYOK**, behind one provider in
   offers retry, and may switch to a provider the user explicitly configured. It must not
   send audio to a cloud provider that the user did not enable for that session.
 - **Local fallback:** if the default local model fails on a language or term set, fall back
-  to a second local model (for example SenseVoice → Whisper) before suggesting cloud.
+  to a second local model (for example Qwen3 → SenseVoice or Whisper) before suggesting
+  cloud.
 - **No live partials in v0.1:** the interface is final-only. A `streaming` capability flag
   exists for future providers, but the v0.1 UI shows recording → transcribing → done.
 
-A conceptual interface (TypeScript shape, not implementation):
-
-```ts
-type LanguageHint = 'auto' | 'zh' | 'en' | 'mixed'
-
-interface AsrProvider {
-  readonly id: string
-  readonly capabilities: {
-    languages: LanguageHint[]
-    streaming: false
-    offline: boolean
-    timestamps: boolean
-    punctuation: boolean
-  }
-  transcribe(input: {
-    pcm: Int16Array
-    sampleRate: 16000
-    language?: LanguageHint
-    modelId?: string
-  }): Promise<AsrResult>
-  cancel(): void
-}
-```
-
-`AsrResult` should carry final text, detected language (optional), provider/model ids,
-audio duration, inference time, and a typed error. The core owns VAD, endpointing, audio
+The canonical provider contract is [ADR-0003](ADR-0003-provider-boundaries.md): `prepare`,
+`transcribe`, `dispose`, `health`, `ProviderResult<TranscriptionResult>`, `AbortSignal`
+cancellation, and capability flags. Do not duplicate the interface here; ASR-RESEARCH is
+the model/runtime rationale, not a second contract. The core owns VAD, endpointing, audio
 normalization, and post-processing; providers own only inference and decode.
 
 ## Comparison

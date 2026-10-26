@@ -689,7 +689,7 @@ Adopt the following for v0.1:
 
 ## Decision Status and Pre-Launch Self-Review
 
-**Status:** Proposed. The tooling choices are recommendations to confirm at scaffold time,
+**Status:** Accepted (design baseline). The tooling choices are validated at scaffold time,
 as the frozen card requires. The test layers, privacy rules, benchmark gates, and manual
 permission checklist are the durable parts of this strategy; the exact runner versions and
 CI labels are implementation details.

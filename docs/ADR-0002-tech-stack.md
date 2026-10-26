@@ -382,7 +382,7 @@ signal only. Memory was not measured for this ADR.
 | Bundle/memory undermines the local-first positioning | Medium | Medium | Do not bundle ASR models; lazy-download; measure installer and RSS; set a numeric budget in a performance card; revisit Tauri if missed |
 | Electron/Chromium vulnerability or stale runtime | Medium | High | Stay on a supported major; sandbox renderer; no remote content; CSP; validate all IPC; track Electron security releases |
 | Swift helper crashes or is blocked by permissions | Medium | High | Small command surface; helper restart with state reset; explicit permission onboarding; clipboard-copy fallback when injection fails |
-| Local ASR runtime is awkward from TypeScript | High | High | Keep ASR behind a provider interface; run local engines in a sidecar process (whisper.cpp/sherpa-onnx) or the helper; decide in a separate card |
+| Local ASR runtime is awkward from TypeScript | High | High | Keep ASR behind a provider interface; run local engines in a sidecar process (transcribe.cpp/sherpa-onnx/whisper.cpp) or the helper; runtime selected in ASR-RESEARCH/ADR-0003 |
 | Electron 45 is new and some packaging/native tooling lags | Medium | Medium | Pin 45.x, smoke-test packaging early, keep a tested fallback to 44.x if a blocker appears |
 | Windows helper diverges from the macOS contract | Medium | Medium | Versioned contract, contract tests with a fake helper, shared fixtures; Windows helper language decided separately |
 | Solo developer context-switches between TS and Swift | Medium | Medium | Keep the helper deliberately small; document each command; avoid moving product logic into Swift |
@@ -391,8 +391,9 @@ signal only. Memory was not measured for this ADR.
 
 ## Open Questions
 
-1. **Local ASR runtime for v0.1:** whisper.cpp sidecar, sherpa-onnx, or cloud-only first?
-   Needs a separate decision card with latency/quality measurements.
+1. **Local ASR runtime for v0.1:** resolved in ASR-RESEARCH/ADR-0003 — transcribe.cpp
+   selected, with sherpa-onnx and whisper.cpp as backups; final model lock pending
+   benchmark.
 2. **Audio capture owner:** Swift helper (AVAudioEngine) versus renderer `getUserMedia`.
    This ADR recommends the helper; validate latency and permission behavior with a spike.
 3. **Minimum supported macOS version:** Electron 45 and the Swift APIs used by the helper

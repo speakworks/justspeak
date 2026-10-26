@@ -409,6 +409,7 @@ Accessed 2026-10-26. E2 = repository artifact; E3 = web or third-party official 
 | E3-19 | CC-BY-4.0 attribution terms and absence of patent/trademark grants | https://creativecommons.org/licenses/by/4.0/ |
 | E3-20 | MIT license text | https://opensource.org/license/mit |
 | E3-21 | Cloud provider commercial terms (review at integration, not line-by-line here) | https://openai.com/policies/terms-of-use ; https://deepgram.com/terms ; https://www.assemblyai.com/legal/terms-of-service ; https://www.alibabacloud.com/help/en/legal |
+| E3-22 | Qwen3-ASR 0.6B official weights are Apache-2.0; transcribe.cpp ports Qwen3-ASR | https://huggingface.co/Qwen/Qwen3-ASR-0.6B ; https://github.com/handy-computer/transcribe.cpp/blob/main/docs/models/qwen3-asr.md |
 
 ### Verification method
 

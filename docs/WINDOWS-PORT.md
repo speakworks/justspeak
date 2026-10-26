@@ -68,7 +68,7 @@ Frozen for this card:
 | Renderer | React 19 settings, overlay, onboarding, history | Same UI; copy and permission flows adapt per OS | Full with platform copy |
 | `src/core` | Audio frames, resampling, VAD, endpointing, chunking, ASR adapters, post-processing, model catalog, settings schema | Same code and tests; no `process.platform` product branches | Full |
 | Native helper | Swift: hotkey, capture, focus, injection, permissions, Keychain | C# or Rust helper implementing the same contract | New implementation, same contract |
-| ASR runtime | Local sherpa-onnx/whisper.cpp sidecar; opt-in cloud adapters | Windows binaries of the same sidecar; same model catalog | High, pending runtime packaging |
+| ASR runtime | Local transcribe.cpp sidecar (Qwen3-ASR default; SenseVoice/Whisper fallback); opt-in cloud adapters | Windows binaries of the same sidecar; same model catalog | High, pending runtime packaging |
 | Packaging | electron-builder + DMG/ZIP + Developer ID + notarization | electron-builder + NSIS + Authenticode; MSIX later | Build shape reused, platform layer new |
 | Auto-update | electron-updater + GitHub Releases + ZIP | electron-updater NSIS path + GitHub Releases | Client abstraction reused |
 | Secrets | macOS Keychain | DPAPI (current user) or Credential Manager | New platform adapter |
@@ -926,8 +926,8 @@ terminals, expand the per-app paste map before changing the architecture.
     clipboard paste and SendInput Unicode in the target app matrix?
 15. **Secrets:** DPAPI current-user vs Credential Manager; which is more auditable, and
     how does the choice map to the macOS Keychain contract?
-16. **Model runtime:** are the chosen sherpa-onnx/whisper.cpp binaries available and
-    tested on Windows x64 and arm64, and do they ship as signed sidecars?
+16. **Model runtime:** are the chosen transcribe.cpp/sherpa-onnx/whisper.cpp binaries
+    available and tested on Windows x64 and arm64, and do they ship as signed sidecars?
 
 ## Sources
 

@@ -213,7 +213,7 @@ default path:
 
 | Principle | Concrete rule |
 |---|---|
-| **Local-first ASR** | Default provider is a local sidecar (SenseVoice/Whisper through sherpa-onnx/whisper.cpp). After model download, the app works fully offline with no account and no vendor key. Cloud ASR is a separate opt-in adapter. |
+| **Local-first ASR** | Default provider is Qwen3-ASR 0.6B through transcribe.cpp; SenseVoice Small is the lightweight tier and Whisper is the multilingual fallback. After model download, the app works fully offline with no account and no vendor key. Cloud ASR is a separate opt-in adapter. |
 | **Context capture off by default** | v0.1 collects only app identity and the narrow safety flags required for injection. No content, no title, no URL, no screen text. App identity stays local. |
 | **Per-feature opt-in** | Cloud ASR, cloud LLM cleanup, selected-text context, surrounding-text context, history, telemetry, and crash upload each have their own toggle and consent text. Enabling one does not enable another. |
 | **No screen capture by default** | No screenshots, no OCR, no Screen Recording permission. Visible-text capture is not in v0.1 and is not an implied roadmap feature. |
@@ -229,9 +229,10 @@ default path:
 The local path still covers the core dictation value: high-quality Chinese/English ASR,
 VAD, deterministic punctuation/filler cleanup, a local personal dictionary, and fast
 injection. Context-aware tone and app-specific formatting are quality enhancements, not
-prerequisites for a usable dictation product. The ASR research already targets a local
-SenseVoice default with a Whisper fallback; the privacy stance and the ASR stance are the
-same decision, not two competing ones.
+prerequisites for a usable dictation product. The ASR research targets Qwen3-ASR as the
+quality default, SenseVoice as the lightweight tier, and Whisper as the multilingual
+fallback; the privacy stance and the ASR stance are the same decision, not two competing
+ones.
 
 ## Options
 
@@ -433,10 +434,10 @@ or update channel.
   Hugging Face; a signed catalog is a later hardening step.
 - The local ASR sidecar runs without network access, with an explicit model path and
   process isolation; kill it on session end or model change.
-- **Update path** (framework decision deferred): HTTPS, signed update metadata and
-  payload, signature verification before install, rollback protection, staged rollout,
-  and a recovery path. The app does not auto-update while a local-only offline user has
-  disabled update checks.
+- **Update path** (electron-updater + GitHub Releases selected): HTTPS, signed update
+  metadata and payload, signature verification before install, rollback protection,
+  staged rollout, and a recovery path. The app does not auto-update while a local-only
+  offline user has disabled update checks.
 - **Dependency pinning**: exact versions in the lockfile, committed; CI uses `npm ci`;
   minimal runtime dependencies; review every new dependency; run OSV/npm audit; produce
   an SBOM; prefer packages with provenance/attestations; review postinstall scripts;
@@ -563,7 +564,7 @@ as the v0.1 default** and **Option C as the post-v0.1 evolution**.
 | Destination | When | Data | Default | Retention |
 |---|---|---|---|---|
 | Model host (project GitHub Releases / Hugging Face) | First model download or explicit re-download | Model files; standard HTTP metadata | Allowed (needed for local ASR) | Local until deleted |
-| Update feed (provider TBD) | Update check/install | App version, OS version, update metadata | Allowed but user-disableable; no update check in offline mode | Provider-defined; documented |
+| Update feed (electron-updater / GitHub Releases) | Update check/install | App version, OS version, update metadata | Allowed but user-disableable; no update check in offline mode | Provider-defined; documented |
 | Cloud ASR provider (e.g. OpenAI/Deepgram/AssemblyAI/Qwen) | Only when the user enables that provider | Audio (chunks or complete utterance), language hint, provider key | **Off** | Provider policy; disclosed |
 | Cloud LLM cleanup provider | Only when the user enables cleanup | Rule-cleaned transcript, optional coarse app category, locale, matched dictionary terms | **Off** | Provider policy; disclosed |
 | Telemetry endpoint | Only if the user opts in | Content-free metrics (duration, provider id, latency, error class, versions) | **Off** | Short, defined in policy |

@@ -67,7 +67,10 @@ export function App(): React.JSX.Element {
   }, [])
 
   const startCapture = useCallback(async (): Promise<void> => {
-    if (startingRef.current || contextRef.current) return
+    if (startingRef.current) {
+      throw new Error('录音正在启动，请稍候再试。')
+    }
+    if (contextRef.current) return
 
     const session = sessionRef.current + 1
     sessionRef.current = session
@@ -175,7 +178,9 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     let disposed = false
+    let sawStateEvent = false
     const unsubState = window.justspeak.onState((next, nextMessage) => {
+      sawStateEvent = true
       setState(next)
       setMessage(nextMessage)
     })
@@ -199,7 +204,7 @@ export function App(): React.JSX.Element {
     void window.justspeak
       .getState()
       .then((status) => {
-        if (disposed) return
+        if (disposed || sawStateEvent) return
         setState(status.state)
         setMessage(status.message)
         if (status.state === 'recording') {

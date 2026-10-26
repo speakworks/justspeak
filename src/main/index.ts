@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain } from 'electron'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { FakeAsrProvider } from '../core/asr/fake-provider'
 import type { AppState, AppStatus, RecordingSummary, TranscriptEvent } from '../shared/ipc'
 import { pasteText } from './injection'
@@ -9,7 +10,6 @@ let mainWindow: BrowserWindow | null = null
 let state: AppState = 'idle'
 let lastMessage: string | undefined
 let rendererReady = false
-let recordingStartedAt = 0
 let pipelineRunning = false
 let lastStartAt = 0
 const asr = new FakeAsrProvider()
@@ -83,7 +83,6 @@ async function toggleRecording(): Promise<void> {
   console.log('[toggle] state=', state)
 
   if (state === 'recording') {
-    const startedAt = recordingStartedAt
     sendState('transcribing')
     mainWindow?.webContents.send('recording:stop')
     setTimeout(() => {
@@ -103,7 +102,6 @@ async function toggleRecording(): Promise<void> {
   if (now - lastStartAt < 300) return
 
   lastStartAt = now
-  recordingStartedAt = now
   sendState('recording')
   mainWindow?.webContents.send('recording:start')
 }
@@ -140,7 +138,9 @@ function createWindow(): void {
     rendererReady = false
   })
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  const allowedPrefix = process.env.ELECTRON_RENDERER_URL ?? 'file://'
+  const allowedPrefix =
+    process.env.ELECTRON_RENDERER_URL ??
+    pathToFileURL(path.join(app.getAppPath(), 'out/renderer')).href
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith(allowedPrefix)) event.preventDefault()
   })
@@ -149,7 +149,20 @@ function createWindow(): void {
     console.error('[preload-error]', preloadFile, error)
   })
   mainWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
-    console.error('[did-fail-load]', code, description, url)
+    rendererReady = false
+    const message = `界面加载失败：${description} (${code}) ${url}`
+    state = 'error'
+    lastMessage = message
+    dialog.showErrorBox('JustSpeak', message)
+    app.quit()
+  })
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    rendererReady = false
+    const message = `界面进程异常退出：${details.reason}`
+    state = 'error'
+    lastMessage = message
+    dialog.showErrorBox('JustSpeak', `${message}。请重启应用。`)
+    app.quit()
   })
   if (process.env.JUSTSPEAK_DEVTOOLS === '1') {
     mainWindow.webContents.openDevTools({ mode: 'detach' })
@@ -160,6 +173,15 @@ function createWindow(): void {
   } else {
     void mainWindow.loadFile(path.join(app.getAppPath(), 'out/renderer/index.html'))
   }
+}
+
+function isRecordingSummary(value: unknown): value is RecordingSummary {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return ['durationMs', 'samples', 'sampleRate', 'rms'].every((key) => {
+    const n = record[key]
+    return typeof n === 'number' && Number.isFinite(n) && n >= 0
+  })
 }
 
 app.whenReady().then(() => {
@@ -173,16 +195,20 @@ app.whenReady().then(() => {
   ipcMain.on('capture:started', (_event, atMs: number) => {
     console.log('[capture] started', atMs)
   })
-  ipcMain.on('capture:stopped', (_event, summary: RecordingSummary) => {
+  ipcMain.on('capture:stopped', (_event, summary: unknown) => {
     if (state !== 'transcribing') {
       console.warn('[capture] stale stopped event ignored', state)
       return
     }
+    if (!isRecordingSummary(summary)) {
+      sendState('error', '录音数据无效，请重试。')
+      return
+    }
     void runPipeline(summary)
   })
-  ipcMain.on('capture:failed', (_event, message: string) => {
+  ipcMain.on('capture:failed', (_event, message: unknown) => {
     if (state === 'recording' || state === 'transcribing') {
-      sendState('error', message)
+      sendState('error', typeof message === 'string' ? message : '录音失败，请重试。')
     }
   })
   ipcMain.handle('state:get', (): AppStatus => ({ state, message: lastMessage }))

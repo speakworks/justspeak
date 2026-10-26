@@ -1,0 +1,31 @@
+{
+  "name": "justspeak",
+  "version": "0.1.0-demo.0",
+  "private": true,
+  "description": "Local-first voice dictation for macOS",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "packageManager": "pnpm@9.6.0",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "postinstall": "node node_modules/electron/install.js"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@swc/core": "^1.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^45.0.0",
+    "electron-vite": "^6.0.0",
+    "typescript": "^5.9.0",
+    "vite": "^8.3.5"
+  }
+}

@@ -66,13 +66,14 @@ possible. Run a license scan over the committed lockfile before the first releas
 | OpenAI Whisper (`openai/whisper`) | MIT | E3: GitHub license API | Reference implementation; not a planned shipping runtime. Official model weights are separately licensed (see below). |
 | whisper.cpp (`ggml-org/whisper.cpp`, formerly `ggerganov/whisper.cpp`) | MIT | E3: GitHub license API; raw `LICENSE` | Candidate sidecar. The repository moved to `ggml-org`; use the current canonical URL. Model files are distributed separately; check the specific conversion/model card. |
 | SenseVoice (`FunAudioLLM/SenseVoice`) | MIT | E3: GitHub license API; repository README | Code is MIT. Official weights are **not** MIT; they use the FunASR Model Open Source License Agreement v1.1 (see below). |
+| Qwen3-ASR (`QwenLM/Qwen3-ASR`) | Apache-2.0 | E3: official model card/blog; E2: transcribe.cpp pin | Official Python package; not the shipped runtime. The transcribe.cpp port is the planned runtime path. Weights are Apache-2.0 (see below). |
 | FunASR (`modelscope/FunASR`) | MIT | E3: GitHub license API | Python toolkit; not planned as a shipped runtime. Each model carries its own `MODEL_LICENSE`. |
-| sherpa-onnx (`k2-fsa/sherpa-onnx`) | Apache-2.0 | E3: GitHub license API; raw `LICENSE` | Preferred multi-model sidecar runtime. Apache-2.0 obligations apply (license text, notices, NOTICE file if present). |
+| sherpa-onnx (`k2-fsa/sherpa-onnx`) | Apache-2.0 | E3: GitHub license API; raw `LICENSE` | Backup/alternative multi-model sidecar runtime; Qwen3-ASR support is not confirmed. Apache-2.0 obligations apply (license text, notices, NOTICE file if present). |
 | Vosk (`alphacep/vosk-api`) | Apache-2.0 | E3: GitHub license API | Code is Apache-2.0. Vosk model licenses are **model-specific**; verify each candidate model before shipping. |
 | Moonshine (`usefulsensors/moonshine`; the LICENSE names `moonshine-ai/moonshine`) | MIT by default, with a composite LICENSE | E3: raw `LICENSE`; GitHub license API reports `NOASSERTION` | The `NOASSERTION` result reflects the composite LICENSE, not an unknown license. Code and default models are MIT; listed legacy non-streaming non-English models are non-commercial (see below). |
 | NVIDIA NeMo (`NVIDIA/NeMo`) | Apache-2.0 | E3: GitHub license API | Apache-2.0 covers the framework code, not Parakeet weights. |
 | WhisperKit (`argmaxinc/WhisperKit`) | MIT | E3: GitHub license API | Swift/CoreML path for macOS. Weights follow the specific Whisper model card. |
-| transcribe.cpp (`handy-computer/transcribe.cpp`) | MIT | E3: GitHub license API | Alternative ggml-based runtime; not currently selected. |
+| transcribe.cpp (`handy-computer/transcribe.cpp`) | MIT | E3: GitHub license API | Selected ggml-based runtime for v0.1 (Qwen3-ASR + SenseVoice + optional Parakeet); model licenses are separate. |
 | onnxruntime / onnxruntime-node (`microsoft/onnxruntime`) | MIT | E3: GitHub license API | Direct ONNX execution option. |
 | Silero VAD (`snakers4/silero-vad`) | MIT | E3: GitHub license API; raw `LICENSE` | Candidate VAD; MIT covers code and the published VAD weights. |
 | Cloud ASR providers | Commercial terms | E3: vendor terms | Not open source. OpenAI, Deepgram, AssemblyAI, Qwen3/ DashScope, Google, Azure, and AWS are governed by their service terms, data-processing terms, and branding rules. |
@@ -85,7 +86,8 @@ whether the app may download, bundle, or redistribute a model.
 | Model family | Weights license | Verification | Redistribution and commercial notes |
 |---|---|---|---|
 | Whisper official weights (small, medium, large-v3-turbo) | Apache-2.0 on the official Hugging Face model cards | E3: Hugging Face API (`openai/whisper-small`, `openai/whisper-medium`) | Commercial use permitted with Apache-2.0 obligations: license text, notices, and any upstream NOTICE. Community GGML/GGUF conversions may have different model cards; verify the exact artifact. |
-| SenseVoiceSmall official weights | FunASR Model Open Source License Agreement v1.1 (not MIT); Hugging Face card reports `license: other` | E3: Hugging Face API; FunASR `MODEL_LICENSE`; SenseVoice README | Commercial use of the official weights is permitted when the model license is followed, per the maintainers' official clarification. Section 2.2 requires attribution of source and author information and retention of relevant model names. Section 3 is a responsibility/risk disclaimer. Third-party conversions may carry different terms. |
+| Qwen3-ASR 0.6B official weights | Apache-2.0 | E3: Hugging Face model card (`Qwen/Qwen3-ASR-0.6B`); E2: transcribe.cpp pin | Commercial use permitted with Apache-2.0 obligations. Third-party GGUF/OpenASR conversions may carry different provenance; verify the exact artifact and checksum. |
+| SenseVoiceSmall official weights | FunASR Model Open Source License Agreement v1.1 (not MIT); Hugging Face card reports `license: other` | E3: Hugging Face API; FunASR `MODEL_LICENSE`; SenseVoice README | Lightweight tier only, subject to legal review. Commercial use of the official weights is permitted when the model license is followed, per the maintainers' official clarification. Section 2.2 requires attribution of source and author information and retention of relevant model names. Section 3 is a responsibility/risk disclaimer. Third-party conversions may carry different terms. |
 | FunASR / Paraformer family | Per-model `MODEL_LICENSE` | E3: FunASR repository | Do not assume MIT because the FunASR toolkit is MIT. Verify the card for the exact model. |
 | Parakeet TDT 0.6B v2/v3 | CC-BY-4.0 | E3: Hugging Face API (`nvidia/parakeet-tdt-0.6b-v2`) | Attribution required: creator, source/title, license link, and an indication of changes. CC-BY-4.0 has no patent grant. |
 | Moonshine English and all streaming models | MIT | E3: raw `LICENSE` | Commercial use permitted with MIT notice. |
@@ -279,6 +281,7 @@ Provenance requirements already specified by the project:
 
 - [ ] Freeze the default model after the ASR benchmark.
 - [ ] Verify the exact weights artifact and its model card before adding it to the catalog.
+- [ ] Add the Qwen3-ASR Apache-2.0 NOTICE and verify the exact GGUF artifact/checksum.
 - [ ] Obtain legal sign-off on the FunASR Model License v1.1 attribution and
       redistribution wording for SenseVoice.
 - [ ] Exclude the Moonshine legacy non-English non-streaming models from all catalogs and
@@ -322,15 +325,18 @@ Provenance requirements already specified by the project:
 
 **Provisional (pending benchmark or release work):**
 
-- SenseVoice Small as the default local model, with Whisper small/medium as fallback.
-- sherpa-onnx as the preferred runtime, with whisper.cpp as plan B.
+- Qwen3-ASR 0.6B as the quality default, SenseVoice Small as the lightweight tier
+  (subject to FunASR legal review), with Whisper small/medium as multilingual fallback.
+- transcribe.cpp as the selected runtime, with sherpa-onnx as backup (Qwen3-ASR support
+  pending verification).
 - An optional offline model pack for air-gapped or managed installs.
 - `THIRD_PARTY_NOTICES.md` as the canonical notices path (to be confirmed against
   `docs/PACKAGING-RELEASE.md` naming).
 
 **Not decided:**
 
-- Final default model and exact weights artifact.
+- Final model lock and quantization after the local benchmark, plus the exact weights
+  artifact.
 - Whether an offline pack ships with v0.1 or later.
 - Whether Parakeet or Vosk is adopted.
 - Which cloud providers are offered and under which terms.

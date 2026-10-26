@@ -72,8 +72,8 @@ accepted as a design baseline for v0.1, not shipped behavior.
 | Decision | Status | Document | One-line rationale | Open question |
 |---|---|---|---|---|
 | Core boundary and single-repository strategy: one repo with an internal `core`; app → core dependency rule; split only when a trigger is met | Accepted | [ADR-0001](ADR-0001-core-boundary.md) | Avoids premature packaging while keeping a future split a refactor rather than a rewrite | When to extract `packages/core` or a separate SpeakPilot repository (v0.2); concrete layout once the stack is fixed |
-| Desktop stack: Electron 45 + TypeScript + React 19 + electron-vite 6 + Swift helper | Accepted | [ADR-0002](ADR-0002-tech-stack.md) | TypeScript velocity plus an out-of-process native helper for OS I/O, with a Windows-later path | Renderer-first capture baseline (#1 resolved); minimum macOS version; bundle/memory budget; overlay strategy; storage choice; Electron upgrade policy; telemetry scope |
-| Process model and trust boundaries: sandboxed renderer, narrow preload, orchestrating main process, framework-neutral core, OS-only helper | Accepted | [ARCHITECTURE](ARCHITECTURE.md) | Enforceable boundaries keep product logic testable and OS capabilities out of the renderer | Per-app injection compatibility; architecture amendments for renderer-first and clipboard-first (#1/#2 resolved) |
+| Desktop stack: Electron 45 + TypeScript + React 19 + electron-vite 6 + Swift helper | Accepted | [ADR-0002](ADR-0002-tech-stack.md) | TypeScript velocity plus an out-of-process native helper for OS I/O, with a Windows-later path | Renderer-first capture baseline (#1 decided; amendment pending); minimum macOS version; bundle/memory budget; overlay strategy; storage choice; Electron upgrade policy; telemetry scope |
+| Process model and trust boundaries: sandboxed renderer, narrow preload, orchestrating main process, framework-neutral core, OS-only helper | Accepted | [ARCHITECTURE](ARCHITECTURE.md) | Enforceable boundaries keep product logic testable and OS capabilities out of the renderer | Per-app injection compatibility; architecture amendments for renderer-first and clipboard-first (#1/#2 decided; amendments pending) |
 | Local-first ASR with optional cloud BYOK adapters | Accepted | [ASR-RESEARCH](ASR-RESEARCH.md) | On-device default preserves privacy and offline use; cloud is an explicit escape hatch, never a silent fallback | Model/runtime lock; benchmark gates (CER/WER, latency, memory, cold start); cloud provider terms |
 | Default ASR prior: Qwen3-ASR 0.6B Q8_0 via transcribe.cpp; SenseVoice Small lightweight tier; Whisper small/medium fallback | Pending benchmark | [ASR-RESEARCH](ASR-RESEARCH.md) | Best same-pipeline Chinese/Cantonese quality with a permissive Apache-2.0 default; SenseVoice is smaller/faster but needs FunASR legal review | Final model/quant lock; SenseVoice license/attribution; Whisper fallback selection; Parakeet English-only |
 | Replaceable provider boundaries: `AsrProvider`, `CaptureSource`, `InjectionStrategy`, `HotkeySource` | Accepted | [ADR-0003](ADR-0003-provider-boundaries.md) | Model/runtime/platform swaps become adapter changes instead of UI/core rewrites | IPC transport; process ownership; streaming interface; model-registry signing |
@@ -82,22 +82,22 @@ accepted as a design baseline for v0.1, not shipped behavior.
 | Hotkeys and injection: Electron `globalShortcut` toggle; clipboard + `Cmd+V` default; Accessibility insert later opt-in | Accepted (clipboard-first; AX later) | [TEXT-INJECTION-HOTKEYS](TEXT-INJECTION-HOTKEYS.md), [ADR-0003](ADR-0003-provider-boundaries.md) | Predictable cross-app injection with secure-field safeguards and a copy-only fallback | Default shortcut conflict sweep; app compatibility matrix; timing of AX opt-in; ARCHITECTURE step 6 amendment |
 | Post-processing: rule-based baseline on by default + opt-in BYOK cloud LLM + mandatory deterministic validator | Accepted (baseline); provider/model pending benchmark | [LLM-POSTPROCESSING](LLM-POSTPROCESSING.md) | Improves cleanup quality without breaking local-first or privacy; validator prevents bad rewrites | Provider/model choice; prompt text and guard thresholds; tone-by-app defaults; local LLM deferred |
 | Privacy/security baseline: minimal context, local-first, no retention or telemetry by default, direct distribution | Accepted | [PRIVACY-SECURITY](PRIVACY-SECURITY.md) | Least-data collection satisfies the privacy promise while keeping dictation useful | Telemetry/crash provider; encryption at rest; surrounding-text caps; consent copy review |
-| Packaging/release: electron-vite + electron-builder, Developer ID signing + notarization, DMG + ZIP, electron-updater via GitHub Releases, first-run model download | Accepted | [PACKAGING-RELEASE](PACKAGING-RELEASE.md) | Direct distribution is the only v0.1-compatible path; free CI plus a local fallback fits a solo maintainer | Signing/notarization spike; update feed operations; model download and offline pack; notices filename migration (#4 resolved) |
-| Windows port: reuse Electron and `src/core`; C#/.NET helper leading candidate; WASAPI helper capture; clipboard + `Ctrl+V`; NSIS + Authenticode | Accepted (strategy; helper language pending spike) | [WINDOWS-PORT](WINDOWS-PORT.md) | Maximum reuse with a reversible helper-language decision and renderer capture as fallback | Helper language pending spike; cross-platform capture amendment (#1 resolved); Windows 10 best-effort scope; signing identity |
-| Testing/CI: Vitest, Playwright Electron E2E, pnpm frozen lockfile, GitHub Actions macOS arm64, ASR benchmark harness | Accepted | [TESTING-STRATEGY](TESTING-STRATEGY.md) | Fake-first tests and required CI gates catch boundary regressions before OS-level manual checks | Packaging doc npm-to-pnpm migration (#3 resolved); Playwright Electron support is experimental; performance ceilings still unmeasured |
+| Packaging/release: electron-vite + electron-builder, Developer ID signing + notarization, DMG + ZIP, electron-updater via GitHub Releases, first-run model download | Accepted | [PACKAGING-RELEASE](PACKAGING-RELEASE.md) | Direct distribution is the only v0.1-compatible path; free CI plus a local fallback fits a solo maintainer | Signing/notarization spike; update feed operations; model download and offline pack; notices filename migration (#4 decided; packaging doc pending) |
+| Windows port: reuse Electron and `src/core`; C#/.NET helper leading candidate; WASAPI helper capture; clipboard + `Ctrl+V`; NSIS + Authenticode | Accepted (strategy; helper language pending spike) | [WINDOWS-PORT](WINDOWS-PORT.md) | Maximum reuse with a reversible helper-language decision and renderer capture as fallback | Helper language pending spike; cross-platform capture amendment (#1 decided; docs pending); Windows 10 best-effort scope; signing identity |
+| Testing/CI: Vitest, Playwright Electron E2E, pnpm frozen lockfile, GitHub Actions macOS arm64, ASR benchmark harness | Accepted | [TESTING-STRATEGY](TESTING-STRATEGY.md) | Fake-first tests and required CI gates catch boundary regressions before OS-level manual checks | Packaging doc npm-to-pnpm migration (#3 decided; doc pending); Playwright Electron support is experimental; performance ceilings still unmeasured |
 | v0.2 SpeakPilot: reuse Electron + Swift helper with hardening; `src/agent`, isolated planner, brokered tools | Accepted (plan; performance gates) | [V0.2-SPEAKPILOT](V0.2-SPEAKPILOT.md) | Reuses the shipped shell/core while isolating privileged planning and actions behind policy and confirmation | Capabilities not frozen; v0.1 entry gate; repository split trigger; permission and audit details; native action service if hot path demands |
-| Licensing and compliance: MIT project plus per-dependency/model license matrix and legal review before commercial release | Accepted (design; legal review open) | [LICENSING](LICENSING.md) | Application dependencies are largely MIT-compatible, but model-weight terms vary and require attribution and legal review | Legal review pending; SenseVoice/Parakeet/Vosk adoption; notices filename migration (#4 resolved); model-license nuance (#5) |
+| Licensing and compliance: MIT project plus per-dependency/model license matrix and legal review before commercial release | Accepted (design; legal review open) | [LICENSING](LICENSING.md) | Application dependencies are largely MIT-compatible, but model-weight terms vary and require attribution and legal review | Legal review pending; SenseVoice/Parakeet/Vosk adoption; notices filename migration (#4 decided; packaging doc pending); model-license nuance (#5) |
 
 Status roll-up: 15 Accepted, 1 Pending benchmark, 0 Proposed, 0 Open (16 decisions).
 Mixed-status rows are counted by their leading status.
 
 ## Open cross-document decisions
 
-These are known inconsistencies between the source documents. They are recorded here as
-open questions and are **not** edited in the source docs by this index. Each needs a
-follow-up documentation change, and some need a spike or legal review before a decision.
+These are the remaining deviations and migrations recorded after the acceptance pass.
+Items marked "decided" still need the source-document edit; "pending" items need a spike or
+legal review.
 
-### 1. Capture ownership — resolved (design)
+### 1. Capture ownership — decided; architecture amendment pending
 
 - Accepted: renderer Web Audio/AudioWorklet is the v0.1 default; Swift `AVAudioEngine` is
   the fallback behind `CaptureSource` ([ADR-0003](ADR-0003-provider-boundaries.md)).
@@ -106,21 +106,21 @@ follow-up documentation change, and some need a spike or legal review before a d
 - Remaining: the audio spike measures renderer p95; amend ARCHITECTURE/ADR-0002 to match
   the accepted renderer-first baseline.
 
-### 2. Injection order — resolved (design)
+### 2. Injection order — decided; architecture amendment pending
 
 - Accepted: clipboard + `Cmd+V` is the v0.1 default; Accessibility direct insertion is a
   later opt-in behind `InjectionStrategy`; CGEvent typing is a per-app fallback.
 - Remaining: per-app compatibility matrix, secure-input/terminal behavior, and the
   ARCHITECTURE step 6 amendment to clipboard-first + AX upgrade.
 
-### 3. Package manager — resolved (design)
+### 3. Package manager — decided; packaging doc migration pending
 
 - Accepted: pnpm with a frozen lockfile, pinned through Corepack
   ([TESTING-STRATEGY](TESTING-STRATEGY.md)).
 - Remaining: update `PACKAGING-RELEASE.md` release steps from `npm ci` to pnpm before the
   scaffold.
 
-### 4. Third-party notices filename — resolved (design)
+### 4. Third-party notices filename — decided; packaging doc migration pending
 
 - Accepted: `THIRD_PARTY_NOTICES.md` at the repository root
   ([LICENSING](LICENSING.md)).

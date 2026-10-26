@@ -1,6 +1,6 @@
 # ADR-0003: Replaceable Provider Boundaries for ASR, Capture, Injection, and Hotkeys
 
-- Status: Accepted (design baseline for v0.1)
+- Status: Accepted (design baseline; type appendix v1; IPC/process details pending)
 - Date: 2026-10-26
 - Deciders: project owner (human), implementation agent (facilitator)
 - Related: ADR-0001, ADR-0002, ASR-RESEARCH, AUDIO-PIPELINE, TEXT-INJECTION-HOTKEYS, WINDOWS-PORT, TESTING-STRATEGY
@@ -39,7 +39,7 @@ interface AsrProvider {
   readonly id: string;
   readonly capabilities: AsrCapabilities;
   prepare(model: AsrModelDescriptor): Promise<void>;
-  transcribe(input: AudioInput, options: TranscribeOptions): Promise<TranscriptionResult>;
+  transcribe(input: AudioInput, options: TranscribeOptions): Promise<ProviderResult<TranscriptionResult>>;
   dispose(): Promise<void>;
   health(): Promise<ProviderHealth>;
 }
@@ -67,8 +67,10 @@ interface TranscriptionResult {
 }
 ```
 
-- `AudioInput` is always 16 kHz mono PCM16. Resampling and channel mixing happen in the
-  capture adapter, not in the ASR provider.
+- `AudioInput` is always 16 kHz mono PCM16. Capture adapters deliver device-native PCM
+  frames; `src/core` performs channel mixing and resampling to 16 kHz before calling the
+  ASR provider. This keeps DSP ownership in core (ADR-0001, AUDIO-PIPELINE) and keeps the
+  capture adapter a shell concern.
 - `TranscribeOptions` carries only cross-provider concepts: language hint, punctuation/ITN
   preference, optional vocabulary, timeout, and cancellation. Provider-specific knobs live
   in a typed `providerOptions` bag and must not leak into the UI.
@@ -93,15 +95,16 @@ interface CaptureSource {
 
 interface PcmFrame {
   samples: Int16Array;
-  sampleRate: 16000;
-  channels: 1;
+  sampleRate: number; // device-native; src/core resamples to 16 kHz
+  channels: number;   // device-native; src/core downmixes to mono
   capturedAtMs: number;
   sequence: number;
 }
 ```
 
 - Capture owns device selection, permission prompts, route changes, echo
-  cancellation/noise suppression/AGC policy, resampling, and framing.
+  cancellation/noise suppression/AGC policy, and framing. It delivers device-native PCM;
+  `src/core` owns channel mixing and resampling to 16 kHz.
 - Capture never knows which ASR model is running.
 - Adapters: `RendererAudioWorkletCapture`, `SwiftAVAudioEngineCapture`,
   `WindowsWasapiCapture` (later). The renderer adapter uses a hidden recorder window,
@@ -167,6 +170,164 @@ interface HotkeyCapabilities {
   suppression. It must recover when macOS disables the tap.
 - The hotkey layer never embeds ASR or injection behavior; it emits press/release events.
 
+### Type appendix (v1 contract)
+
+The interfaces reference a small set of shared types. They are defined here so adapters,
+callers, and contract tests have one source of truth.
+
+```ts
+type AsrErrorCode =
+  | "MODEL_MISSING"
+  | "MODEL_LOAD_FAILED"
+  | "UNSUPPORTED_LANGUAGE"
+  | "AUDIO_TOO_LONG"
+  | "INFERENCE_FAILED"
+  | "TIMEOUT"
+  | "CANCELLED";
+
+interface ProviderError {
+  code: AsrErrorCode;
+  message: string;
+  retryable: boolean;
+  cause?: unknown;
+}
+
+type ProviderResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: ProviderError };
+
+interface AudioInput {
+  pcm: Int16Array;
+  sampleRate: 16000;
+  channels: 1;
+  durationMs: number;
+}
+
+interface ModelFile {
+  path: string;
+  sha256: string;
+  sizeBytes: number;
+}
+
+interface AsrModelDescriptor {
+  id: string;
+  version: string;
+  runtime: string;
+  files: ModelFile[];
+  sizeBytes: number;
+  license: string;
+  sourceUrl: string;
+  quantization: string;
+  capabilities: AsrCapabilities;
+}
+
+interface TranscribeOptions {
+  languageHint?: string;
+  punctuation?: boolean;
+  itn?: boolean;
+  vocabulary?: string[];
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  providerOptions?: Record<string, unknown>;
+}
+
+interface ProviderHealth {
+  status: "ready" | "loading" | "unavailable" | "error";
+  modelId?: string;
+  message?: string;
+  sinceMs?: number;
+}
+
+interface ProviderWarning {
+  code: string;
+  message: string;
+}
+
+interface TranscriptSegment {
+  text: string;
+  startMs?: number;
+  endMs?: number;
+  confidence?: number;
+}
+
+interface CaptureOptions {
+  deviceId?: string;
+  frameMs?: number;
+  echoCancellation?: boolean;
+  noiseSuppression?: boolean;
+  autoGainControl?: boolean;
+}
+
+interface CaptureSummary {
+  frames: number;
+  durationMs: number;
+  droppedFrames: number;
+}
+
+interface CaptureError {
+  code: "PERMISSION_DENIED" | "DEVICE_NOT_FOUND" | "DEVICE_LOST" | "CAPTURE_FAILED";
+  message: string;
+  retryable: boolean;
+}
+
+interface InjectionCapabilities {
+  clipboard: boolean;
+  accessibility: boolean;
+  directTyping: boolean;
+  secureInputSafe: boolean;
+  preservesClipboard: boolean;
+}
+
+interface InjectionResult {
+  method: "clipboard" | "accessibility" | "cgevent" | "none";
+  ok: boolean;
+  fallbackUsed: boolean;
+  warnings: ProviderWarning[];
+}
+
+interface FocusTarget {
+  processId: number;
+  bundleId?: string;
+  windowId?: string;
+  elementRef?: unknown;
+  selectedRange?: { location: number; length: number };
+  capturedAtMs: number;
+}
+
+interface HotkeyBinding {
+  id: string;
+  accelerator: string;
+  mode: "toggle" | "hold";
+}
+```
+
+### Fallback policy
+
+`src/core` owns fallback decisions. A provider returns `ProviderResult`; the composition
+root applies the table below. No fallback is silent.
+
+| Trigger | Action | User-visible behavior |
+|---|---|---|
+| `MODEL_MISSING` / `MODEL_LOAD_FAILED` | Do not auto-switch models; offer repair/download or another installed model | Error card with repair action |
+| `UNSUPPORTED_LANGUAGE` | Use the configured fallback provider only if the user enabled it | Show which provider handled it |
+| `AUDIO_TOO_LONG` | Segment at VAD silence or reject with a limit message | No silent truncation |
+| `TIMEOUT` / retryable `INFERENCE_FAILED` | Retry once with the same provider, then offer fallback | Retry/fallback actions; keep audio |
+| `CANCELLED` | Return cancelled; no fallback | No error toast |
+| Cloud opt-in failure | Do not fall back to another cloud without explicit consent | Error naming the provider |
+| Capture `DEVICE_LOST` | Reopen the default device or ask; never switch app/field silently | Device notice |
+
+Every fallback sets `fallbackUsed` and appends a `ProviderWarning`. The audio buffer is
+retained only when the user has enabled retry; a failed cloud call never sends audio to a
+different provider.
+
+### Model-registry trust (v0.1)
+
+For v0.1 the catalog is embedded in the signed/notarized app bundle, and each model file is
+verified by SHA-256 from that catalog. The app signature is the trust root; a checksum
+stored next to an attacker-controlled catalog is not a trust root by itself. A remotely
+fetched, signed catalog with key custody and rotation is future hardening, not a v0.1
+requirement.
+
 ### Composition and ownership
 
 - `src/core` owns the interfaces, normalized types, capability negotiation, and fallback
@@ -174,7 +335,9 @@ interface HotkeyCapabilities {
 - The Electron main process is the composition root. It reads configuration, creates
   adapters, and wires them. The renderer receives only view models and commands.
 - ASR, capture, injection, and hotkey work that needs OS privileges runs in the Swift
-  helper, a dedicated worker, or the Windows helper. The renderer is UI only.
+  helper, a dedicated worker, or the Windows helper. The renderer is UI plus the sandboxed
+  capture adapter; it converts AudioWorklet buffers to PCM frames and does no ASR,
+  injection, or hotkey logic.
 - The IPC contract uses the normalized types above. No `qwen3`, `sensevoice`,
   `transcribe.cpp`, `AX`, or `WASAPI` names appear in renderer code.
 - A provider registry maps `id` to a factory and a model descriptor. Model descriptors are
@@ -207,8 +370,9 @@ interface HotkeyCapabilities {
 
 - The base installer contains no model weights. First run downloads the selected model,
   shows size/license/source, verifies SHA-256, and supports resume and deletion.
-- `models.json` is signed or checksummed as part of the release; the app rejects entries
-  that do not match.
+- `models.json` is embedded in the signed app bundle; each model file is checked against
+  its SHA-256. A remotely fetched signed catalog is future hardening, not a v0.1
+  requirement.
 - Each model entry records its license and attribution requirements. A model without a
   cleared license cannot become a default.
 

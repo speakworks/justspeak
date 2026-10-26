@@ -1,7 +1,7 @@
 # LLM Post-Processing and Text Cleanup for JustSpeak v0.1
 
-- Status: Proposed — design research complete; the provider/model choice is **pending** the
-  benchmark in this document.
+- Status: Accepted design baseline — rule-based baseline accepted; provider/model choice
+  is **pending** the benchmark in this document.
 - Date: 2026-10-26
 - Decision owner: FD2008
 - Depends on: [ADR-0001](ADR-0001-core-boundary.md),

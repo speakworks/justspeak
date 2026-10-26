@@ -1,6 +1,6 @@
 # Testing and CI Strategy for JustSpeak v0.1
 
-- Status: Proposed (design baseline for v0.1; tool choices are recommendations to validate at scaffold time)
+- Status: Accepted (design baseline for v0.1; tool choices validated at scaffold time)
 - Date: 2026-10-26
 - Decision owner: FD2008
 - Depends on: [ADR-0001: Core boundary](ADR-0001-core-boundary.md), [ADR-0002: Technology stack](ADR-0002-tech-stack.md), [ARCHITECTURE.md](ARCHITECTURE.md), [ASR-RESEARCH.md](ASR-RESEARCH.md), [AUDIO-PIPELINE.md](AUDIO-PIPELINE.md), [TEXT-INJECTION-HOTKEYS.md](TEXT-INJECTION-HOTKEYS.md), [PACKAGING-RELEASE.md](PACKAGING-RELEASE.md), [WINDOWS-PORT.md](WINDOWS-PORT.md)

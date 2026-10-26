@@ -328,7 +328,7 @@ or update channel.
 | T3 | **Prompt injection via selected text or transcript** | Text in the transcript/selection says "ignore previous instructions"; an LLM cleanup step follows it and rewrites or exfiltrates | Meaning change, unsafe output, or disclosure if the model has tools | Medium (only with LLM enabled) | Selected text off by default; delimiters; system prompt treats text as data; deterministic validator; no tools/agent actions in v0.1; fallback to rule output; adversarial benchmark samples | A plausible same-language rewrite can pass the validator; local models can still follow instructions even without network |
 | T4 | **Insecure model download** | MITM or compromised host serves tampered weights; arbitrary model URL; downgrade to a malicious model | Arbitrary code execution in the inference process, bad transcripts, or data exfiltration if the runtime has network | Medium | HTTPS with certificate validation; pinned catalog; SHA-256 of every file; atomic temp download; verify before load; no arbitrary user URL; signed catalog later; sidecar has no network; least-privilege model directory | Compromised project hosting account before checksum publication; a signed catalog is not yet implemented |
 | T5 | **Supply-chain dependencies** | Malicious npm package, compromised Electron release, trojaned sidecar binary, postinstall script | Code execution in main/helper/sidecar; data theft; build compromise | Medium | Exact version pins + committed lockfile; `npm ci`; minimal dependency set; review new deps; OSV/npm audit in CI; SBOM; npm provenance/attestations; no unreviewed postinstall; checksum sidecar binaries; signed releases; dependency update cadence | A compromised maintainer or a zero-day in a pinned dependency; transitive depth is hard to audit fully |
-| T6 | **Update signing and channel** | Attacker serves a malicious update, downgrades to a vulnerable build, or hijacks the feed | Persistent code execution with the app's permissions | Medium | Developer ID signing; hardened runtime; notarization + stapling; signed update metadata and payload; HTTPS; signature verification before install; rollback protection; staged rollout; signing keys in Keychain/HSM; no update check in local-only offline mode unless enabled | Compromised signing key; framework-specific update bugs; the update framework/provider is not yet chosen |
+| T6 | **Update signing and channel** | Attacker serves a malicious update, downgrades to a vulnerable build, or hijacks the feed | Persistent code execution with the app's permissions | Medium | Developer ID signing; hardened runtime; notarization + stapling; signed update metadata and payload; HTTPS; signature verification before install; rollback protection; staged rollout; signing keys in Keychain/HSM; no update check in local-only offline mode unless enabled | Compromised signing key; framework-specific update bugs; electron-updater + GitHub Releases selected, but key custody and rollback operations remain open |
 | T7 | **Permission abuse / over-broad TCC** | App requests Screen Recording, Input Monitoring, Full Disk Access, or Automation "just in case"; helper attribution is opaque; permission prompts train the user to click Allow | Silent surveillance surface; user trust loss; policy violation | Medium | Least-privilege permissions; request at point of use with a plain-language reason; no Screen Recording; Input Monitoring only for Fn/Right Option; no Full Disk Access/Automation; verify TCC attribution for the signed helper; live permission status; revoke handling | Users may grant permissions to the wrong binary; macOS TCC behavior varies by version; malware can abuse the same permissions independently |
 | T8 | **Crash dumps leak content** | Native crash captures heap/stack with transcript, audio, selected text, or keys; auto-upload sends it to a third party | High-sensitivity content leaves the device without consent | Medium | No automatic crash upload; local-only default; explicit preview and consent; redaction of keys and known buffers; disable core dumps for helper/sidecar where practical; short local retention; user deletion | Memory dumps are hard to fully scrub; OS crash reporter behavior is outside the app |
 | T9 | **Renderer compromise / XSS** | A malicious local file, injected content, or a dependency renders script in the sandboxed renderer and calls privileged IPC | Settings/history manipulation, transcript disclosure, or helper actions | Low–medium | No remote content; strict CSP; `sandbox`, `contextIsolation`, `nodeIntegration: false`; narrow contextBridge; no generic IPC; schema validation; navigation/window.open blocked; ASAR integrity; Electron fuses | A Chromium zero-day or a compromised bundled dependency; defense-in-depth limits blast radius |
@@ -348,9 +348,11 @@ or update channel.
   runtime; a child process that inherits the app's TCC grant must be verifiably part of
   the signed bundle.
 - **Hardened runtime** on the app and helper, with the smallest entitlement set:
-  `com.apple.security.device.audio-input` for capture; avoid
-  `disable-library-validation` and `allow-jit` unless a measured runtime requirement
-  forces them, and document the reason if they do.
+  `com.apple.security.cs.allow-jit` for Electron's V8. `com.apple.security.device.audio-input`
+  is an App Sandbox capability and is not required for direct distribution; microphone
+  access is controlled by TCC plus `NSMicrophoneUsageDescription`. Avoid
+  `disable-library-validation` unless a measured runtime requirement forces it, and
+  document the reason if it does.
 - **Notarization + stapling** before distribution. Gatekeeper must pass on a clean
   machine. Verify the notarized artifact, not only the local dev build.
 - **Direct distribution** for v0.1 (frozen decision). Mac App Store sandboxing is not a
@@ -625,8 +627,8 @@ validation and does not disable it for convenience.
    a provider in the UI.
 7. **Model catalog signing:** when does a signed catalog become worth the key-management
    cost, and how are keys rotated?
-8. **Update framework and signing:** Electron `autoUpdater`/Squirrel.Mac versus Sparkle;
-   who owns the signing key and the rollback policy?
+8. **Update framework and signing:** electron-updater via GitHub Releases is selected
+   (PACKAGING-RELEASE); who owns the signing key and the rollback policy?
 9. **Keychain access path:** helper-owned Keychain items versus Electron `safeStorage`;
    which is more auditable, and how does the Windows path map to DPAPI/Credential Manager?
 10. **Clipboard manager behavior:** does the transient marker work with the clipboard

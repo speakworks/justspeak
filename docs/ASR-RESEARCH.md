@@ -1,6 +1,7 @@
 # ASR Strategy Research for JustSpeak v0.1
 
-- Status: Research complete; model and runtime selection provisional pending benchmark
+- Status: Accepted prior: Qwen3-ASR 0.6B through transcribe.cpp; final model/quantization
+  lock pending benchmark
 - Date: 2026-10-26
 - Decision owner: FD2008
 - Scope: local, cloud, and hybrid automatic speech recognition (ASR) options for the
@@ -66,18 +67,43 @@ Neural Engine. It fits the existing Swift helper shape, but it is macOS-only, ad
 model-distribution path, and does not help the Windows-later path. It is a strong
 macOS-only acceleration option, not the portable default.
 
+#### Qwen3-ASR 0.6B (Alibaba Qwen)
+
+Qwen3-ASR 0.6B is an audio-LLM model: an 18-layer bidirectional audio encoder feeds a
+Qwen3 causal language model that emits the transcript autoregressively. It is the quality
+default prior for v0.1 because it has the strongest Chinese and Cantonese results among the
+local candidates in the same transcribe.cpp evaluation harness, and because its code and
+weights are Apache-2.0. The official model covers 30 languages plus 22 Chinese dialects
+(E3); the transcribe.cpp port advertises 30 languages with auto-detect (E2). Q8_0 is
+about 850 MB, Q4_K_M about 590 MB, and the C++ port accepts up to roughly 87 minutes of
+16 kHz mono audio per call.
+
+Measured/ported evidence (transcribe.cpp, E2): FLEURS-zh CER 7.57%, FLEURS-yue CER 7.91%,
+FLEURS-en WER 4.23% for Q8_0; Apple M4 Max Metal compute latency 147 ms for an 11 s sample
+and 556 ms for a 35 s sample; CPU 545 ms and 2.06 s respectively. These are compute
+latency, not end-to-end dictation latency, and they are not a substitute for the local
+benchmark. The C++ port does not support streaming, VAD, timestamps, or speaker
+diarization; v0.1 only needs final transcripts. The 0.6B model echoes vocabulary prompts
+into the output more often than the 1.7B variant, so vocabulary biasing should be off by
+default until measured.
+
+License: Apache-2.0 for the code and official weights; third-party GGUF/OpenASR
+conversions may carry different provenance and must be checked per artifact. The Apache-2.0
+default is the cleanest licensing position among the local candidates.
+
 #### SenseVoice (FunAudioLLM/SenseVoice)
 
 SenseVoiceSmall is a non-autoregressive multilingual speech model (Chinese, English,
-Cantonese, Japanese, Korean) with a small parameter count and fast inference. It is
-attractive for dictation because a single forward pass produces the transcript, which
-keeps tail latency low, and because its Chinese and Chinese/English code-switching
-behavior is strong relative to Whisper small. It has a 30-second input limit per segment
-and does not expose word timestamps in the common export. Punctuation and inverse text
-normalization depend on the surrounding FunASR or sherpa-onnx post-processing pipeline and
-must be validated in the benchmark. The official small model is roughly 234M parameters
-and a 936 MB PyTorch checkpoint; int8 ONNX conversions are much smaller (roughly 230 MB,
-E3 estimate).
+Cantonese, Japanese, Korean) with a small parameter count and fast inference. It is the
+**lightweight tier**, not the default: transcribe.cpp Q8_0 is 253 MB (Q4_K_M 146 MB),
+single-pass inference keeps tail latency low, and it fits 8 GB Macs. Its Chinese and
+Chinese/English code-switching behavior is good, but below Qwen3-ASR 0.6B in the same
+transcribe.cpp harness: FLEURS-zh CER 10.12%, FLEURS-yue 37.44%, FLEURS-en WER 7.14%
+(E2, Q8_0). It has a 30-second input limit per segment and no word timestamps in the
+common export. transcribe.cpp enables ITN by default, which produces casing, punctuation,
+and digits; ITN costs a small English WER regression and improves Chinese digit
+normalization. The official small model is roughly 234M parameters and a 936 MB PyTorch
+checkpoint; the GGUF conversions above are much smaller.
 
 License nuance: the repository code is MIT, but the official SenseVoiceSmall weights are
 distributed under the FunASR Model Open Source License Agreement, not MIT. The official
@@ -123,17 +149,18 @@ does not satisfy R1.
 
 | Runtime | License | Role | Notes |
 |---|---|---|---|
-| **sherpa-onnx** | Apache-2.0 | Preferred multi-model sidecar; supports SenseVoice, Paraformer, Whisper, and other offline/streaming models | C++/ONNX Runtime with prebuilt binaries and a Node addon; one runtime can serve the default model and fallbacks |
-| **whisper.cpp** | MIT | Whisper-specific sidecar; Metal/CoreML acceleration | Simple CLI/JSON integration; mature; separate binary from sherpa-onnx |
-| **transcribe.cpp** | MIT | Alternative ggml-based multi-model runtime | Younger project; fewer production references; evaluate only if it reduces the number of sidecars |
-| **onnxruntime-node** | MIT | Direct ONNX execution inside Node | Maximum control but you own feature extraction, tokenizer, and decoding; highest integration and maintenance cost |
-| **WhisperKit** | MIT | Swift/CoreML Whisper path in the helper | Best Apple Silicon performance, macOS-only, second distribution path |
+| **transcribe.cpp** | MIT | **Selected runtime**; supports Qwen3-ASR, SenseVoice, Parakeet, Moonshine, Fun-ASR-Nano, and other GGUF models | C/C++/ggml with Metal/Vulkan/CUDA; one runtime covers the quality default, lightweight tier, and optional English pack; no VAD/punctuation pipeline; younger than sherpa-onnx |
+| **sherpa-onnx** | Apache-2.0 | **Backup** multi-model runtime; supports SenseVoice, Paraformer, Whisper, and NeMo | C++/ONNX Runtime with prebuilt binaries and a Node addon; Qwen3-ASR support is not confirmed, so it cannot be the primary path |
+| **whisper.cpp** | MIT | Whisper-only fallback | Mature; Metal/CoreML acceleration; simplest plan B if Whisper is needed |
+| **onnxruntime-node** | MIT | Direct ONNX escape hatch | Maximum control but you own feature extraction, tokenizer, and decoding; highest integration cost |
+| **WhisperKit** | MIT | Swift/CoreML Whisper path in the helper | Best Apple Silicon Whisper performance; macOS-only; a candidate only if the portable path misses R2 |
 
-For a solo developer, `onnxruntime-node` is an escape hatch, not the default. Running
-SenseVoice and Whisper through one sherpa-onnx sidecar minimizes the number of binaries,
-but the benchmark must confirm SenseVoice support and latency in that runtime. A
-whisper.cpp sidecar is the simplest plan B because its CLI and model format are stable and
-well documented.
+For a solo developer, `onnxruntime-node` is an escape hatch, not the default.
+**transcribe.cpp is selected** because one runtime covers Qwen3-ASR, SenseVoice, and
+optional Parakeet/Moonshine without a second sidecar; its Qwen3-ASR and SenseVoice ports
+are pinned and WER-validated. `sherpa-onnx` remains the backup if transcribe.cpp is
+unstable on Windows/Vulkan or if Paraformer/Zipformer streaming is needed later.
+`whisper.cpp` is only for the Whisper fallback, not a second default path.
 
 ### Cloud candidates
 
@@ -208,7 +235,8 @@ utterance on Apple Silicon unless marked E2.
 
 | Candidate (runtime) | Chinese | English | Mixed zh/en | Latency estimate | Model size on disk | Offline | Cost | License (code / weights) | Integration effort (Electron/TS) | Platform |
 |---|---:|---:|---:|---|---|---|---|---|---|---|
-| **SenseVoice Small** (sherpa-onnx, int8) | 5 | 3 | 4 | ~0.3–0.8 s (non-autoregressive) | ~230 MB int8; 936 MB fp32 checkpoint (E2) | Yes | Free | MIT code / FunASR Model License (commercial with attribution) | Medium (sidecar) | macOS, Windows, Linux |
+| **Qwen3-ASR 0.6B** (transcribe.cpp, Q8_0) | 5 | 4–5 | 5 | ~0.15–0.6 s compute (M4 Max; 11–35 s samples) | 850 MB Q8_0; 590 MB Q4_K_M (E2) | Yes | Free | Apache-2.0 code / Apache-2.0 weights (E2/E3) | Medium (sidecar) | macOS, Windows, Linux |
+| **SenseVoice Small** (transcribe.cpp, Q8_0) | 4 | 3 | 4 | ~0.3–0.8 s (non-autoregressive) | 253 MB Q8_0; 146 MB Q4_K_M (E2) | Yes | Free | MIT code / FunASR Model License (commercial with attribution; legal review) | Medium (sidecar) | macOS, Windows, Linux |
 | **Whisper small** (whisper.cpp, Metal) | 3 | 4 | 3 | ~1–3 s | ~0.5 GB fp16-class | Yes | Free | MIT code / Apache-2.0 weights (E2) | Low–medium (sidecar CLI) | macOS, Windows, Linux |
 | **Whisper medium** (whisper.cpp, Metal) | 4 | 5 | 4 | ~2–5 s | ~1.5 GB | Yes | Free | MIT / Apache-2.0 | Low–medium | macOS, Windows, Linux |
 | **Whisper large-v3-turbo** (whisper.cpp) | 4 | 5 | 4 | ~1.5–4 s | ~1.6 GB | Yes | Free | MIT / Apache-2.0 | Low–medium | macOS, Windows, Linux |
@@ -220,12 +248,15 @@ utterance on Apple Silicon unless marked E2.
 
 Reading the local matrix:
 
-- SenseVoice Small is the only candidate that combines strong Mandarin, usable mixed
-  language behavior, small int8 size, and non-autoregressive latency in one model.
-- Whisper small is the best portable English-biased fallback; Whisper medium is the
-  accuracy fallback if small misses the quality bar and the latency budget still allows it.
-- WhisperKit is an Apple-only accelerator. It should be evaluated only if the portable
-  Whisper path misses R2 on Apple Silicon.
+- **Qwen3-ASR 0.6B** has the best Chinese/Cantonese and mixed-language results in the
+  same transcribe.cpp harness, plus Apache-2.0. Its cost is 850 MB and a heavier memory
+  footprint; the 8 GB Mac spike decides whether it can be the default.
+- **SenseVoice Small** is the lightweight tier: 253 MB, fast, good Chinese, but lower
+  Chinese/Cantonese accuracy and a FunASR weight license that needs legal review.
+- Whisper small is the portable English-biased fallback; Whisper medium is the accuracy
+  fallback if small misses the quality bar and the latency budget still allows it.
+- WhisperKit is an Apple-only accelerator, evaluated only if the portable Whisper path
+  misses R2 on Apple Silicon.
 - Parakeet and Moonshine fail R1 for Chinese in v0.1; Vosk fails the quality bar; Paraformer
   is a Chinese-only baseline.
 
@@ -248,46 +279,56 @@ account, billing, and data-residency concerns.
 Adopt a **local-first default with an optional cloud BYOK adapter**, and treat the exact
 model as **provisional until the benchmark in the next section is complete**:
 
-1. **Default local model: SenseVoice Small**, run as int8 ONNX through a sherpa-onnx
-   sidecar. It has the best expected Chinese and mixed-language quality per unit of latency
-   and disk, and it keeps the v0.1 latency target plausible without a GPU.
-2. **Fallback / English-heavy option: Whisper small**, with **Whisper medium** as the
-   accuracy fallback. Use whisper.cpp as the second sidecar unless the benchmark shows that
-   sherpa-onnx handles Whisper well enough to avoid a second runtime. Selecting Whisper
-   should be a user-visible setting and a documented fallback, not a silent model swap.
-3. **No live partials in v0.1.** Capture → VAD/endpointing → final inference after stop →
+1. **Default local model: Qwen3-ASR 0.6B Q8_0 through transcribe.cpp.** It has the best
+   Chinese, Cantonese, and mixed-language results among local candidates in the same
+   transcribe.cpp harness, and Apache-2.0 is the cleanest licensing position. Q8_0 is
+   about 850 MB; the 8 GB Mac audio spike must confirm peak memory and p95 latency before
+   this is locked.
+2. **Lightweight tier: SenseVoice Small Q8_0 through transcribe.cpp.** At 253 MB it fits
+   8 GB Macs and is much faster than Qwen3, but its Chinese/Cantonese accuracy is lower
+   and its FunASR weight license needs legal review. If the license is unacceptable, drop
+   SenseVoice entirely and keep Qwen3 + Whisper.
+3. **Fallback / English-heavy option: Whisper small**, with **Whisper medium** as the
+   accuracy fallback. Use whisper.cpp as the Whisper sidecar; selecting Whisper should be a
+   user-visible setting and a documented fallback, not a silent model swap.
+4. **No live partials in v0.1.** Capture → VAD/endpointing → final inference after stop →
    post-processing → injection. This matches the observed Typeless behavior (E3) and keeps
    the provider contract final-only.
-4. **Latency target: p50 < 1.5 s and p95 ≤ 3 s after stop/end-of-speech** for a 10 s
+5. **Latency target: p50 < 1.5 s and p95 ≤ 3 s after stop/end-of-speech** for a 10 s
    utterance on Apple Silicon with the local provider, consistent with ARCHITECTURE.md.
    Do not hide latency behind optimistic partials.
-5. **Cloud: optional OpenAI, Deepgram, AssemblyAI, Qwen3 ASR Realtime, or
+6. **Cloud: optional OpenAI, Deepgram, AssemblyAI, Qwen3 ASR Realtime, or
    Google/Azure/AWS adapters**, each disabled until the user enables it, supplies a key,
    and accepts a data notice. No automatic cloud fallback.
-6. **Runtime shape: sidecar process supervised by Electron main.** Prefer a single
-   sherpa-onnx sidecar for SenseVoice and fallbacks; add whisper.cpp only if it materially
-   improves the fallback or if sherpa-onnx SenseVoice latency misses the target. Do not
-   link a native ASR addon into Electron main; the ABI and crash-isolation costs are not
-   worth it for v0.1.
-7. **Do not choose WhisperKit as the default.** Keep it as a benchmark candidate for the
+7. **Runtime shape: transcribe.cpp sidecar supervised by Electron main.** One runtime
+   covers Qwen3, SenseVoice, and optional Parakeet/Moonshine. Keep sherpa-onnx as the
+   backup if transcribe.cpp is unstable on Windows/Vulkan or if Paraformer/Zipformer
+   streaming is needed later; use whisper.cpp only for the Whisper fallback. Do not link a
+   native ASR addon into Electron main.
+8. **Do not choose WhisperKit as the default.** Keep it as a benchmark candidate for the
    macOS fast path if the portable runtime misses R2. Adding a Swift/CoreML model path
    raises solo-maintenance cost and does not help Windows.
-8. **Benchmark before locking.** The recommendation is a prior, not a decision. The
+9. **Benchmark before locking.** The recommendation is a prior, not a decision. The
    benchmark must clear the license, offline, quality, latency, memory, and cold-start
-   gates below before the model ids and default flags are frozen.
+   gates below before the model ids and default flags are frozen. Keep Qwen3 vocabulary
+   prompting off by default until the echo behavior is measured.
+
+Why not SenseVoice as the default: it is smaller and faster, but it is behind Qwen3 on
+Chinese and Cantonese in the same harness, and its FunASR weight license adds legal risk.
+It remains valuable as the lightweight tier.
 
 Why not cloud-first: it contradicts the local-first differentiation, requires accounts and
 network, and makes the privacy story vendor-dependent (the same conclusion as
 ARCHITECTURE.md Option E).
 
 Why not a single Whisper model: Whisper small is weak on Chinese, and medium/large may miss
-the 1.5 s target on CPU/Metal. SenseVoice provides a better latency-quality point for the
+the 1.5 s target on CPU/Metal. Qwen3-ASR provides a better quality-latency point for the
 primary language pair.
 
-Revisit triggers: SenseVoice fails Chinese/mixed quality gates; SenseVoice weight-license
-attribution is unworkable; sherpa-onnx SenseVoice latency misses R2; Whisper fallback
-materially beats SenseVoice after post-processing; or the product adds a language outside
-the SenseVoice set.
+Revisit triggers: Qwen3-ASR peak memory or p95 latency misses R2 on an 8 GB Mac; Qwen3
+vocabulary echo cannot be controlled; SenseVoice weight-license attribution is unworkable;
+the benchmark shows Whisper materially beats Qwen3 after post-processing; or the product
+adds a language outside the Qwen3/SenseVoice sets.
 
 ## Benchmark Plan
 
@@ -305,7 +346,7 @@ It does not run in this research card and does not require paid API accounts.
 | Mixed zh/en | Internal code-switching set | 100–200 utterances | Primary mixed-language evidence; public CS datasets (for example SEAME) often have restrictive licenses |
 | Names / technical terms | Internal term list (product names, APIs, repos, file paths, acronyms) | 50–100 terms in 50–100 utterances | Score exact/normalized term recall separately |
 | Noise robustness | MUSAN noise mixed at 5/10/15 dB SNR, plus real microphone recordings | 100–200 mixtures | Use built-in mic and AirPods; do not rely on synthetic noise alone |
-| Edge cases | Short utterances (< 1 s), silence, long utterances (20–30 s), trailing silence | 50 cases | SenseVoice segment limit is 30 s; verify chunking behavior |
+| Edge cases | Short utterances (< 1 s), silence, long utterances (20–90 s), trailing silence | 50 cases | Qwen3-ASR accepts ~87 min per call; SenseVoice has a 30 s segment limit; verify VAD/chunking behavior |
 
 Record dataset versions, licenses, and checksums. Do not commit restricted audio to the
 public repository; keep evaluation audio outside the repo or use only redistributable
@@ -361,13 +402,15 @@ Proposed quality thresholds (to be confirmed after the first run, not claimed as
 
 Selection rule:
 
-- If SenseVoice passes all hard gates, make it the default; keep Whisper small as the
-  explicit fallback and benchmark Whisper medium only if English/technical-term quality is
-  below threshold.
-- If SenseVoice passes Chinese/mixed but fails English/technical terms, ship both local
-  models and default by detected/selected language, still without cloud.
-- If SenseVoice misses latency, try WhisperKit on macOS or a smaller quantized model before
-  relaxing R2.
+- If Qwen3-ASR passes all hard gates on the 8 GB machine, make it the default; keep
+  SenseVoice Small as the lightweight tier if its license clears, and Whisper small as the
+  explicit multilingual fallback.
+- If Qwen3-ASR passes quality but misses memory/latency on 8 GB, make SenseVoice the
+  default on 8 GB and offer Qwen3 as the 16 GB+ quality mode.
+- If SenseVoice fails legal review, drop it; use Qwen3 as the default and Whisper small as
+  the fallback.
+- If Qwen3 and SenseVoice both miss the quality gates, benchmark Whisper medium and
+  WhisperKit before relaxing R2 or enabling cloud.
 - If no local candidate passes, keep local as the default for privacy but expose cloud as
   an explicit quality option; do not silently change the privacy default.
 
@@ -394,8 +437,9 @@ the model weights.
   catalog is a future hardening step, not a v0.1 requirement.
 - **Hosting:** project-owned GitHub Releases and/or Hugging Face. A mirror is optional;
   never accept an arbitrary user-supplied model URL in v0.1.
-- **Disk:** default SenseVoice int8 ~230 MB; optional Whisper small ~0.5 GB; optional
-  Whisper medium ~1.5 GB. Show disk usage in settings and provide delete/re-download.
+- **Disk:** default Qwen3-ASR 0.6B Q8_0 ~850 MB; lightweight SenseVoice Q8_0 ~253 MB;
+  optional Whisper small ~0.5 GB; optional Whisper medium ~1.5 GB. Show disk usage in
+  settings and provide delete/re-download.
 - **Licenses:** ship the license text and NOTICE for every downloaded model. The FunASR
   model license requires attribution and model-name care; CC-BY-4.0 would require
   attribution if Parakeet were ever added; Moonshine's non-commercial Chinese weights must
@@ -414,13 +458,14 @@ means the Hugging Face model metadata endpoint. These are E2.
 | openai/whisper | MIT | Apache-2.0 on the HF model cards | E2 GitHub API; E2 HF API (`whisper-small`, `whisper-medium`) | Reference implementation; not a shipping runtime |
 | whisper.cpp | MIT | Models are distributed separately by the project/community | E2 raw LICENSE on `ggml-org/whisper.cpp` | Repo moved from `ggerganov/whisper.cpp`; MIT confirmed |
 | WhisperKit | MIT | Whisper-family weights, check the specific model card | E2 raw LICENSE | Swift/CoreML; macOS-only |
-| SenseVoice | MIT | **FunASR Model Open Source License Agreement v1.1**, not MIT | E2 raw LICENSE; E2 README license section; HF card reports `license: other` | Commercial use permitted with Section 2.2 attribution/model-name requirements per the official clarification; third-party conversions may differ |
+| Qwen3-ASR | Apache-2.0 | **Apache-2.0** (official weights) | E2 transcribe.cpp pin; E3 HF model card/blog | Quality default; 30 languages + auto-detect; third-party GGUF/OpenASR conversions need per-artifact verification |
+| SenseVoice | MIT | **FunASR Model Open Source License Agreement v1.1**, not MIT | E2 raw LICENSE; E2 README license section; HF card reports `license: other` | Lightweight tier; commercial use permitted with Section 2.2 attribution/model-name requirements per the official clarification; legal review required; third-party conversions may differ |
 | FunASR | MIT | Separate `MODEL_LICENSE` per model | E2 GitHub API | Python toolkit; do not ship; model terms matter |
-| sherpa-onnx | Apache-2.0 | N/A (runtime) | E2 GitHub API | Preferred runtime |
+| sherpa-onnx | Apache-2.0 | N/A (runtime) | E2 GitHub API | Backup runtime; Qwen3-ASR support not confirmed |
 | NVIDIA NeMo | Apache-2.0 | **Parakeet TDT 0.6B v2/v3 weights are CC-BY-4.0** | E2 raw LICENSE; E2 HF API | Apache-2.0 covers NeMo code, not the Parakeet weights |
 | Vosk | Apache-2.0 | Model-specific; check each model | E2 GitHub API | Node bindings; accuracy baseline |
 | Moonshine | MIT | MIT for English and all streaming models; **non-commercial** for legacy non-streaming non-English models | E2 raw LICENSE; E2 HF API (`moonshine-base-zh` reports `other`) | Do not ship the Chinese non-streaming weights |
-| transcribe.cpp | MIT | N/A (runtime) | E2 GitHub API | Alternative runtime |
+| transcribe.cpp | MIT | N/A (runtime) | E2 GitHub API | Selected runtime; supports Qwen3-ASR + SenseVoice + Parakeet |
 | onnxruntime / onnxruntime-node | MIT | N/A (runtime) | E2 GitHub API | Direct-ONNX escape hatch |
 | Silero VAD | MIT | MIT | E2 GitHub API | Candidate VAD; validate with the ASR pipeline |
 | Cloud providers | Commercial | Commercial | E3 vendor terms | BYOK; data leaves device; verify retention and residency |
@@ -441,12 +486,16 @@ shipping.
 - Sidecar process supervised by Electron main; no native ASR addon in the main process.
 - Target p50 < 1.5 s after stop, p95 ≤ 3 s for a 10 s utterance on Apple Silicon.
 - Benchmark before locking the model.
+- Qwen3-ASR 0.6B is the quality-default prior; SenseVoice Small is the lightweight tier;
+  transcribe.cpp is the selected runtime.
 
 **Provisional (pending benchmark):**
 
-- SenseVoice Small as the default local model.
-- Whisper small (and medium as needed) as the local fallback.
-- sherpa-onnx as the preferred runtime, with whisper.cpp as plan B.
+- Qwen3-ASR 0.6B Q8_0 as the quality default; final quantization and model lock pending.
+- SenseVoice Small as the lightweight tier, subject to FunASR legal review.
+- Whisper small (and medium as needed) as the multilingual fallback.
+- transcribe.cpp as the selected runtime; sherpa-onnx as backup; whisper.cpp only for the
+  Whisper fallback.
 - WhisperKit only if the portable path misses the latency target on macOS.
 - Cloud provider priority: OpenAI and Qwen3 first for language coverage, then Deepgram,
   AssemblyAI, and hyperscalers if users ask for them.
@@ -462,9 +511,9 @@ All URLs accessed 2026-10-26 unless noted.
 
 - GitHub license API: `https://api.github.com/repos/<owner>/<repo>/license` for
   `openai/whisper`, `ggerganov/whisper.cpp`, `FunAudioLLM/SenseVoice`,
-  `modelscope/FunASR`, `k2-fsa/sherpa-onnx`, `NVIDIA/NeMo`, `alphacep/vosk-api`,
-  `usefulsensors/moonshine`, `argmaxinc/WhisperKit`, `handy-computer/transcribe.cpp`,
-  `snakers4/silero-vad`, `microsoft/onnxruntime`.
+  `QwenLM/Qwen3-ASR`, `modelscope/FunASR`, `k2-fsa/sherpa-onnx`, `NVIDIA/NeMo`,
+  `alphacep/vosk-api`, `usefulsensors/moonshine`, `argmaxinc/WhisperKit`,
+  `handy-computer/transcribe.cpp`, `snakers4/silero-vad`, `microsoft/onnxruntime`.
 - Raw licenses:
   - https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/LICENSE (MIT)
   - https://raw.githubusercontent.com/FunAudioLLM/SenseVoice/main/LICENSE (MIT)
@@ -475,6 +524,7 @@ All URLs accessed 2026-10-26 unless noted.
 - SenseVoice README license section:
   https://github.com/FunAudioLLM/SenseVoice (MIT code; weights under FunASR Model License)
 - Hugging Face model metadata:
+  - https://huggingface.co/api/models/Qwen/Qwen3-ASR-0.6B
   - https://huggingface.co/api/models/FunAudioLLM/SenseVoiceSmall
   - https://huggingface.co/api/models/openai/whisper-small
   - https://huggingface.co/api/models/openai/whisper-medium
@@ -500,6 +550,11 @@ All URLs accessed 2026-10-26 unless noted.
 - Typeless reverse-engineering notes:
   https://github.com/zephyr4123/speakmore/blob/main/targets/typeless/docs/00-overview.md
 - Runtime and model documentation:
+  - transcribe.cpp Qwen3-ASR docs: https://github.com/handy-computer/transcribe.cpp/blob/main/docs/models/qwen3-asr.md
+  - transcribe.cpp SenseVoice docs: https://github.com/handy-computer/transcribe.cpp/blob/main/docs/models/sensevoice-small.md
+  - Qwen3-ASR model card: https://huggingface.co/Qwen/Qwen3-ASR-0.6B
+  - Qwen3-ASR blog: https://qwen.ai/blog?id=qwen3asr
+  - Qwen3-ASR technical report: https://arxiv.org/abs/2601.21337
   - sherpa-onnx documentation: https://k2-fsa.github.io/sherpa/onnx/
   - whisper.cpp README: https://github.com/ggml-org/whisper.cpp
   - WhisperKit README: https://github.com/argmaxinc/WhisperKit
@@ -522,25 +577,29 @@ All URLs accessed 2026-10-26 unless noted.
 
 ## Open Questions
 
-1. **SenseVoice weight-license compliance:** read the FunASR Model Open Source License
-   Agreement v1.1 and its Section 2.2 in full, then confirm the exact attribution and
-   model-name obligations for a desktop app that downloads the weights. Decide whether the
-   obligations are acceptable before locking SenseVoice as the default.
-2. **SenseVoice punctuation/ITN:** does the sherpa-onnx path produce punctuation and
-   inverse text normalization without an additional model? If not, which post-processing
-   model ships, and what is its license and latency?
-3. **Mixed-language quality:** how much does SenseVoice degrade on English technical terms
-   embedded in Mandarin, and does Whisper small or medium close the gap enough to justify a
-   second model download?
-4. **Latency on the base machine:** does SenseVoice int8 in sherpa-onnx hit p50 < 1.5 s on
-   an 8 GB M-series Mac, including sidecar startup, VAD endpointing, and post-processing?
-5. **Fallback policy:** should the app default to SenseVoice only, or ship both SenseVoice
-   and Whisper and let the user choose? The benchmark should decide based on the quality
-   gap versus the extra ~0.5 GB download.
-6. **WhisperKit:** is the CoreML path materially faster than sherpa-onnx/whisper.cpp on
-   Apple Silicon? If yes, is a macOS-only second runtime worth the maintenance cost?
-7. **VAD choice:** use the runtime's built-in VAD or Silero VAD in the core? Measure
-   endpointing latency and false-cut behavior.
+1. **Qwen3-ASR memory/latency on the base machine:** does Qwen3-ASR 0.6B Q8_0 through
+   transcribe.cpp hit p50 < 1.5 s and stay under the peak-RSS gate on an 8 GB M-series Mac,
+   including sidecar startup, VAD, and post-processing? If not, is SenseVoice the 8 GB
+   default with Qwen3 as a 16 GB+ mode?
+2. **Qwen3-ASR vocabulary echo and punctuation:** the transcribe.cpp port warns that 0.6B
+   echoes vocabulary prompts more often than 1.7B. Does punctuation/digit output remain
+   stable with vocabulary prompting off, and is a separate punctuation model needed?
+3. **SenseVoice weight-license compliance:** read the FunASR Model Open Source License
+   Agreement v1.1 and its Section 2.2 in full, confirm attribution/model-name obligations,
+   and decide whether SenseVoice can ship as the lightweight tier. If not, drop it.
+4. **SenseVoice punctuation/ITN:** transcribe.cpp enables ITN by default; verify that the
+   resulting punctuation/casing/digits meet the dictation rubric and measure the English
+   WER cost.
+5. **Mixed-language quality:** how much do Qwen3-ASR and SenseVoice degrade on English
+   technical terms embedded in Mandarin, and does Whisper small/medium close the gap enough
+   to justify a second model download?
+6. **Fallback policy:** should the app ship Qwen3 + SenseVoice + Whisper, or only Qwen3 +
+   Whisper on 8 GB machines? The benchmark decides based on quality, memory, and download
+   size.
+7. **WhisperKit / runtime:** is WhisperKit materially faster than transcribe.cpp/whisper.cpp
+   on Apple Silicon? If yes, is a macOS-only second runtime worth the maintenance cost?
+8. **VAD choice:** transcribe.cpp has no VAD, so Silero VAD in core is the default
+   candidate. Measure endpointing latency and false-cut behavior against a runtime VAD.
 8. **Model hosting:** GitHub Releases versus Hugging Face versus both; who pays for
    bandwidth; how are checksums and catalog signatures distributed?
 9. **Cloud priority:** which provider gets the first adapter? OpenAI has the broadest
@@ -548,8 +607,9 @@ All URLs accessed 2026-10-26 unless noted.
    decide.
 10. **Data residency and retention:** for each cloud provider, document retention, training
     use, and region controls before showing the data notice.
-11. **Windows path:** which runtime and model survive the Windows helper port? sherpa-onnx
-    and whisper.cpp are the portable candidates; WhisperKit is not.
+11. **Windows path:** which runtime and model survive the Windows helper port?
+    transcribe.cpp, sherpa-onnx, and whisper.cpp are the portable candidates; WhisperKit is
+    not.
 12. **Partial transcripts:** revisit in v0.2. If added, the provider interface needs a
     streaming capability and the UI needs a stable partial-text policy; do not retrofit it
     into v0.1.

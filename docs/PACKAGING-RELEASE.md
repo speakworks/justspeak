@@ -1,6 +1,7 @@
 # Packaging, Signing, and Release Design for JustSpeak v0.1
 
-- Status: Proposed design baseline for v0.1
+- Status: Accepted design baseline for v0.1 (signing identity, release operations, and
+  signing/notarization spike pending)
 - Date: 2026-10-26
 - Decision owner: FD2008
 - Depends on: [ADR-0002: Technology stack](ADR-0002-tech-stack.md),

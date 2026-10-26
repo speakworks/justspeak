@@ -1,7 +1,7 @@
 # Windows Port Strategy for JustSpeak
 
-- Status: Proposed strategy for the Windows port after macOS v0.1. No Windows
-  implementation is included in this card.
+- Status: Accepted strategy for the Windows port after macOS v0.1 (helper-language spike
+  pending; no Windows implementation is included in this card).
 - Date: 2026-10-26
 - Decision owner: FD2008
 - Depends on: [ADR-0001: Core boundary](ADR-0001-core-boundary.md),

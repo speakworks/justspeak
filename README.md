@@ -30,6 +30,22 @@ See [docs/ROADMAP.md](docs/ROADMAP.md).
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 
+## Development (M0 demo)
+
+The first walking skeleton is macOS-only and uses a fake ASR provider so the UI,
+audio capture, hotkey, IPC, and clipboard paste can be tested before integrating a
+real model.
+
+```bash
+pnpm install
+pnpm dev        # HMR; or `pnpm start` for the built app
+```
+
+- Hotkey: `Command+Shift+Space` (toggle recording; press again to stop).
+- Grant Microphone and Accessibility permissions on first run.
+- The current transcript is fake (`FAKE ASR` badge); Qwen3-ASR integration is next.
+- `pnpm typecheck` and `pnpm build` are the current verification commands.
+
 ## Technical plan
 
 The v0.1 technical plan is documented under `docs/`. Start with the

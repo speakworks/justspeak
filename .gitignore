@@ -11,8 +11,10 @@
 
 # Node / TypeScript
 node_modules/
+out/
 dist/
 build/
+release/
 coverage/
 *.log
 

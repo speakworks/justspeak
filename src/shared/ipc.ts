@@ -22,7 +22,14 @@ export interface AppStatus {
   state: AppState
   message?: string
   modelInfo?: ModelInfo
+  theme?: ThemePreference
 }
+
+/** `system` follows macOS appearance; `light` / `dark` pin it. */
+export type ThemePreference = 'system' | 'light' | 'dark'
+
+/** What the renderer should paint after resolving `system` against the OS. */
+export type ResolvedTheme = 'light' | 'dark'
 
 /**
  * One worklet batch. `samples` is 16 kHz mono PCM16; main rejects anything
@@ -49,7 +56,9 @@ export interface JustSpeakApi {
   sendCaptureStopped: (summary: RecordingSummary) => void
   sendCaptureFailed: (message: string) => void
   sendPcmBatch: (batch: PcmBatch) => void
+  setTheme: (theme: ThemePreference) => Promise<ThemePreference>
   onState: (listener: (state: AppState, message?: string) => void) => () => void
   onTranscript: (listener: (event: TranscriptEvent) => void) => () => void
   onRecordingCommand: (listener: (command: RecordingCommand) => void) => () => void
+  onThemeChanged: (listener: (theme: ThemePreference) => void) => () => void
 }

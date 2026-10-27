@@ -6,6 +6,7 @@ import type {
   PcmBatch,
   RecordingCommand,
   RecordingSummary,
+  ThemePreference,
   TranscriptEvent
 } from '../shared/ipc'
 
@@ -17,6 +18,14 @@ const api: JustSpeakApi = {
   sendCaptureStopped: (summary: RecordingSummary) => ipcRenderer.send('capture:stopped', summary),
   sendCaptureFailed: (message: string) => ipcRenderer.send('capture:failed', message),
   sendPcmBatch: (batch: PcmBatch) => ipcRenderer.send('capture:pcm', batch),
+  setTheme: (theme) => ipcRenderer.invoke('theme:set', theme) as Promise<ThemePreference>,
+  onThemeChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, theme: ThemePreference) => {
+      listener(theme)
+    }
+    ipcRenderer.on('theme', handler)
+    return () => ipcRenderer.removeListener('theme', handler)
+  },
   onState: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, next: AppState, message?: string) => {
       listener(next, message)

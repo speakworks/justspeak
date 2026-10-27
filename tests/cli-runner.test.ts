@@ -115,17 +115,18 @@ describe('transcribe-cli runner', () => {
     expect(unlinked).toHaveLength(1)
   })
 
-  it('maps a missing model message to MODEL_MISSING', async () => {
-    const { runner } = makeRunner({
+  it('maps a missing model message to MODEL_MISSING and cleans up', async () => {
+    const { runner, unlinked } = makeRunner({
       spawn: nodeScript("process.stderr.write('model: /x -> file not found\\n'); process.exit(1)")
     })
     const result = await runner.run(pcmInput(), {})
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.code).toBe('MODEL_MISSING')
+    expect(unlinked).toHaveLength(1)
   })
 
-  it('maps other non-zero exits to INFERENCE_FAILED', async () => {
-    const { runner } = makeRunner({
+  it('maps other non-zero exits to INFERENCE_FAILED and cleans up', async () => {
+    const { runner, unlinked } = makeRunner({
       spawn: nodeScript("process.stderr.write('boom\\n'); process.exit(2)")
     })
     const result = await runner.run(pcmInput(), {})
@@ -134,6 +135,7 @@ describe('transcribe-cli runner', () => {
       expect(result.error.code).toBe('INFERENCE_FAILED')
       expect(result.error.retryable).toBe(true)
     }
+    expect(unlinked).toHaveLength(1)
   })
 
   it('maps a missing transcript to INFERENCE_FAILED', async () => {
@@ -187,10 +189,11 @@ describe('transcribe-cli runner', () => {
         return true
       }
     }
-    const { runner } = makeRunner({ spawn: () => new FakeChild() })
+    const { runner, unlinked } = makeRunner({ spawn: () => new FakeChild() })
     const result = await runner.run(pcmInput(), {})
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.code).toBe('MODEL_LOAD_FAILED')
+    expect(unlinked).toHaveLength(1)
   })
 
   it('reports health from the runtime and model files', async () => {

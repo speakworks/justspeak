@@ -10,14 +10,21 @@ The session SHALL move through `idle → recording → transcribing → pasting 
 
 #### Scenario: Happy path
 
-- **WHEN** the user starts recording, stops, the provider returns a transcript, and paste succeeds
-- **THEN** the renderer observes `recording`, `transcribing`, `pasting`, and `idle` in order
-- **AND** exactly one transcript event is emitted for the utterance
+- **WHEN** the user starts recording and then stops
+- **THEN** the stop command moves the session from `recording` to `transcribing` before main waits for `capture:stopped`
+- **AND** the renderer flushes its final partial 20 ms batch and sends the stop summary
+- **AND** main accepts that final batch for the current session, then emits exactly one transcript event and moves through `pasting` to `idle`
 
 #### Scenario: Stale stop event
 
 - **WHEN** a `capture:stopped` message arrives while the session is not transcribing
 - **THEN** the message is ignored without changing state or emitting a transcript
+
+#### Scenario: Empty stop during a recording
+
+- **WHEN** stop is requested and the renderer reports a zero-sample summary
+- **THEN** the session transitions from `transcribing` to `idle` with an empty-capture notice
+- **AND** no provider call or transcript event occurs
 
 #### Scenario: Invalid recording summary
 
@@ -60,7 +67,7 @@ Every transcript event SHALL include the text, whether it came from the fake pro
 
 ### Requirement: Transient ASR failures SHALL retry once with the same provider
 
-The session SHALL retry the same utterance once with the same provider on `TIMEOUT` or a retryable `INFERENCE_FAILED`, and SHALL NOT retry `CANCELLED`, `AUDIO_TOO_LONG`, `MODEL_MISSING`, `MODEL_LOAD_FAILED`, or `UNSUPPORTED_LANGUAGE`; no retry may switch providers.
+The session SHALL retry the same utterance once with the same provider on `TIMEOUT` or a retryable `INFERENCE_FAILED`, and SHALL NOT retry `CANCELLED`, `AUDIO_TOO_LONG`, `MODEL_MISSING`, `MODEL_LOAD_FAILED`, or `UNSUPPORTED_LANGUAGE`; no retry may switch providers. M1 has only the fake and Qwen3 adapters, so the ADR's "then offer fallback" clause is out of scope: after the retry the visible error is the terminal outcome, and no audio is retained for a further retry.
 
 #### Scenario: Transient failure recovers
 

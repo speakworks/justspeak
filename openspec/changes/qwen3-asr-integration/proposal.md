@@ -30,7 +30,7 @@ The M0 walking skeleton only returns a scripted fake transcript: the renderer se
 - `src/core/asr`: provider types are reused; add `qwen3-provider`, WAV encoding, and model catalog helpers.
 - `src/main`: composition root selects fake or qwen3, owns model/runtime resolution, download/verification, PCM accumulation, WAV writing, and sidecar process supervision.
 - `src/preload` and `src/shared/ipc`: add a bounded `capture:pcm` message and model info to the status payload; keep the surface narrow.
-- `src/renderer/src`: AudioWorklet converts Float32 to Int16 batches; capture lifecycle moves into an injectable controller; UI gains one model/license/source line only.
+- `src/renderer/src`: AudioWorklet posts Float32 quanta; the pure `PcmBatcher` clamps/converts them to Int16 20 ms batches; capture lifecycle moves into an injectable controller; UI gains one model/license/source line only (qwen3 mode).
 - `tests/`, `vitest.config.ts`, `package.json`: Vitest harness and `pnpm test`.
 - `scripts/`, `bench/`: setup and benchmark tooling; `models/` stays gitignored and contains no committed weights.
 - OpenSpec: new change `qwen3-asr-integration`; archived into `openspec/specs/` at the end of the run.

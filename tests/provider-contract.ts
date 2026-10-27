@@ -117,5 +117,11 @@ export function runProviderContract(harness: ProviderContractHarness): void {
       await provider.prepare(harness.model ?? TEST_MODEL)
       await expect(provider.transcribe(pcmInput(), {})).resolves.toBeTypeOf('object')
     })
+
+    it('disposes cleanly through the provider interface', async () => {
+      const provider = harness.create()
+      await provider.prepare(harness.model ?? TEST_MODEL)
+      await expect(provider.dispose()).resolves.toBeUndefined()
+    })
   })
 }

@@ -9,9 +9,29 @@ export interface RecordingSummary {
   rms: number
 }
 
+export interface ModelInfo {
+  id: string
+  name: string
+  license: string
+  sourceUrl: string
+  sizeBytes: number
+  quantization: string
+}
+
 export interface AppStatus {
   state: AppState
   message?: string
+  modelInfo?: ModelInfo
+}
+
+/**
+ * One worklet batch. `samples` is 16 kHz mono PCM16; main rejects anything
+ * above the batch bound before appending it to the session buffer.
+ */
+export interface PcmBatch {
+  sequence: number
+  capturedAtMs: number
+  samples: Int16Array
 }
 
 export interface TranscriptEvent {
@@ -28,6 +48,7 @@ export interface JustSpeakApi {
   sendCaptureStarted: (atMs: number) => void
   sendCaptureStopped: (summary: RecordingSummary) => void
   sendCaptureFailed: (message: string) => void
+  sendPcmBatch: (batch: PcmBatch) => void
   onState: (listener: (state: AppState, message?: string) => void) => () => void
   onTranscript: (listener: (event: TranscriptEvent) => void) => () => void
   onRecordingCommand: (listener: (command: RecordingCommand) => void) => () => void

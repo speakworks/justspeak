@@ -3,6 +3,7 @@ import type {
   AppState,
   AppStatus,
   JustSpeakApi,
+  PcmBatch,
   RecordingCommand,
   RecordingSummary,
   TranscriptEvent
@@ -15,6 +16,7 @@ const api: JustSpeakApi = {
   sendCaptureStarted: (atMs: number) => ipcRenderer.send('capture:started', atMs),
   sendCaptureStopped: (summary: RecordingSummary) => ipcRenderer.send('capture:stopped', summary),
   sendCaptureFailed: (message: string) => ipcRenderer.send('capture:failed', message),
+  sendPcmBatch: (batch: PcmBatch) => ipcRenderer.send('capture:pcm', batch),
   onState: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, next: AppState, message?: string) => {
       listener(next, message)

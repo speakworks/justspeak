@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "id": "qwen3-asr-0.6b-q8",
+      "name": "Qwen3-ASR 0.6B (Q8_0)",
+      "version": "0.6b-q8-2026-10",
+      "runtime": "transcribe.cpp-0.4.1",
+      "files": [
+        {
+          "path": "qwen3-asr-0.6b/Qwen3-ASR-0.6B-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/7e7c69a577fa2725dfedbe34b5e999336e30a19b/Qwen3-ASR-0.6B-Q8_0.gguf",
+          "sha256": "f081b2d5e23bd669d92cc331d722a8a0681943b8e6f34b48996fd5c319b5acd8",
+          "sizeBytes": 850423456
+        }
+      ],
+      "sizeBytes": 850423456,
+      "license": "Apache-2.0",
+      "sourceUrl": "https://huggingface.co/handy-computer/Qwen3-ASR-0.6B-gguf",
+      "quantization": "Q8_0",
+      "capabilities": {
+        "languages": ["zh", "en", "yue", "mixed"],
+        "streaming": false,
+        "punctuation": true,
+        "itn": true,
+        "timestamps": false,
+        "vad": false,
+        "maxAudioMs": 5220000,
+        "quantizations": ["Q8_0"]
+      }
+    }
+  ],
+  "runtimes": [
+    {
+      "id": "transcribe.cpp-0.4.1",
+      "version": "0.4.1",
+      "tag": "v0.4.1",
+      "commit": "4d7c1ccefd39e5a9ea36cca5f8fefc6dcc14b99b",
+      "sourceUrl": "https://github.com/handy-computer/transcribe.cpp",
+      "license": "MIT",
+      "buildDir": "models/runtime/transcribe.cpp",
+      "binary": "build/bin/transcribe-cli"
+    }
+  ]
+}

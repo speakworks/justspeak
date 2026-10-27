@@ -127,6 +127,13 @@ h1 {
   text-align: center;
 }
 
+.model-meta {
+  margin-top: -4px;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 kbd {
   display: inline-block;
   min-width: 22px;

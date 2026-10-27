@@ -1,18 +1,75 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, net } from 'electron'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { FakeAsrProvider } from '../core/asr/fake-provider'
-import type { AppState, AppStatus, RecordingSummary, TranscriptEvent } from '../shared/ipc'
+import { Qwen3AsrProvider } from '../core/asr/qwen3-provider'
+import type {
+  AsrCapabilities,
+  AsrModelDescriptor,
+  AsrProvider,
+  AudioInput,
+  ProviderHealth,
+  ProviderResult,
+  TranscribeOptions,
+  TranscriptionResult
+} from '../core/asr/types'
+import { SessionController } from '../core/session/session-controller'
+import type { AppStatus, ModelInfo, TranscriptEvent } from '../shared/ipc'
+import { MODEL_CATALOG, PRIMARY_MODEL, PRIMARY_MODEL_DESCRIPTOR } from './asr/catalog'
+import { TranscribeCliRunner } from './asr/cli-runner'
+import { ModelManager } from './asr/model-manager'
+import { parseAsrMode } from './asr/mode'
+import { resolveAsrPaths } from './asr/paths'
 import { pasteText } from './injection'
+import { isTrustedSender } from './ipc-sender'
+import { PcmBuffer } from './pcm-buffer'
+
+const MODEL_INFO: ModelInfo = {
+  id: PRIMARY_MODEL.id,
+  name: PRIMARY_MODEL.name,
+  license: PRIMARY_MODEL.license,
+  sourceUrl: PRIMARY_MODEL.sourceUrl,
+  sizeBytes: PRIMARY_MODEL.sizeBytes,
+  quantization: PRIMARY_MODEL.quantization
+}
 
 let mainWindow: BrowserWindow | null = null
-let state: AppState = 'idle'
-let lastMessage: string | undefined
 let rendererReady = false
-let pipelineRunning = false
-let lastStartAt = 0
-const asr = new FakeAsrProvider()
+let session: SessionController | null = null
+let providerError: string | undefined
+let initializing = false
+let pcmBuffer = new PcmBuffer()
+let activeModelInfo: ModelInfo | undefined
+
+class UnavailableAsrProvider implements AsrProvider {
+  readonly id = 'unavailable'
+  readonly capabilities: AsrCapabilities = {
+    languages: [],
+    streaming: false,
+    punctuation: false,
+    itn: false,
+    timestamps: false,
+    vad: false,
+    maxAudioMs: 0,
+    quantizations: []
+  }
+
+  async prepare(_model: AsrModelDescriptor): Promise<void> {}
+  async transcribe(
+    _input: AudioInput,
+    _options: TranscribeOptions
+  ): Promise<ProviderResult<TranscriptionResult>> {
+    return {
+      ok: false,
+      error: { code: 'MODEL_LOAD_FAILED', message: providerError ?? 'ASR unavailable', retryable: false }
+    }
+  }
+  async dispose(): Promise<void> {}
+  async health(): Promise<ProviderHealth> {
+    return { status: 'error', message: providerError ?? 'ASR unavailable' }
+  }
+}
 
 function preloadPath(): string {
   const base = path.join(app.getAppPath(), 'out/preload')
@@ -23,9 +80,7 @@ function preloadPath(): string {
   return path.join(base, 'index.cjs')
 }
 
-function sendState(next: AppState, message?: string): void {
-  state = next
-  lastMessage = message
+function sendState(next: AppStatus['state'], message?: string): void {
   console.log('[state]', next, message ?? '')
   mainWindow?.webContents.send('state', next, message)
 }
@@ -34,76 +89,176 @@ function sendTranscript(event: TranscriptEvent): void {
   mainWindow?.webContents.send('transcript', event)
 }
 
-async function runPipeline(summary: RecordingSummary): Promise<void> {
-  if (pipelineRunning || state !== 'transcribing') {
-    console.warn('[pipeline] ignored', { pipelineRunning, state })
-    return
-  }
-
-  pipelineRunning = true
-  console.log('[pipeline] start', summary)
-  sendState('transcribing')
-  const startedAt = Date.now()
-
-  try {
-    const result = await asr.transcribe(
-      {
-        pcm: new Int16Array(),
-        sampleRate: 16000,
-        channels: 1,
-        durationMs: summary.durationMs
-      },
-      {}
-    )
-
-    if (!result.ok) {
-      sendState('error', result.error.message)
-      return
-    }
-
-    sendTranscript({
-      text: result.value.text,
-      fake: true,
-      durationMs: summary.durationMs,
-      latencyMs: Date.now() - startedAt
-    })
-
-    sendState('pasting')
-    await pasteText(result.value.text)
-    sendState('idle')
-  } catch (error) {
-    sendState('error', error instanceof Error ? error.message : String(error))
-  } finally {
-    pipelineRunning = false
+function getAudio(): AudioInput {
+  const { pcm } = pcmBuffer.finish()
+  return {
+    pcm,
+    sampleRate: 16000,
+    channels: 1,
+    durationMs: Math.round((pcm.length / 16000) * 1000)
   }
 }
 
-async function toggleRecording(): Promise<void> {
-  const now = Date.now()
-  console.log('[toggle] state=', state)
+function makeSession(provider: AsrProvider, fake: boolean): SessionController {
+  return new SessionController({
+    provider,
+    paste: pasteText,
+    sendState,
+    sendTranscript,
+    fake,
+    getAudio,
+    transcribeTimeoutMs: 120_000
+  })
+}
 
-  if (state === 'recording') {
-    sendState('transcribing')
+function failSession(message: string): void {
+  providerError = message
+  session?.fail(message)
+}
+
+async function initializeFake(): Promise<void> {
+  const provider = new FakeAsrProvider({ delayMs: 350 })
+  session = makeSession(provider, true)
+  activeModelInfo = undefined
+  providerError = undefined
+  initializing = false
+}
+
+async function initializeProvider(): Promise<void> {
+  if (initializing) return
+  initializing = true
+  providerError = undefined
+
+  const mode = parseAsrMode(process.env.JUSTSPEAK_ASR)
+  if (!mode.ok) {
+    session = makeSession(new UnavailableAsrProvider(), false)
+    activeModelInfo = undefined
+    initializing = false
+    failSession(mode.message)
+    return
+  }
+  if (mode.mode === 'fake') {
+    await initializeFake()
+    return
+  }
+
+  const paths = resolveAsrPaths(app.getAppPath(), MODEL_CATALOG)
+  const runner = new TranscribeCliRunner({
+    cliPath: paths.cliPath,
+    modelPath: paths.modelPath
+  })
+  const provider = new Qwen3AsrProvider({
+    model: PRIMARY_MODEL_DESCRIPTOR,
+    runner
+  })
+  session = makeSession(provider, false)
+  activeModelInfo = MODEL_INFO
+
+  if (!existsSync(paths.cliPath)) {
+    initializing = false
+    failSession(
+      `Qwen3 运行时缺失：${paths.cliPath}。请运行 pnpm setup:asr（运行时来源：${MODEL_CATALOG.runtimes[0]?.sourceUrl}）。`
+    )
+    return
+  }
+
+  if (!existsSync(paths.modelPath)) {
+    sendState('idle', '首次使用：正在下载 Qwen3-ASR 0.6B（约 850 MB）…')
+    let lastPercent = 0
+    try {
+      const fetchImpl = ((input: string | URL | Request, init?: RequestInit) =>
+        net.fetch(input as string, init)) as typeof fetch
+      const manager = new ModelManager({ fetch: fetchImpl })
+      const file = PRIMARY_MODEL.files[0]
+      if (!file) throw new Error('model catalog has no file')
+      await manager.download(file, paths.modelPath, {
+        onProgress: ({ bytes, totalBytes }) => {
+          const percent = Math.floor((bytes / totalBytes) * 100)
+          if (percent >= lastPercent + 5) {
+            lastPercent = percent
+            sendState('idle', `首次使用：正在下载 ${PRIMARY_MODEL.name}（${percent}%）…`)
+          }
+        }
+      })
+    } catch (error) {
+      initializing = false
+      failSession(
+        `模型下载失败：${error instanceof Error ? error.message : String(error)}。` +
+          `来源：${PRIMARY_MODEL.sourceUrl}；许可证：${PRIMARY_MODEL.license}。` +
+          '可运行 pnpm setup:asr 手动准备模型。'
+      )
+      return
+    }
+  }
+
+  const file = PRIMARY_MODEL.files[0]
+  if (!file) {
+    initializing = false
+    failSession('模型目录条目缺失，请运行 pnpm setup:asr。')
+    return
+  }
+  console.log('[model] verifying SHA-256 before use…')
+  let verification: Awaited<ReturnType<ModelManager['verify']>>
+  try {
+    verification = await new ModelManager().verify(paths.modelPath, file)
+  } catch (error) {
+    // A stat/read failure must not leave `initializing` stuck at true: the hotkey
+    // would keep answering "正在准备语音识别" with no error and no retry path.
+    initializing = false
+    failSession(
+      `模型校验失败：${error instanceof Error ? error.message : String(error)}。` +
+        `请运行 pnpm setup:asr 重新下载；来源：${PRIMARY_MODEL.sourceUrl}；许可证：${PRIMARY_MODEL.license}。`
+    )
+    return
+  }
+  if (!verification.ok) {
+    initializing = false
+    failSession(
+      `模型校验失败（期望 ${file.sha256}，实际 ${verification.sha256}）。` +
+        `请运行 pnpm setup:asr 重新下载；来源：${PRIMARY_MODEL.sourceUrl}；许可证：${PRIMARY_MODEL.license}。`
+    )
+    return
+  }
+  console.log('[model] verified', verification.sha256)
+
+  try {
+    await provider.prepare(PRIMARY_MODEL_DESCRIPTOR)
+    initializing = false
+    sendState('idle', `模型就绪：${PRIMARY_MODEL.name} · ${PRIMARY_MODEL.license}`)
+  } catch (error) {
+    initializing = false
+    failSession(
+      `Qwen3 模型加载失败：${error instanceof Error ? error.message : String(error)}。` +
+        `来源：${PRIMARY_MODEL.sourceUrl}；许可证：${PRIMARY_MODEL.license}。`
+    )
+  }
+}
+
+function toggleRecording(): void {
+  if (!session) {
+    sendState('error', '语音识别仍在初始化，请稍候。')
+    return
+  }
+  if (providerError) {
+    // Re-run initialization so a repaired install can recover without a restart.
+    void initializeProvider()
+    return
+  }
+  if (initializing) {
+    sendState('idle', '正在准备语音识别，请稍候…')
+    return
+  }
+
+  const action = session.toggle(rendererReady)
+  if (action === 'start') {
+    pcmBuffer.begin()
+    mainWindow?.webContents.send('recording:start')
+    return
+  }
+  if (action === 'stop') {
     mainWindow?.webContents.send('recording:stop')
-    setTimeout(() => {
-      if (state === 'transcribing' && !pipelineRunning) {
-        console.warn('[pipeline] capture:stopped missing')
-        sendState('error', '没有收到录音停止事件，请重试。')
-      }
-    }, 5000)
-    return
+    setTimeout(() => session?.handleStopWatchdog(), 5000)
   }
-
-  if (state !== 'idle' && state !== 'error') return
-  if (!rendererReady) {
-    console.warn('[hotkey] ignored: renderer not ready')
-    return
-  }
-  if (now - lastStartAt < 300) return
-
-  lastStartAt = now
-  sendState('recording')
-  mainWindow?.webContents.send('recording:start')
 }
 
 function createWindow(): void {
@@ -151,16 +306,14 @@ function createWindow(): void {
   mainWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
     rendererReady = false
     const message = `界面加载失败：${description} (${code}) ${url}`
-    state = 'error'
-    lastMessage = message
+    session?.fail(message)
     dialog.showErrorBox('JustSpeak', message)
     app.quit()
   })
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     rendererReady = false
     const message = `界面进程异常退出：${details.reason}`
-    state = 'error'
-    lastMessage = message
+    session?.fail(message)
     dialog.showErrorBox('JustSpeak', `${message}。请重启应用。`)
     app.quit()
   })
@@ -175,52 +328,50 @@ function createWindow(): void {
   }
 }
 
-function isRecordingSummary(value: unknown): value is RecordingSummary {
-  if (typeof value !== 'object' || value === null) return false
-  const record = value as Record<string, unknown>
-  return ['durationMs', 'samples', 'sampleRate', 'rms'].every((key) => {
-    const n = record[key]
-    return typeof n === 'number' && Number.isFinite(n) && n >= 0
-  })
-}
-
 app.whenReady().then(() => {
   ipcMain.on('renderer:ready', () => {
     rendererReady = true
     console.log('[renderer] ready')
   })
   ipcMain.on('recording:toggle', () => {
-    void toggleRecording()
+    toggleRecording()
   })
   ipcMain.on('capture:started', (_event, atMs: number) => {
     console.log('[capture] started', atMs)
+    session?.handleCaptureStarted(atMs)
   })
   ipcMain.on('capture:stopped', (_event, summary: unknown) => {
-    if (state !== 'transcribing') {
-      console.warn('[capture] stale stopped event ignored', state)
-      return
-    }
-    if (!isRecordingSummary(summary)) {
-      sendState('error', '录音数据无效，请重试。')
-      return
-    }
-    void runPipeline(summary)
+    void session?.handleCaptureStopped(summary)
   })
   ipcMain.on('capture:failed', (_event, message: unknown) => {
-    if (state === 'recording' || state === 'transcribing') {
-      sendState('error', typeof message === 'string' ? message : '录音失败，请重试。')
-    }
+    pcmBuffer.finish()
+    session?.handleCaptureFailed(message)
   })
-  ipcMain.handle('state:get', (): AppStatus => ({ state, message: lastMessage }))
+  ipcMain.on('capture:pcm', (event, payload: unknown) => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      console.warn('[capture:pcm] rejected untrusted sender')
+      return
+    }
+    const result = pcmBuffer.append(payload)
+    if (result.ok || result.error.code === 'NOT_RECORDING') return
+    mainWindow?.webContents.send('recording:stop')
+    session?.handleCaptureFailed(result.error.message)
+  })
+  ipcMain.handle('state:get', (): AppStatus => ({
+    state: session?.state ?? 'idle',
+    message: session?.lastMessage,
+    modelInfo: activeModelInfo
+  }))
 
   createWindow()
+  void initializeProvider()
 
   const registered = globalShortcut.register('CommandOrControl+Shift+Space', () => {
     console.log('[hotkey] event')
-    void toggleRecording()
+    toggleRecording()
   })
   if (!registered) {
-    sendState('error', '无法注册 Command+Shift+Space，可能已被其他应用占用。')
+    session?.fail('无法注册 Command+Shift+Space，可能已被其他应用占用。')
   }
 })
 

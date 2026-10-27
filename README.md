@@ -30,21 +30,34 @@ See [docs/ROADMAP.md](docs/ROADMAP.md).
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 
-## Development (M0 demo)
+## Development (M1: Qwen3-ASR)
 
-The first walking skeleton is macOS-only and uses a fake ASR provider so the UI,
-audio capture, hotkey, IPC, and clipboard paste can be tested before integrating a
-real model.
+M1 runs a real local transcript path: the renderer sends 16 kHz mono PCM to main,
+main writes a temporary WAV, and the pinned `transcribe.cpp` CLI transcribes it with
+Qwen3-ASR 0.6B Q8_0. The fake provider remains available for tests and the demo.
+
+Requirements: macOS arm64, Node 24, pnpm, and Xcode Command Line Tools plus CMake for
+the pinned runtime build.
 
 ```bash
 pnpm install
-pnpm dev        # HMR; or `pnpm start` for the built app
+pnpm setup:asr   # build transcribe.cpp v0.4.1 + download/verify the 850 MB model
+pnpm dev         # HMR; or `pnpm start` for the built app
+pnpm test        # Vitest contract/IPC/capture/injection/lifecycle suite (no model)
+pnpm bench:asr   # provider-driven benchmark; writes bench/reports/<date>-qwen3-asr.md
 ```
 
 - Hotkey: `Command+Shift+Space` (toggle recording; press again to stop).
 - Grant Microphone and Accessibility permissions on first run.
-- The current transcript is fake (`FAKE ASR` badge); Qwen3-ASR integration is next.
-- `pnpm typecheck` and `pnpm build` are the current verification commands.
+- Default provider is Qwen3 (`JUSTSPEAK_ASR=qwen3`); use `JUSTSPEAK_ASR=fake pnpm dev`
+  for the deterministic fake flow. An unknown value is an error, and a missing model is
+  never silently replaced by fake or cloud.
+- Model weights and the built runtime live in gitignored `models/`; nothing is committed.
+  The UI shows the model name, license (Apache-2.0), and source URL.
+- Override paths with `JUSTSPEAK_TRANSCRIBE_CLI` and `JUSTSPEAK_QWEN3_MODEL`.
+- Verification: `pnpm typecheck`, `pnpm test`, `pnpm build`, and
+  `openspec validate --specs --strict`. The M1 change `qwen3-asr-integration` is already
+  archived, so validate the synced specs instead of the (closed) change.
 
 ## Technical plan
 

@@ -34,3 +34,6 @@ target/
 .idea/
 .vscode/
 *.swp
+
+# Local ASR models and runtime (never commit weights)
+models/

@@ -16,6 +16,8 @@
     "src/preload/**/*.ts",
     "src/core/**/*.ts",
     "src/shared/**/*.ts",
-    "electron.vite.config.ts"
+    "tests/**/*.ts",
+    "electron.vite.config.ts",
+    "vitest.config.ts"
   ]
 }

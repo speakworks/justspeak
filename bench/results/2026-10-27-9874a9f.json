@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "runId": "2026-10-27-9874a9f",
+  "generatedAt": "2026-10-27T00:02:57.636Z",
+  "gitCommit": "9874a9f",
+  "appVersion": "0.1.0-demo.0",
+  "provider": {
+    "id": "qwen3-asr-0.6b-q8",
+    "modelId": "qwen3-asr-0.6b-q8",
+    "modelName": "Qwen3-ASR 0.6B (Q8_0)",
+    "modelSha256": "f081b2d5e23bd669d92cc331d722a8a0681943b8e6f34b48996fd5c319b5acd8",
+    "modelSizeBytes": 850423456,
+    "license": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/handy-computer/Qwen3-ASR-0.6B-gguf",
+    "quantization": "Q8_0",
+    "runtimeId": "transcribe.cpp-0.4.1",
+    "runtimeTag": "v0.4.1",
+    "runtimeCommit": "4d7c1ccefd39e5a9ea36cca5f8fefc6dcc14b99b"
+  },
+  "fixture": {
+    "id": "zh-4s",
+    "sha256": "7d966cb336f6f948daae2703c8a2cff0cbdcc9b4daf854150d2e34d37b11cf62",
+    "durationSec": 3.818,
+    "sampleRate": 16000,
+    "channels": 1,
+    "synthetic": true
+  },
+  "hardware": {
+    "chip": "Apple M1 Max",
+    "cores": 10,
+    "memoryBytes": 34359738368,
+    "macOS": "27.0.1",
+    "powerState": "Now drawing from 'AC Power'"
+  },
+  "metrics": {
+    "rtfConvention": "rtf = inference_seconds / audio_seconds (lower is better)",
+    "runs": [
+      {
+        "run": 1,
+        "wallMs": 330,
+        "providerLatencyMs": 330,
+        "rtf": 0.086,
+        "speedFactor": 11.6,
+        "language": "zh",
+        "cer": 0,
+        "matchesExpected": true
+      },
+      {
+        "run": 2,
+        "wallMs": 330,
+        "providerLatencyMs": 330,
+        "rtf": 0.086,
+        "speedFactor": 11.6,
+        "language": "zh",
+        "cer": 0,
+        "matchesExpected": true
+      },
+      {
+        "run": 3,
+        "wallMs": 362,
+        "providerLatencyMs": 362,
+        "rtf": 0.095,
+        "speedFactor": 10.5,
+        "language": "zh",
+        "cer": 0,
+        "matchesExpected": true
+      }
+    ],
+    "coldStartMs": 330,
+    "warmMedianMs": 346,
+    "warmMedianRtf": 0.09,
+    "peakRssBytes": 370688000,
+    "modelSizeBytes": 850423456,
+    "stopToFinalDefinition": "provider.transcribe wall time: PCM validation + WAV write + CLI spawn + model load + inference + parse; excludes clipboard paste and IPC from the renderer"
+  },
+  "accuracyNote": "CER is against a synthetic macOS TTS fixture and is a smoke signal only, not evidence of real-speech accuracy.",
+  "gates": {
+    "peakRssUnder2GB": true,
+    "modelUnder1GB": true
+  }
+}

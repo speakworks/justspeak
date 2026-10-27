@@ -1,0 +1,13 @@
+audio: ../../../bench/fixtures/zh-4s.wav
+  samples:    61093
+  duration:   3.818 s
+  sample rate 16000 Hz mono float32
+model: ../../qwen3-asr-0.6b/Qwen3-ASR-0.6B-Q8_0.gguf -> ok
+  backend:    MTL0
+  name:       Qwen3-ASR 0.6B
+  license:    apache-2.0
+  max audio:  5218.6 s  (context 65536 tok, ~7168 MiB KV max)
+run: ok
+text: 这是语音识别测试。今天天气很好。
+detected-language: zh
+  realtime:   24x (161.7 ms for 3.8 s)

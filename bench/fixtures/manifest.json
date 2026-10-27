@@ -1,0 +1,18 @@
+{
+  "fixtures": [
+    {
+      "id": "zh-4s",
+      "path": "zh-4s.wav",
+      "text": "这是语音识别测试，今天天气很好。",
+      "language": "zh",
+      "durationSec": 3.818,
+      "sampleRate": 16000,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "sha256": "7d966cb336f6f948daae2703c8a2cff0cbdcc9b4daf854150d2e34d37b11cf62",
+      "generatedBy": "macOS say -v Tingting + afconvert (synthetic TTS)",
+      "license": "Synthetic, generated locally; contains no personal data",
+      "use": "benchmark and manual qwen3 smoke only"
+    }
+  ]
+}

@@ -89,7 +89,7 @@ body {
 }
 
 .app {
-  max-width: 640px;
+  max-width: 680px;
   margin: 0 auto;
   padding: 56px 28px 40px;
 }
@@ -285,6 +285,11 @@ kbd {
 
 .transcript-text {
   min-height: 64px;
+  /* Long dictation scrolls inside the card so the window itself never grows a
+     page scrollbar; the default window is sized to the default content. */
+  max-height: 142px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   margin: 0;
   font-size: 20px;
   line-height: 1.55;

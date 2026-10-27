@@ -1,4 +1,13 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeTheme, net } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  globalShortcut,
+  ipcMain,
+  nativeTheme,
+  net,
+  screen
+} from 'electron'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -305,9 +314,22 @@ function createWindow(): void {
     return
   }
 
+  // Height is measured, not guessed: the default UI needs ≈542 CSS px. 570
+  // leaves a small breathing margin without the empty band a 760 px window
+  // showed. Long transcripts scroll inside the transcript card, so the page
+  // itself never gains a scrollbar. Shrink only, never grow, on a display too
+  // small for the default.
+  const PREFERRED_WIDTH = 720
+  const PREFERRED_HEIGHT = 570
+  const workArea = screen.getPrimaryDisplay().workAreaSize
+  const width = Math.min(PREFERRED_WIDTH, workArea.width - 40)
+  const height = Math.min(PREFERRED_HEIGHT, workArea.height - 40)
+
   mainWindow = new BrowserWindow({
-    width: 560,
-    height: 480,
+    width,
+    height,
+    minWidth: Math.min(560, width),
+    minHeight: Math.min(500, height),
     show: false,
     titleBarStyle: 'hiddenInset',
     backgroundColor: DARK_BACKGROUND,

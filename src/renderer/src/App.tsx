@@ -5,10 +5,17 @@ import {
   type CaptureStreamPort,
   type WorkletNodePort
 } from '../../core/capture/capture-controller'
+import {
+  THEME_LABEL,
+  nextThemePreference,
+  resolveTheme
+} from '../../core/theme/theme'
 import type {
   AppState,
   ModelInfo,
   RecordingSummary,
+  ResolvedTheme,
+  ThemePreference,
   TranscriptEvent
 } from '../../shared/ipc'
 
@@ -100,6 +107,13 @@ export function App(): React.JSX.Element {
   const [level, setLevel] = useState(0)
   const [transcript, setTranscript] = useState<TranscriptEvent | null>(null)
   const [modelInfo, setModelInfo] = useState<ModelInfo | undefined>()
+  const [theme, setTheme] = useState<ThemePreference>('system')
+  const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() =>
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light'
+  )
 
   const controllerRef = useRef<CaptureController | null>(null)
   if (!controllerRef.current) {
@@ -111,6 +125,30 @@ export function App(): React.JSX.Element {
     setMessage(detail)
     window.justspeak.sendCaptureFailed(detail)
   }, [])
+
+  // Resolve `system` against the OS appearance and publish the concrete value,
+  // so the CSS never has to guess and a pinned choice wins over the OS.
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolveTheme(theme, systemTheme)
+  }, [theme, systemTheme])
+
+  useEffect(() => {
+    const query = window.matchMedia?.('(prefers-color-scheme: dark)')
+    if (!query) return
+    const onChange = (event: MediaQueryListEvent): void => {
+      setSystemTheme(event.matches ? 'dark' : 'light')
+    }
+    query.addEventListener('change', onChange)
+    return () => query.removeEventListener('change', onChange)
+  }, [])
+
+  const cycleTheme = useCallback((): void => {
+    const next = nextThemePreference(theme)
+    setTheme(next)
+    void window.justspeak.setTheme(next).catch((error: unknown) => {
+      setMessage(error instanceof Error ? error.message : String(error))
+    })
+  }, [theme])
 
   useEffect(() => {
     const controller = controllerRef.current
@@ -133,6 +171,7 @@ export function App(): React.JSX.Element {
         void controller.stop().catch(reportFailure)
       }
     })
+    const unsubTheme = window.justspeak.onThemeChanged((next) => setTheme(next))
 
     window.justspeak.sendRendererReady()
 
@@ -141,6 +180,7 @@ export function App(): React.JSX.Element {
       .then((status) => {
         if (disposed) return
         setModelInfo(status.modelInfo)
+        if (status.theme) setTheme(status.theme)
         if (sawStateEvent) return
         setState(status.state)
         setMessage(status.message)
@@ -157,6 +197,7 @@ export function App(): React.JSX.Element {
       unsubState()
       unsubTranscript()
       unsubCommand()
+      unsubTheme()
       void controller.dispose()
     }
   }, [reportFailure])
@@ -170,7 +211,18 @@ export function App(): React.JSX.Element {
           <p className="kicker">JustSpeak · M1</p>
           <h1>按一下，开始说话</h1>
         </div>
-        <span className={`status ${state}`}>{STATE_LABEL[state]}</span>
+        <div className="header-actions">
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={cycleTheme}
+            title={`当前：${THEME_LABEL[theme]}；点击切换`}
+            aria-label={`外观：${THEME_LABEL[theme]}，点击切换`}
+          >
+            {theme === 'system' ? '外观：跟随系统' : `外观：${THEME_LABEL[theme]}`}
+          </button>
+          <span className={`status ${state}`}>{STATE_LABEL[state]}</span>
+        </div>
       </header>
 
       <section className="card">

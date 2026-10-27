@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, net } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeTheme, net } from 'electron'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -15,7 +15,18 @@ import type {
   TranscriptionResult
 } from '../core/asr/types'
 import { SessionController } from '../core/session/session-controller'
-import type { AppStatus, ModelInfo, TranscriptEvent } from '../shared/ipc'
+import {
+  isThemePreference,
+  nextThemePreference,
+  resolveTheme
+} from '../core/theme/theme'
+import type {
+  AppStatus,
+  ModelInfo,
+  ResolvedTheme,
+  ThemePreference,
+  TranscriptEvent
+} from '../shared/ipc'
 import { MODEL_CATALOG, PRIMARY_MODEL, PRIMARY_MODEL_DESCRIPTOR } from './asr/catalog'
 import { TranscribeCliRunner } from './asr/cli-runner'
 import { ModelManager } from './asr/model-manager'
@@ -24,6 +35,10 @@ import { resolveAsrPaths } from './asr/paths'
 import { pasteText } from './injection'
 import { isTrustedSender } from './ipc-sender'
 import { PcmBuffer } from './pcm-buffer'
+import { ThemeStore } from './theme-store'
+
+const DARK_BACKGROUND = '#0b0f14'
+const LIGHT_BACKGROUND = '#f6f5f2'
 
 const MODEL_INFO: ModelInfo = {
   id: PRIMARY_MODEL.id,
@@ -41,6 +56,8 @@ let providerError: string | undefined
 let initializing = false
 let pcmBuffer = new PcmBuffer()
 let activeModelInfo: ModelInfo | undefined
+let themePreference: ThemePreference = 'system'
+let themeStore: ThemeStore
 
 class UnavailableAsrProvider implements AsrProvider {
   readonly id = 'unavailable'
@@ -87,6 +104,25 @@ function sendState(next: AppStatus['state'], message?: string): void {
 
 function sendTranscript(event: TranscriptEvent): void {
   mainWindow?.webContents.send('transcript', event)
+}
+
+/**
+ * Keep the native window chrome (traffic lights, titlebar) in step with the
+ * renderer. `system` follows macOS, matching the CSS `prefers-color-scheme`.
+ */
+function applyTheme(): void {
+  const resolved = resolveTheme(themePreference, systemTheme())
+  nativeTheme.themeSource = resolved
+  mainWindow?.setBackgroundColor(resolved === 'light' ? LIGHT_BACKGROUND : DARK_BACKGROUND)
+  console.log('[theme]', themePreference, '->', resolved)
+}
+
+function systemTheme(): ResolvedTheme {
+  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+}
+
+function broadcastTheme(theme: ThemePreference): void {
+  mainWindow?.webContents.send('theme', theme)
 }
 
 function getAudio(): AudioInput {
@@ -274,7 +310,7 @@ function createWindow(): void {
     height: 480,
     show: false,
     titleBarStyle: 'hiddenInset',
-    backgroundColor: '#0b0f14',
+    backgroundColor: DARK_BACKGROUND,
     webPreferences: {
       preload,
       contextIsolation: true,
@@ -328,7 +364,14 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  themeStore = new ThemeStore(app.getPath('userData'))
+  themePreference = await themeStore.load()
+  applyTheme()
+  nativeTheme.on('updated', () => {
+    // Only `system` follows the OS; pinned choices ignore the OS change.
+    if (themePreference === 'system') applyTheme()
+  })
   ipcMain.on('renderer:ready', () => {
     rendererReady = true
     console.log('[renderer] ready')
@@ -360,8 +403,21 @@ app.whenReady().then(() => {
   ipcMain.handle('state:get', (): AppStatus => ({
     state: session?.state ?? 'idle',
     message: session?.lastMessage,
-    modelInfo: activeModelInfo
+    modelInfo: activeModelInfo,
+    theme: themePreference
   }))
+  ipcMain.handle('theme:set', async (_event, payload: unknown): Promise<ThemePreference> => {
+    if (!isThemePreference(payload)) return themePreference
+    themePreference = payload
+    applyTheme()
+    broadcastTheme(themePreference)
+    try {
+      await themeStore.save(payload)
+    } catch (error) {
+      console.warn('[theme] failed to persist preference', error)
+    }
+    return themePreference
+  })
 
   createWindow()
   void initializeProvider()

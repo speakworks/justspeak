@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "runId": "2026-10-27-9874a9f",
-  "generatedAt": "2026-10-27T00:02:57.636Z",
-  "gitCommit": "9874a9f",
+  "runId": "2026-10-27-18a277c",
+  "generatedAt": "2026-10-27T00:04:51.286Z",
+  "gitCommit": "18a277c",
   "appVersion": "0.1.0-demo.0",
   "provider": {
     "id": "qwen3-asr-0.6b-q8",
@@ -37,39 +37,39 @@
     "runs": [
       {
         "run": 1,
-        "wallMs": 330,
-        "providerLatencyMs": 330,
-        "rtf": 0.086,
-        "speedFactor": 11.6,
+        "wallMs": 359,
+        "providerLatencyMs": 359,
+        "rtf": 0.094,
+        "speedFactor": 10.6,
         "language": "zh",
         "cer": 0,
         "matchesExpected": true
       },
       {
         "run": 2,
-        "wallMs": 330,
-        "providerLatencyMs": 330,
-        "rtf": 0.086,
-        "speedFactor": 11.6,
+        "wallMs": 341,
+        "providerLatencyMs": 341,
+        "rtf": 0.089,
+        "speedFactor": 11.2,
         "language": "zh",
         "cer": 0,
         "matchesExpected": true
       },
       {
         "run": 3,
-        "wallMs": 362,
-        "providerLatencyMs": 362,
-        "rtf": 0.095,
-        "speedFactor": 10.5,
+        "wallMs": 317,
+        "providerLatencyMs": 317,
+        "rtf": 0.083,
+        "speedFactor": 12,
         "language": "zh",
         "cer": 0,
         "matchesExpected": true
       }
     ],
-    "coldStartMs": 330,
-    "warmMedianMs": 346,
-    "warmMedianRtf": 0.09,
-    "peakRssBytes": 370688000,
+    "coldStartMs": 359,
+    "warmMedianMs": 329,
+    "warmMedianRtf": 0.086,
+    "peakRssBytes": 371015680,
     "modelSizeBytes": 850423456,
     "stopToFinalDefinition": "provider.transcribe wall time: PCM validation + WAV write + CLI spawn + model load + inference + parse; excludes clipboard paste and IPC from the renderer"
   },

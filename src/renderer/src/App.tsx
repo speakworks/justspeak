@@ -239,8 +239,12 @@ export function App(): React.JSX.Element {
         </p>
 
         {modelInfo ? (
-          <p className="hint model-meta">
-            模型：{modelInfo.name} · {modelInfo.license} · 来源 {modelInfo.sourceUrl}
+          // The URL is long enough to wrap onto a second row and waste height;
+          // show it on hover instead. Not a link: the main process denies new
+          // windows, so a clickable element here would be a dead affordance.
+          <p className="hint model-meta" title={modelInfo.sourceUrl}>
+            模型：{modelInfo.name} · {modelInfo.license} · 来源{' '}
+            {modelInfo.sourceUrl.replace(/^https?:\/\//, '').split('/')[0]}
           </p>
         ) : null}
 

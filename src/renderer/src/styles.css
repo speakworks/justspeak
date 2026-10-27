@@ -263,7 +263,17 @@ kbd {
   line-height: 1.6;
 }
 
+/* Fixed height: the card must not grow when the provider tag and the latency
+   row appear, otherwise the page gains a scrollbar the moment a transcript
+   lands. Only the transcript body scrolls. */
+.card.transcript {
+  display: flex;
+  flex-direction: column;
+  height: 200px;
+}
+
 .transcript-head {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -284,10 +294,8 @@ kbd {
 }
 
 .transcript-text {
-  min-height: 64px;
-  /* Long dictation scrolls inside the card so the window itself never grows a
-     page scrollbar; the default window is sized to the default content. */
-  max-height: 142px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   margin: 0;
@@ -302,7 +310,8 @@ kbd {
 }
 
 .meta {
-  margin: 14px 0 0;
+  flex: none;
+  margin: 10px 0 0;
   color: var(--muted);
   font-size: 12px;
 }

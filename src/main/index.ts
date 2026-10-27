@@ -319,13 +319,13 @@ function createWindow(): void {
     return
   }
 
-  // Height is measured, not guessed: the default UI needs ≈542 CSS px. 570
-  // leaves a small breathing margin without the empty band a 760 px window
-  // showed. Long transcripts scroll inside the transcript card, so the page
-  // itself never gains a scrollbar. Shrink only, never grow, on a display too
-  // small for the default.
+  // Height is measured in the real qwen3 mode: the model line only renders
+  // there, so measuring in fake mode under-counts and lets the page scroll.
+  // The transcript card has a fixed height, so empty, one-line, long
+  // transcript and long-error states all measure the same 632 CSS px; 640
+  // leaves an 8 px margin. Shrink only, never grow, on a smaller display.
   const PREFERRED_WIDTH = 720
-  const PREFERRED_HEIGHT = 570
+  const PREFERRED_HEIGHT = 640
   const workArea = screen.getPrimaryDisplay().workAreaSize
   const width = Math.min(PREFERRED_WIDTH, workArea.width - 40)
   const height = Math.min(PREFERRED_HEIGHT, workArea.height - 40)
@@ -334,10 +334,11 @@ function createWindow(): void {
     width,
     height,
     minWidth: Math.min(560, width),
-    minHeight: Math.min(500, height),
+    minHeight: Math.min(560, height),
     show: false,
     titleBarStyle: 'hiddenInset',
-    backgroundColor: DARK_BACKGROUND,
+    // A saved `light` preference must not flash a dark frame before paint.
+    backgroundColor: effectiveTheme() === 'light' ? LIGHT_BACKGROUND : DARK_BACKGROUND,
     webPreferences: {
       preload,
       contextIsolation: true,

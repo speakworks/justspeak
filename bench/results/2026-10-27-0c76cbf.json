@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "runId": "2026-10-27-a4e6b50",
-  "generatedAt": "2026-10-27T00:09:09.599Z",
-  "gitCommit": "a4e6b50",
+  "runId": "2026-10-27-0c76cbf",
+  "generatedAt": "2026-10-27T00:20:14.507Z",
+  "gitCommit": "0c76cbf",
   "appVersion": "0.1.0-demo.0",
   "provider": {
     "id": "qwen3-asr-0.6b-q8",
@@ -33,43 +33,45 @@
     "powerState": "Now drawing from 'AC Power'"
   },
   "metrics": {
-    "rtfConvention": "rtf = inference_seconds / audio_seconds (lower is better)",
+    "rtfConvention": "rtf = provider_seconds / audio_seconds (lower is better); provider_seconds includes WAV write, CLI spawn, model load, inference, and parsing, not pure inference",
     "runs": [
       {
         "run": 1,
-        "wallMs": 362,
-        "providerLatencyMs": 363,
-        "rtf": 0.095,
-        "speedFactor": 10.5,
+        "wallMs": 380,
+        "providerLatencyMs": 380,
+        "rtf": 0.1,
+        "speedFactor": 10,
         "language": "zh",
         "cer": 0,
         "matchesExpected": true
       },
       {
         "run": 2,
-        "wallMs": 370,
-        "providerLatencyMs": 370,
-        "rtf": 0.097,
-        "speedFactor": 10.3,
+        "wallMs": 343,
+        "providerLatencyMs": 343,
+        "rtf": 0.09,
+        "speedFactor": 11.1,
         "language": "zh",
         "cer": 0,
         "matchesExpected": true
       },
       {
         "run": 3,
-        "wallMs": 334,
-        "providerLatencyMs": 334,
-        "rtf": 0.087,
-        "speedFactor": 11.4,
+        "wallMs": 325,
+        "providerLatencyMs": 325,
+        "rtf": 0.085,
+        "speedFactor": 11.7,
         "language": "zh",
         "cer": 0,
         "matchesExpected": true
       }
     ],
-    "coldStartMs": 362,
-    "warmMedianMs": 352,
-    "warmMedianRtf": 0.092,
-    "peakRssBytes": 371212288,
+    "coldStartMs": 380,
+    "warmMedianMs": 334,
+    "warmMedianRtf": 0.087,
+    "peakRssBytes": 370999296,
+    "pureCliInferenceMs": null,
+    "pureCliSpeedFactor": null,
     "modelSizeBytes": 850423456,
     "stopToFinalDefinition": "provider.transcribe wall time: PCM validation + WAV write + CLI spawn + model load + inference + parse; excludes clipboard paste and IPC from the renderer"
   },

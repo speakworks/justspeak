@@ -32,9 +32,16 @@ export class ThemeStore {
       if (typeof parsed === 'object' && parsed !== null) {
         return parseThemePreference((parsed as Record<string, unknown>).theme)
       }
+      console.warn('[theme] preferences.json is not an object; using system')
       return 'system'
-    } catch {
-      // No file yet (first run) or unreadable/corrupt: fall back to `system`.
+    } catch (error) {
+      // A missing file on first run is expected and silent; anything else is a
+      // real read failure worth a diagnostic, otherwise a permanently
+      // unreadable file would reset the theme every launch with no trace.
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'ENOENT') {
+        console.warn('[theme] could not read preferences.json; using system', error)
+      }
       return 'system'
     }
   }

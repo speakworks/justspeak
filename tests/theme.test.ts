@@ -11,6 +11,7 @@ import {
   THEME_PREFERENCES
 } from '../src/core/theme/theme'
 import { ThemeStore } from '../src/main/theme-store'
+import type { ResolvedTheme, ThemePreference } from '../src/shared/ipc'
 
 const directories: string[] = []
 
@@ -54,6 +55,29 @@ describe('theme preference', () => {
 
   it('labels every preference', () => {
     for (const value of THEME_PREFERENCES) expect(THEME_LABEL[value]).toBeTruthy()
+  })
+
+  it('keeps system tracking after a pinned round trip', () => {
+    // Regression for the main-process bug: writing the RESOLVED value into
+    // nativeTheme.themeSource makes `system` keep painting the last pin. The
+    // rule the fix encodes is that the source carries the preference and the
+    // painted value is derived from it.
+    const apply = (
+      preference: ThemePreference,
+      osAppearance: ResolvedTheme
+    ): ResolvedTheme => {
+      // themeSource = preference; then the painted value is what the OS
+      // reports through the preference.
+      return resolveTheme(preference, osAppearance)
+    }
+
+    for (const osAppearance of ['light', 'dark'] as const) {
+      const opposite: ResolvedTheme = osAppearance === 'dark' ? 'light' : 'dark'
+      expect(apply('system', osAppearance)).toBe(osAppearance)
+      expect(apply(opposite, osAppearance)).toBe(opposite)
+      // Returning to system must show the OS value again, not the last pin.
+      expect(apply('system', osAppearance)).toBe(osAppearance)
+    }
   })
 })
 

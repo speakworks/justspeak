@@ -24,11 +24,7 @@ import type {
   TranscriptionResult
 } from '../core/asr/types'
 import { SessionController } from '../core/session/session-controller'
-import {
-  isThemePreference,
-  nextThemePreference,
-  resolveTheme
-} from '../core/theme/theme'
+import { isThemePreference } from '../core/theme/theme'
 import type {
   AppStatus,
   ModelInfo,
@@ -117,16 +113,25 @@ function sendTranscript(event: TranscriptEvent): void {
 
 /**
  * Keep the native window chrome (traffic lights, titlebar) in step with the
- * renderer. `system` follows macOS, matching the CSS `prefers-color-scheme`.
+ * renderer.
+ *
+ * `themeSource` must carry the *preference*, not the resolved value: Electron
+ * overrides `shouldUseDarkColors` with whatever is written there, so writing a
+ * resolved `'light'`/`'dark'` destroys the OS reading and makes `'system'`
+ * permanently stick to the last pinned choice. Verified against Electron:
+ * with the OS light, setting `themeSource='dark'` makes `shouldUseDarkColors`
+ * true and `themeSource='system'` is the only way to read the OS again.
  */
 function applyTheme(): void {
-  const resolved = resolveTheme(themePreference, systemTheme())
-  nativeTheme.themeSource = resolved
+  nativeTheme.themeSource = themePreference
+  // After the assignment above, this reflects the preference when pinned and
+  // the real OS appearance when `system`.
+  const resolved = effectiveTheme()
   mainWindow?.setBackgroundColor(resolved === 'light' ? LIGHT_BACKGROUND : DARK_BACKGROUND)
   console.log('[theme]', themePreference, '->', resolved)
 }
 
-function systemTheme(): ResolvedTheme {
+function effectiveTheme(): ResolvedTheme {
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
 }
 
@@ -428,7 +433,11 @@ app.whenReady().then(async () => {
     modelInfo: activeModelInfo,
     theme: themePreference
   }))
-  ipcMain.handle('theme:set', async (_event, payload: unknown): Promise<ThemePreference> => {
+  ipcMain.handle('theme:set', async (event, payload: unknown): Promise<ThemePreference> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      console.warn('[theme] rejected untrusted sender')
+      return themePreference
+    }
     if (!isThemePreference(payload)) return themePreference
     themePreference = payload
     applyTheme()

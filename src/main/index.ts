@@ -198,7 +198,19 @@ async function initializeProvider(): Promise<void> {
     return
   }
   console.log('[model] verifying SHA-256 before use…')
-  const verification = await new ModelManager().verify(paths.modelPath, file)
+  let verification: Awaited<ReturnType<ModelManager['verify']>>
+  try {
+    verification = await new ModelManager().verify(paths.modelPath, file)
+  } catch (error) {
+    // A stat/read failure must not leave `initializing` stuck at true: the hotkey
+    // would keep answering "正在准备语音识别" with no error and no retry path.
+    initializing = false
+    failSession(
+      `模型校验失败：${error instanceof Error ? error.message : String(error)}。` +
+        `请运行 pnpm setup:asr 重新下载；来源：${PRIMARY_MODEL.sourceUrl}；许可证：${PRIMARY_MODEL.license}。`
+    )
+    return
+  }
   if (!verification.ok) {
     initializing = false
     failSession(

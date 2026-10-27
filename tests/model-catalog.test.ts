@@ -6,6 +6,7 @@ import {
   parseModelCatalog,
   toModelDescriptor
 } from '../src/core/asr/model-catalog'
+import { QWEN3_CAPABILITIES } from '../src/core/asr/qwen3-provider'
 
 const PINNED_SHA = 'f081b2d5e23bd669d92cc331d722a8a0681943b8e6f34b48996fd5c319b5acd8'
 const PINNED_SIZE = 850423456
@@ -26,7 +27,9 @@ describe('embedded model catalog', () => {
   it('keeps the catalog audio limit aligned with the provider capability', () => {
     const catalog = parseModelCatalog(rawCatalog)
     const model = findModel(catalog, 'qwen3-asr-0.6b-q8')
-    expect(model.capabilities.maxAudioMs).toBe(87 * 60 * 1000)
+    // Compare against the provider constant, not a copied literal: a literal
+    // would keep passing after QWEN3_MAX_AUDIO_MS drifts.
+    expect(model.capabilities.maxAudioMs).toBe(QWEN3_CAPABILITIES.maxAudioMs)
     expect(model.capabilities.languages).toEqual(
       expect.arrayContaining(['zh', 'en', 'mixed'])
     )

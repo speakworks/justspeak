@@ -93,7 +93,9 @@ function mapFailure(stderr: string, stdout: string, exitCode: number | null): Pr
       error: {
         code: 'MODEL_MISSING',
         message: 'Qwen3 model or runtime file is missing; run pnpm setup:asr',
-        retryable: true
+        // ADR-0003: MODEL_MISSING is a repair case, not a retry case. Retrying
+        // cannot make a missing file appear.
+        retryable: false
       }
     }
   }

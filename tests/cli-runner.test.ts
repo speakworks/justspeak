@@ -121,7 +121,11 @@ describe('transcribe-cli runner', () => {
     })
     const result = await runner.run(pcmInput(), {})
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error.code).toBe('MODEL_MISSING')
+    if (!result.ok) {
+      expect(result.error.code).toBe('MODEL_MISSING')
+      // ADR-0003: a missing file is repaired, never retried.
+      expect(result.error.retryable).toBe(false)
+    }
     expect(unlinked).toHaveLength(1)
   })
 

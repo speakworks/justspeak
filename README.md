@@ -56,7 +56,8 @@ pnpm bench:asr   # provider-driven benchmark; writes bench/reports/<date>-qwen3-
   The UI shows the model name, license (Apache-2.0), and source URL.
 - Override paths with `JUSTSPEAK_TRANSCRIBE_CLI` and `JUSTSPEAK_QWEN3_MODEL`.
 - Verification: `pnpm typecheck`, `pnpm test`, `pnpm build`, and
-  `openspec validate qwen3-asr-integration --strict`.
+  `openspec validate --specs --strict`. The M1 change `qwen3-asr-integration` is already
+  archived, so validate the synced specs instead of the (closed) change.
 
 ## Technical plan
 

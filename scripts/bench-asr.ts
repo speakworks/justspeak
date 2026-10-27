@@ -111,8 +111,10 @@ async function profileCli(cliPath: string, modelPath: string, fixture: string): 
     return { rssBytes: null, pureInferenceMs: null, pureSpeedFactor: null }
   }
   const rssMatch = /(\d+)\s+maximum resident set size/i.exec(result.stderr)
-  // The CLI's own line: "realtime: 24x (161.7 ms for 3.8 s)".
-  const realtimeMatch = /realtime:\s+([\d.]+)x\s+\(([\d.]+) ms/.exec(result.stderr)
+  // The CLI's own line: "realtime: 24x (161.7 ms for 3.8 s)" on stdout.
+  const realtimeMatch = /realtime:\s+([\d.]+)x\s+\(([\d.]+) ms/.exec(
+    `${result.stdout}\n${result.stderr}`
+  )
   return {
     rssBytes: rssMatch ? Number(rssMatch[1]) : null,
     pureInferenceMs: realtimeMatch ? Number(realtimeMatch[2]) : null,

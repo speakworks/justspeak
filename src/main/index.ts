@@ -40,6 +40,7 @@ let session: SessionController | null = null
 let providerError: string | undefined
 let initializing = false
 let pcmBuffer = new PcmBuffer()
+let activeModelInfo: ModelInfo | undefined
 
 class UnavailableAsrProvider implements AsrProvider {
   readonly id = 'unavailable'
@@ -118,6 +119,7 @@ function failSession(message: string): void {
 async function initializeFake(): Promise<void> {
   const provider = new FakeAsrProvider({ delayMs: 350 })
   session = makeSession(provider, true)
+  activeModelInfo = undefined
   providerError = undefined
   initializing = false
 }
@@ -130,6 +132,7 @@ async function initializeProvider(): Promise<void> {
   const mode = parseAsrMode(process.env.JUSTSPEAK_ASR)
   if (!mode.ok) {
     session = makeSession(new UnavailableAsrProvider(), false)
+    activeModelInfo = undefined
     initializing = false
     failSession(mode.message)
     return
@@ -149,6 +152,7 @@ async function initializeProvider(): Promise<void> {
     runner
   })
   session = makeSession(provider, false)
+  activeModelInfo = MODEL_INFO
 
   if (!existsSync(paths.cliPath)) {
     initializing = false
@@ -326,7 +330,7 @@ app.whenReady().then(() => {
   ipcMain.handle('state:get', (): AppStatus => ({
     state: session?.state ?? 'idle',
     message: session?.lastMessage,
-    modelInfo: MODEL_INFO
+    modelInfo: activeModelInfo
   }))
 
   createWindow()

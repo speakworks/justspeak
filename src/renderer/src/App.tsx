@@ -139,10 +139,11 @@ export function App(): React.JSX.Element {
     void window.justspeak
       .getState()
       .then((status) => {
-        if (disposed || sawStateEvent) return
+        if (disposed) return
+        setModelInfo(status.modelInfo)
+        if (sawStateEvent) return
         setState(status.state)
         setMessage(status.message)
-        setModelInfo(status.modelInfo)
         if (status.state === 'recording') {
           void controller.start().catch(reportFailure)
         }

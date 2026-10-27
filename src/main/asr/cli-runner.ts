@@ -81,8 +81,27 @@ export function parseCliStdout(stdout: string): ProviderResult<ParsedCliOutput> 
   return { ok: true, value: { text, language } }
 }
 
-function mapFailure(stderr: string, stdout: string, exitCode: number | null): ProviderResult<never> {
+/** Keep a diagnostic short and single-line so it can surface in the UI. */
+function boundedDiagnostic(stderr: string, stdout: string): string {
+  const combined = `${stderr}\n${stdout}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' | ')
+  if (!combined) return ''
+  return combined.length > 300 ? `${combined.slice(0, 300)}…` : combined
+}
+
+function mapFailure(
+  stderr: string,
+  stdout: string,
+  exitCode: number | null,
+  cliPath?: string,
+  modelPath?: string
+): ProviderResult<never> {
   const text = `${stderr}\n${stdout}`.toLowerCase()
+  const diagnostic = boundedDiagnostic(stderr, stdout)
+  const detail = diagnostic ? ` Diagnostic: ${diagnostic}` : ''
   if (
     text.includes('file not found') ||
     text.includes('no such file') ||
@@ -92,7 +111,10 @@ function mapFailure(stderr: string, stdout: string, exitCode: number | null): Pr
       ok: false,
       error: {
         code: 'MODEL_MISSING',
-        message: 'Qwen3 model or runtime file is missing; run pnpm setup:asr',
+        message:
+          `Qwen3 model or runtime file is missing; run pnpm setup:asr.` +
+          ` Runtime: ${cliPath ?? 'unknown'}; model: ${modelPath ?? 'unknown'}.` +
+          detail,
         // ADR-0003: MODEL_MISSING is a repair case, not a retry case. Retrying
         // cannot make a missing file appear.
         retryable: false
@@ -104,7 +126,7 @@ function mapFailure(stderr: string, stdout: string, exitCode: number | null): Pr
       ok: false,
       error: {
         code: 'MODEL_LOAD_FAILED',
-        message: 'Qwen3 model failed to load; verify the SHA-256 and runtime build',
+        message: `Qwen3 model failed to load; verify the SHA-256 and runtime build.${detail}`,
         retryable: false
       }
     }
@@ -113,7 +135,8 @@ function mapFailure(stderr: string, stdout: string, exitCode: number | null): Pr
     ok: false,
     error: {
       code: 'INFERENCE_FAILED',
-      message: `Transcription runtime exited with code ${exitCode ?? 'unknown'}`,
+      message:
+        `Transcription runtime exited with code ${exitCode ?? 'unknown'}.${detail}`,
       retryable: true
     }
   }
@@ -215,7 +238,7 @@ export class TranscribeCliRunner implements Qwen3Runner {
           return
         }
         if (code !== 0) {
-          settle(mapFailure(stderr, stdout, code))
+          settle(mapFailure(stderr, stdout, code, this.cliPath, this.modelPath))
           return
         }
         const parsed = parseCliStdout(stdout)

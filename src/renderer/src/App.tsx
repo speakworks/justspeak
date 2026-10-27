@@ -167,7 +167,7 @@ export function App(): React.JSX.Element {
     <main className="app">
       <header className="header">
         <div>
-          <p className="kicker">JustSpeak · M1 · Qwen3-ASR</p>
+          <p className="kicker">JustSpeak · M1</p>
           <h1>按一下，开始说话</h1>
         </div>
         <span className={`status ${state}`}>{STATE_LABEL[state]}</span>
@@ -203,7 +203,7 @@ export function App(): React.JSX.Element {
         <div className="transcript-head">
           <span>识别结果</span>
           {transcript ? (
-            <span className="tag">{transcript.fake ? 'FAKE ASR' : 'QWEN3 ASR'}</span>
+            <span className="tag">{transcript.fake ? 'FAKE ASR' : 'LOCAL ASR'}</span>
           ) : null}
         </div>
         <p className={transcript ? 'transcript-text' : 'transcript-text empty'}>

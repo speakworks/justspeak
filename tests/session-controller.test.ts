@@ -265,6 +265,64 @@ describe('session state machine', () => {
     }
   })
 
+  it('does not retry any non-retryable code, even if the flag says retryable', async () => {
+    // The spec names AUDIO_TOO_LONG, MODEL_LOAD_FAILED and UNSUPPORTED_LANGUAGE
+    // explicitly; the flag alone must not be enough to trigger a retry.
+    const codes = [
+      'AUDIO_TOO_LONG',
+      'MODEL_LOAD_FAILED',
+      'UNSUPPORTED_LANGUAGE',
+      'MODEL_MISSING',
+      'CANCELLED'
+    ] as const
+    for (const code of codes) {
+      let calls = 0
+      const provider = fakeProvider()
+      provider.transcribe = async () => {
+        calls += 1
+        // Deliberately wrong flag: the allowlist must still block the retry.
+        return { ok: false, error: { code, message: 'no', retryable: true } }
+      }
+      const harness = setup({ provider })
+      harness.controller.toggle(true)
+      harness.advance(1000)
+      harness.controller.toggle(true)
+      await harness.controller.handleCaptureStopped(SUMMARY)
+      expect(calls, `${code} must not be retried`).toBe(1)
+    }
+  })
+
+  it('marks a real provider transcript with fake:false and real latency', async () => {
+    const harness = setup({ fake: false })
+    // Latency is measured from the start of handleCaptureStopped, so the
+    // provider itself must consume the clock for the value to be non-zero.
+    harness.transcribe.mockImplementation(async () => {
+      harness.advance(250)
+      return {
+        ok: true,
+        value: {
+          text: '你好',
+          latencyMs: 250,
+          modelId: 'test-model',
+          runtimeId: 'test-runtime',
+          warnings: []
+        }
+      }
+    })
+    harness.controller.toggle(true)
+    harness.advance(1000)
+    harness.controller.toggle(true)
+    await harness.controller.handleCaptureStopped(SUMMARY)
+
+    expect(harness.transcripts).toHaveLength(1)
+    expect(harness.transcripts[0]).toMatchObject({
+      text: '你好',
+      fake: false,
+      durationMs: 100,
+      latencyMs: 250
+    })
+  })
+
   it('passes the configured timeout to the provider', async () => {
     const harness = setup({ transcribeTimeoutMs: 4321 })
     harness.controller.toggle(true)

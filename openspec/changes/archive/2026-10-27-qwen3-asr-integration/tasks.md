@@ -42,4 +42,4 @@
 - [x] 7.1 Run `pnpm typecheck`, `pnpm test`, `pnpm build`, and `openspec validate qwen3-asr-integration --strict`; verify all pass and record command summaries.
 - [x] 7.2 Run `JUSTSPEAK_REAL_ASR=1 pnpm test tests/real-cli.smoke.test.ts` and confirm non-empty Chinese text for the fixture plus empty text for real silence; record evidence.
 - [x] 7.3 Verify `git check-ignore models/qwen3-asr-0.6b/Qwen3-ASR-0.6B-Q8_0.gguf` exits 0 and no weights/binaries are staged before committing.
-- [ ] 7.4 Archive the OpenSpec change, commit on `feat/qwen3-asr`, push, and open a PR without merging; verify the archive diff, PR URL, and clean working tree.
+- [x] 7.4 Archive the OpenSpec change, commit on `feat/qwen3-asr`, push, and open a PR without merging; verify the archive diff, PR URL, and clean working tree.

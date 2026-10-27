@@ -51,7 +51,8 @@ Constraints inherited from ADR-0001/0003 and the card:
 
 1. If runtime is missing → error with `pnpm setup:asr` instructions (build requires Xcode/cmake; not automated inside the app).
 2. If the model is missing → auto-download from the catalog with progress in the existing status message, verify size + SHA-256, atomic `.part` → final rename.
-3. If verification fails → delete the partial file and error; never retry with a different model.
+3. If the model exists → re-verify its SHA-256 at startup before `prepare` (trust-on-first-install is not enough); a mismatch errors with the expected/actual digest and the `pnpm setup:asr` repair command.
+4. If verification fails → delete the partial file and error; never retry with a different model.
 
 **Why**: weights are 850 MB and excluded from git; the app must be usable after first run without a terminal, but building a C++ runtime on first launch is not acceptable UX. Auto-download only applies to data.
 

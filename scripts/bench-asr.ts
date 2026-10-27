@@ -95,17 +95,29 @@ async function decodeWav(file: string): Promise<AudioInput> {
   return { pcm, sampleRate: 16000, channels: 1, durationMs: info.durationMs }
 }
 
-async function peakRss(cliPath: string, modelPath: string, fixture: string): Promise<number | null> {
+interface CliProfile {
+  rssBytes: number | null
+  pureInferenceMs: number | null
+  pureSpeedFactor: number | null
+}
+
+async function profileCli(cliPath: string, modelPath: string, fixture: string): Promise<CliProfile> {
   const result = spawnSync('/usr/bin/time', ['-l', cliPath, '-q', '-m', modelPath, fixture], {
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024
   })
   if (result.status !== 0) {
     console.warn('[bench] /usr/bin/time run failed:', result.stderr?.slice(-400))
-    return null
+    return { rssBytes: null, pureInferenceMs: null, pureSpeedFactor: null }
   }
-  const match = /(\d+)\s+maximum resident set size/i.exec(result.stderr)
-  return match ? Number(match[1]) : null
+  const rssMatch = /(\d+)\s+maximum resident set size/i.exec(result.stderr)
+  // The CLI's own line: "realtime: 24x (161.7 ms for 3.8 s)".
+  const realtimeMatch = /realtime:\s+([\d.]+)x\s+\(([\d.]+) ms/.exec(result.stderr)
+  return {
+    rssBytes: rssMatch ? Number(rssMatch[1]) : null,
+    pureInferenceMs: realtimeMatch ? Number(realtimeMatch[2]) : null,
+    pureSpeedFactor: realtimeMatch ? Number(realtimeMatch[1]) : null
+  }
 }
 
 function formatBytes(bytes: number | null): string {
@@ -184,7 +196,8 @@ async function main(): Promise<void> {
   const coldStartMs = runs[0]?.wallMs ?? null
   const warmMedianMs = warm.length > 0 ? Math.round(median(warm.map((run) => run.wallMs))) : null
   const warmMedianRtf = warm.length > 0 ? Number(median(warm.map((run) => run.rtf)).toFixed(3)) : null
-  const rssBytes = await peakRss(cliPath, modelPath, fixturePath)
+  const cliProfile = await profileCli(cliPath, modelPath, fixturePath)
+  const rssBytes = cliProfile.rssBytes
 
   const date = new Date()
   const day = date.toISOString().slice(0, 10)
@@ -226,12 +239,15 @@ async function main(): Promise<void> {
     },
     hardware,
     metrics: {
-      rtfConvention: 'rtf = inference_seconds / audio_seconds (lower is better)',
+      rtfConvention:
+        'rtf = provider_seconds / audio_seconds (lower is better); provider_seconds includes WAV write, CLI spawn, model load, inference, and parsing, not pure inference',
       runs,
       coldStartMs,
       warmMedianMs,
       warmMedianRtf,
       peakRssBytes: rssBytes,
+      pureCliInferenceMs: cliProfile.pureInferenceMs,
+      pureCliSpeedFactor: cliProfile.pureSpeedFactor,
       modelSizeBytes: model.files[0].sizeBytes,
       stopToFinalDefinition:
         'provider.transcribe wall time: PCM validation + WAV write + CLI spawn + model load + inference + parse; excludes clipboard paste and IPC from the renderer'
@@ -268,11 +284,12 @@ async function main(): Promise<void> {
 - Model: ${formatBytes(model.files[0].sizeBytes)} · SHA-256 \`${modelSha}\`
 - Runtime: transcribe.cpp ${runtime.tag} (\`${runtime.commit}\`)
 - Fixture: \`${fixture.id}\` · ${(audio.durationMs / 1000).toFixed(3)} s · 16 kHz mono PCM16 · synthetic TTS
-- RTF convention: \`rtf = inference_seconds / audio_seconds\` (lower is better); speed factor = 1 / RTF
+- RTF convention: **provider-path RTF** = \`provider_seconds / audio_seconds\` (lower is better). The numerator includes WAV write, CLI spawn, model load, inference, and parse; it is not pure inference.
+- Speed factor = 1 / RTF. The CLI's own pure-inference line is reported separately below.
 
 ## Results
 
-| Run | Wall (ms) | Provider (ms) | RTF | Speed | CER |
+| Run | Wall (ms) | Provider (ms) | Provider RTF | Speed | CER |
 |---:|---:|---:|---:|---:|---:|
 ${runRows}
 
@@ -280,7 +297,8 @@ ${runRows}
 |---|---:|
 | Cold start (first provider call) | ${coldStartMs ?? 'n/a'} ms |
 | Warm median stop→final | ${warmMedianMs ?? 'n/a'} ms |
-| Warm median RTF | ${warmMedianRtf ?? 'n/a'} |
+| Warm median provider-path RTF | ${warmMedianRtf ?? 'n/a'} |
+| Pure CLI inference (same run) | ${cliProfile.pureInferenceMs ?? 'n/a'} ms · ${cliProfile.pureSpeedFactor ?? 'n/a'}x |
 | Peak child RSS | ${formatBytes(rssBytes)} |
 | Model size on disk | ${formatBytes(model.files[0].sizeBytes)} |
 | CER (synthetic TTS smoke) | ${(Math.min(...runs.map((run) => run.cer)) * 100).toFixed(1)}% |
@@ -288,6 +306,7 @@ ${runRows}
 ## Definition and caveats
 
 - Stop→final here is the real \`Qwen3AsrProvider\` call: PCM validation, temporary WAV write, CLI spawn, model load, inference, and output parsing. It excludes renderer IPC and the clipboard paste that follow in the app (paste adds roughly 0.4 s in M0).
+- The pure-inference row comes from the CLI's own \`realtime\` line in the same measured run; provider-path RTF is deliberately broader because that is what the app experiences per utterance.
 - Cold start here is the first provider call in this process with a warm OS file cache and Metal pipeline cache. The first-ever machine-cold run during setup (compiling Metal libraries) took about 5.8 s; that onboarding cost is not the steady-state gate.
 - Warm runs reuse the OS page cache but still pay the per-utterance CLI launch.
 - Peak RSS is measured by a separate \`/usr/bin/time -l\` run of the same CLI and model, not by the provider call.

@@ -76,7 +76,8 @@ The renderer capture controller SHALL make stop-during-getUserMedia, start-while
 
 - **WHEN** stop arrives while microphone acquisition is still pending
 - **THEN** acquisition is marked cancelled, any late stream tracks are stopped, and no audio context or worklet is left running
-- **AND** the app reports that the start was cancelled and returns to idle
+- **AND** the capture layer reports the cancellation and returns to its idle state
+- **AND** the session surfaces that report as an error with a retry message per the capture-failure rule
 
 #### Scenario: Retry during start
 

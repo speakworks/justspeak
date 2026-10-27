@@ -191,6 +191,24 @@ async function initializeProvider(): Promise<void> {
     }
   }
 
+  const file = PRIMARY_MODEL.files[0]
+  if (!file) {
+    initializing = false
+    failSession('模型目录条目缺失，请运行 pnpm setup:asr。')
+    return
+  }
+  console.log('[model] verifying SHA-256 before use…')
+  const verification = await new ModelManager().verify(paths.modelPath, file)
+  if (!verification.ok) {
+    initializing = false
+    failSession(
+      `模型校验失败（期望 ${file.sha256}，实际 ${verification.sha256}）。` +
+        `请运行 pnpm setup:asr 重新下载；来源：${PRIMARY_MODEL.sourceUrl}；许可证：${PRIMARY_MODEL.license}。`
+    )
+    return
+  }
+  console.log('[model] verified', verification.sha256)
+
   try {
     await provider.prepare(PRIMARY_MODEL_DESCRIPTOR)
     initializing = false

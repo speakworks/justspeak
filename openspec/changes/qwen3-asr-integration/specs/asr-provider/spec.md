@@ -78,7 +78,7 @@ The Qwen3 adapter SHALL invoke the pinned transcribe.cpp CLI (v0.4.1) against th
 
 ### Requirement: Model installation SHALL be verified before use
 
-The application SHALL install models from the embedded catalog, SHALL verify each file's SHA-256 and size before making it available, and SHALL record source URL and license for display.
+The application SHALL install models from the embedded catalog, SHALL verify each file's SHA-256 and size before making it available (on download and again when an existing file is loaded at startup), and SHALL record source URL and license for display.
 
 #### Scenario: First-run download
 

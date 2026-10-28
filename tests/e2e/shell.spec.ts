@@ -1,0 +1,172 @@
+import {
+  _electron as electron,
+  expect,
+  test,
+  type ElectronApplication,
+  type Page
+} from '@playwright/test'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import type { AppStatus, JustSpeakApi } from '../../src/shared/ipc'
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const FAKE_TRANSCRIPT = '你好，这是 JustSpeak 的演示。Hello from JustSpeak.'
+const SKIP = process.env.JUSTSPEAK_E2E === '0' || process.env.JUSTSPEAK_E2E === 'false'
+
+/** The renderer global exposed by the sandboxed preload (contextBridge). */
+type JustSpeakWindow = { justspeak: JustSpeakApi }
+
+/**
+ * A stub `osascript` prepended to PATH. The real paste step shells out to
+ * `osascript -e 'tell application "System Events" ...'`; running that against
+ * the real OS needs Accessibility permission and would type into whatever app
+ * is focused. The E2E substitutes a recorder that exits with the mode's code,
+ * so the paste *step* is exercised without touching the OS. Production code is
+ * untouched.
+ */
+function makePasteShim(): { dir: string; calls: string; setMode: (mode: 'ok' | 'fail') => void } {
+  const dir = mkdtempSync(path.join(tmpdir(), 'justspeak-e2e-'))
+  const calls = path.join(dir, 'calls.log')
+  const mode = path.join(dir, 'mode')
+  writeFileSync(mode, 'ok')
+  const shim = path.join(dir, 'osascript')
+  writeFileSync(
+    shim,
+    `#!/bin/sh
+echo "$@" >> "${calls}"
+if grep -q fail "${mode}"; then exit 1; fi
+exit 0
+`
+  )
+  chmodSync(shim, 0o755)
+  return {
+    dir,
+    calls,
+    setMode: (next) => writeFileSync(mode, next)
+  }
+}
+
+async function launch(
+  env: Record<string, string> = {}
+): Promise<{ app: ElectronApplication; page: Page }> {
+  const app = await electron.launch({
+    // `--use-fake-*` make Chromium supply a synthetic microphone: the test never
+    // touches a real input device, and its PCM still flows through the real
+    // AudioWorklet -> `window.justspeak.sendPcmBatch` IPC path.
+    args: [
+      '--use-fake-device-for-media-stream',
+      '--use-fake-ui-for-media-stream',
+      ROOT
+    ],
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      JUSTSPEAK_ASR: 'fake',
+      ...env
+    }
+  })
+  const page = await app.firstWindow()
+  await page.waitForLoadState('domcontentloaded')
+  return { app, page }
+}
+
+/**
+ * Electron has no headless mode on macOS; hide the window and the Dock icon so
+ * a run does not steal focus. Rendering, the AudioWorklet, and IPC keep running
+ * while hidden.
+ */
+async function hideWindow(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ app: electronApp, BrowserWindow }) => {
+    electronApp.dock?.hide()
+    for (const window of BrowserWindow.getAllWindows()) window.hide()
+  })
+}
+
+test.describe('JustSpeak shell', () => {
+  test.skip(SKIP, 'JUSTSPEAK_E2E=0 disables the Electron E2E suite')
+  test.skip(
+    !existsSync(path.join(ROOT, 'out/main/index.js')),
+    'run `pnpm build` before the E2E suite'
+  )
+
+  // Serial: each test owns a real Electron app and the macOS clipboard.
+  test.describe.configure({ mode: 'serial' })
+
+  test('launches the fake provider, dictates, and returns to idle', async () => {
+    const shim = makePasteShim()
+    const { app, page } = await launch({ PATH: `${shim.dir}:${process.env.PATH ?? ''}` })
+    try {
+      // 1. Launch: sandboxed preload is live, fake mode is idle, placeholder shown.
+      await expect(page.locator('.status')).toHaveText('就绪')
+      await hideWindow(app)
+      await expect(page.locator('.transcript-text')).toHaveText('还没有文本。按快捷键说一句话。')
+      const hasApi = await page.evaluate(
+        () => typeof (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording
+      )
+      expect(hasApi).toBe('function')
+
+      // 2. Start dictation through the same API the record button calls (the
+      //    global hotkey is deliberately not used). Synthetic audio from the
+      //    fake device is batched by the renderer and sent over `capture:pcm`.
+      await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording()
+      )
+      await expect(page.locator('.status')).toHaveText('录音中')
+      await page.waitForTimeout(1_500)
+
+      // 3. Stop and observe the whole pipeline.
+      await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording()
+      )
+      await expect(page.locator('.transcript-text')).toHaveText(FAKE_TRANSCRIPT)
+      await expect(page.locator('.tag')).toHaveText('FAKE ASR')
+      // The recording summary came from the renderer's real capture controller:
+      // a non-zero duration proves PCM traversed the worklet IPC path.
+      await expect(page.locator('.meta')).toContainText(/录音 [1-9][\d.]*s/)
+
+      await expect(page.locator('.status')).toHaveText('就绪')
+      await expect(page.locator('.message')).toHaveCount(0)
+
+      // 4. The paste step was attempted exactly once with the Cmd+V keystroke.
+      const calls = readFileSync(shim.calls, 'utf8')
+      expect(calls).toContain('System Events')
+      expect(calls.trim().split('\n')).toHaveLength(1)
+
+      const status = (await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakWindow).justspeak.getState()
+      )) as AppStatus
+      expect(status.state).toBe('idle')
+    } finally {
+      await app.close()
+      rmSync(shim.dir, { recursive: true, force: true })
+    }
+  })
+
+  test('keeps the transcript visible when the paste step fails', async () => {
+    const shim = makePasteShim()
+    shim.setMode('fail')
+    const { app, page } = await launch({ PATH: `${shim.dir}:${process.env.PATH ?? ''}` })
+    try {
+      await expect(page.locator('.status')).toHaveText('就绪')
+      await hideWindow(app)
+      await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording()
+      )
+      await expect(page.locator('.status')).toHaveText('录音中')
+      await page.waitForTimeout(1_500)
+      await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording()
+      )
+
+      await expect(page.locator('.transcript-text')).toHaveText(FAKE_TRANSCRIPT)
+      await expect(page.locator('.status')).toHaveText('出错了')
+      await expect(page.locator('.message')).toContainText('粘贴失败')
+      expect(readFileSync(shim.calls, 'utf8')).toContain('System Events')
+    } finally {
+      await app.close()
+      rmSync(shim.dir, { recursive: true, force: true })
+    }
+  })
+})

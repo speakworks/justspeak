@@ -20,6 +20,10 @@ coverage/
 *.dmg
 *.blockmap
 
+# Playwright
+playwright-report/
+test-results/
+
 # Python
 __pycache__/
 *.py[cod]

@@ -1,10 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_ACCELERATOR } from '../src/core/hotkey/accelerator'
+import { parseVocabularyConfig, postprocess } from '../src/core/postprocess'
 import { ThemeStore, type ThemeStoreDeps } from '../src/main/theme-store'
+import { VOCABULARY_FILE, VocabularyStore } from '../src/main/vocabulary-store'
 
 const directories: string[] = []
 
@@ -186,5 +188,119 @@ describe('preferences store', () => {
       theme: 'system',
       hotkey: DEFAULT_ACCELERATOR
     })
+  })
+})
+
+describe('vocabulary config parsing', () => {
+  it('accepts an array of replacement pairs', () => {
+    expect(
+      parseVocabularyConfig({
+        replace: [{ from: '库贝内特斯', to: 'Kubernetes' }],
+        protect: ['JustSpeak']
+      })
+    ).toEqual({
+      vocabulary: {
+        replace: [{ from: '库贝内特斯', to: 'Kubernetes' }],
+        protect: ['JustSpeak']
+      }
+    })
+  })
+
+  it('accepts a wrong-to-right object map', () => {
+    expect(parseVocabularyConfig({ replace: { kubnernetes: 'Kubernetes' } })).toEqual({
+      vocabulary: { replace: [{ from: 'kubnernetes', to: 'Kubernetes' }], protect: [] }
+    })
+  })
+
+  it('drops unknown rules and wrong types instead of throwing', () => {
+    expect(
+      parseVocabularyConfig({
+        replace: [{ from: '', to: 'x' }, { from: 'a', to: '' }, 'nope'],
+        protect: ['ok', '', 7, 'ok'],
+        rules: { filler: false, normalize: 'no', mystery: true },
+        repetitionThreshold: 99
+      })
+    ).toEqual({
+      vocabulary: { replace: [], protect: ['ok'] },
+      rules: { filler: false }
+    })
+  })
+
+  it('ignores non-config payloads', () => {
+    for (const value of [null, undefined, 'x', 3, ['replace']]) {
+      expect(parseVocabularyConfig(value)).toEqual({})
+    }
+  })
+})
+
+describe('vocabulary store', () => {
+  it('returns defaults when no file exists', async () => {
+    const store = new VocabularyStore(makeDir())
+    await expect(store.load()).resolves.toEqual({})
+  })
+
+  it('round-trips a saved word list', async () => {
+    const dir = makeDir()
+    const store = new VocabularyStore(dir)
+    const options = {
+      vocabulary: {
+        replace: [{ from: '库贝内特斯', to: 'Kubernetes' }],
+        protect: ['JustSpeak', 'FD2008']
+      },
+      rules: { filler: false },
+      repetitionThreshold: 3
+    }
+    await store.save(options)
+    await expect(store.load()).resolves.toEqual(options)
+    // A second store on the same directory sees the persisted value.
+    await expect(new VocabularyStore(dir).load()).resolves.toEqual(options)
+  })
+
+  it('creates the userData directory when it does not exist yet', async () => {
+    const nested = path.join(makeDir(), 'deep', 'userData')
+    const store = new VocabularyStore(nested)
+    await store.save({ vocabulary: { replace: [{ from: 'x', to: 'y' }], protect: [] } })
+    await expect(store.load()).resolves.toMatchObject({
+      vocabulary: { replace: [{ from: 'x', to: 'y' }] }
+    })
+  })
+
+  it('falls back to defaults on corrupt JSON', async () => {
+    const dir = makeDir()
+    await writeFile(path.join(dir, VOCABULARY_FILE), '{ not json', 'utf8')
+    await expect(new VocabularyStore(dir).load()).resolves.toEqual({})
+  })
+
+  it('falls back to defaults when the payload is not an object', async () => {
+    const dir = makeDir()
+    await writeFile(path.join(dir, VOCABULARY_FILE), '"hello"', 'utf8')
+    await expect(new VocabularyStore(dir).load()).resolves.toEqual({})
+  })
+
+  it('uses a file separate from preferences.json', async () => {
+    const dir = makeDir()
+    const store = new VocabularyStore(dir)
+    await store.save({ vocabulary: { replace: [], protect: ['JustSpeak'] } })
+    expect(await readdir(dir)).toEqual([VOCABULARY_FILE])
+    expect(VOCABULARY_FILE).toBe('vocabulary.json')
+  })
+
+  it('feeds the loaded config into the pure stage', async () => {
+    const dir = makeDir()
+    await writeFile(
+      path.join(dir, VOCABULARY_FILE),
+      JSON.stringify({
+        replace: [{ from: '库贝内特斯', to: 'Kubernetes' }],
+        protect: ['JustSpeak'],
+        rules: { repetition: false }
+      }),
+      'utf8'
+    )
+    const options = await new VocabularyStore(dir).load()
+    expect(postprocess('嗯，用库贝内特斯和 JustSpeak。', options).text).toBe(
+      '用Kubernetes和 JustSpeak。'
+    )
+    // The disabled rule is honoured from the same file.
+    expect(postprocess('我我我', options).text).toBe('我我我')
   })
 })

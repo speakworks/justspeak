@@ -58,6 +58,21 @@ function sortByStart(spans: Span[]): Span[] {
   return [...spans].sort((a, b) => a.start - b.start || b.end - a.end)
 }
 
+/** Merge overlapping or touching spans into a sorted, minimal set. */
+export function mergeSpans(spans: readonly Span[]): Span[] {
+  const sorted = sortByStart([...spans])
+  const merged: Span[] = []
+  for (const span of sorted) {
+    const last = merged[merged.length - 1]
+    if (last && span.start <= last.end) {
+      last.end = Math.max(last.end, span.end)
+    } else {
+      merged.push({ ...span })
+    }
+  }
+  return merged
+}
+
 /**
  * Longest-first, case-insensitive word-list replacement. Replacements run
  * sequentially, which is what longest-match-first needs for overlapping
@@ -79,6 +94,34 @@ export function applyVocabulary(text: string, vocabulary: Vocabulary): string {
     output = next + output.slice(cursor)
   }
 
+  return output
+}
+
+/**
+ * Apply replacements only to the text between protected and code-like spans.
+ * Vocabulary runs before masking, so excluding those spans is what keeps a
+ * numeric replacement from rewriting a mask id and what makes the "masked
+ * first" invariant true for user literals. A replacement can never match
+ * across an excluded span.
+ */
+export function applyVocabularyOutside(
+  text: string,
+  vocabulary: Vocabulary,
+  excluded: readonly Span[]
+): string {
+  const merged = mergeSpans(excluded)
+  if (merged.length === 0) return applyVocabulary(text, vocabulary)
+
+  let output = ''
+  let cursor = 0
+  for (const span of merged) {
+    if (span.start > cursor) {
+      output += applyVocabulary(text.slice(cursor, span.start), vocabulary)
+    }
+    output += text.slice(span.start, span.end)
+    cursor = Math.max(cursor, span.end)
+  }
+  output += applyVocabulary(text.slice(cursor), vocabulary)
   return output
 }
 

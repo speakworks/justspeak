@@ -5,6 +5,7 @@ import {
   type PostprocessRule,
   type RuleSwitches
 } from '../src/core/postprocess'
+import { MASK_SENTINELS, maskSpans } from '../src/core/postprocess/rules'
 
 function clean(text: string, options?: PostprocessOptions): string {
   return postprocess(text, options).text
@@ -25,7 +26,7 @@ function expectCase(
 describe('postprocess: normalisation', () => {
   it.each([
     ['ＡＢＣ１２３', 'ABC123'],
-    ['  hello   world  ', 'Hello world'],
+    ['  hello   world  ', 'hello world'],
     ['你好,世界!', '你好，世界！'],
     ['Hello， world。', 'Hello, world.'],
     ['I said 中文， ok。', 'I said 中文, ok.'],
@@ -74,7 +75,7 @@ describe('postprocess: filler removal', () => {
     ['我今天嗯去了。', '我今天嗯去了。'],
     ['那个东西很好。', '那个东西很好。'],
     ['好啊。', '好啊。'],
-    ['her umbrella', 'Her umbrella'],
+    ['her umbrella', 'her umbrella'],
     ['I like it.', 'I like it.'],
     ['Do you know what I mean?', 'Do you know what I mean?']
   ])('keeps non-filler %j', (input, expected) => {
@@ -121,9 +122,9 @@ describe('postprocess: self-corrections', () => {
 describe('postprocess: repetition collapse', () => {
   it.each([
     ['我我我觉得可以。', '我觉得可以。'],
-    ['the the plan is ready.', 'The plan is ready.'],
+    ['the the plan is ready.', 'the plan is ready.'],
     ['The The plan is ready.', 'The plan is ready.'],
-    ['hello!!', 'Hello!'],
+    ['hello!!', 'hello!'],
     ['真的。。', '真的。']
   ])('collapses repeats in %j', (input, expected) => {
     expect(clean(input)).toBe(expected)
@@ -142,7 +143,7 @@ describe('postprocess: repetition collapse', () => {
   it('honours the configurable threshold', () => {
     expect(clean('我我走了。', { repetitionThreshold: 3 })).toBe('我我走了。')
     expect(clean('我我我走了。', { repetitionThreshold: 3 })).toBe('我走了。')
-    expect(clean('the the the plan', { repetitionThreshold: 3 })).toBe('The plan')
+    expect(clean('the the the plan', { repetitionThreshold: 3 })).toBe('the plan')
   })
 
   it('is individually disableable', () => {
@@ -161,7 +162,7 @@ describe('postprocess: personal vocabulary', () => {
 
   it('respects ASCII word boundaries and case-insensitive matching', () => {
     const vocabulary = { replace: [{ from: 'cat', to: 'dog' }] }
-    expect(clean('concatenate the cat', { vocabulary })).toBe('Concatenate the dog')
+    expect(clean('concatenate the cat', { vocabulary })).toBe('concatenate the dog')
     expect(
       clean('KUBERNETES is ready', {
         vocabulary: { replace: [{ from: 'kubernetes', to: 'Kubernetes' }] }
@@ -208,8 +209,7 @@ describe('postprocess: rule isolation', () => {
     ['self-correction', '周一发，不对，周二发。', '周二发。'],
     ['filler', '嗯，我觉得可以。', '我觉得可以。'],
     ['repetition', '我我我觉得可以。', '我觉得可以。'],
-    ['vocabulary', '库贝内特斯', 'Kubernetes'],
-    ['casing', 'it is fine.', 'It is fine.']
+    ['vocabulary', '库贝内特斯', 'Kubernetes']
   ]
 
   it.each(cases)('%s works with every other rule off', (rule, input, expected) => {
@@ -262,21 +262,134 @@ describe('postprocess: sentence-initial casing', () => {
   })
 
   it('never capitalises a protected token', () => {
-    expect(clean('you know, iPhone is good.', { vocabulary: { protect: ['iPhone'] } })).toBe(
-      'iPhone is good.'
-    )
+    expect(
+      postprocess('you know, iPhone is good.', { vocabulary: { protect: ['iPhone'] } })
+    ).toEqual({ text: 'iPhone is good.', applied: ['filler'] })
     expect(clean('iPhone is great.', { vocabulary: { protect: ['iPhone'] } })).toBe(
       'iPhone is great.'
     )
   })
 
   it('never capitalises inside a code span or URL', () => {
-    expect(clean('`foo` is good.')).toBe('`foo` is good.')
-    expect(clean('https://example.com is down.')).toBe('https://example.com is down.')
+    expect(clean('um, `foo` is good.')).toBe('`foo` is good.')
+    expect(clean('um, https://example.com is down.')).toBe('https://example.com is down.')
+  })
+
+  it('only fires after a leading removal', () => {
+    expect(postprocess('hello, world')).toEqual({ text: 'hello, world', applied: [] })
+    expect(postprocess('her umbrella')).toEqual({ text: 'her umbrella', applied: [] })
+    expect(postprocess('the the plan')).toEqual({ text: 'the plan', applied: ['repetition'] })
+    expect(
+      clean('concatenate the cat', { vocabulary: { replace: [{ from: 'cat', to: 'dog' }] } })
+    ).toBe('concatenate the dog')
+  })
+
+  it.each([
+    ['pnpm test', 'pnpm test'],
+    ['npm run build', 'npm run build'],
+    ['git commit', 'git commit'],
+    ['um, pnpm test', 'pnpm test'],
+    ['um, npm run build', 'npm run build']
+  ])('keeps a bare command byte-for-byte in %j', (input, expected) => {
+    expect(clean(input)).toBe(expected)
+  })
+
+  it('only fires after a leading removal when tested alone', () => {
+    const rules: RuleSwitches = {
+      vocabulary: false,
+      normalize: false,
+      'self-correction': false,
+      filler: true,
+      repetition: false,
+      casing: true
+    }
+    expect(clean('You know, it is fine.', { rules })).toBe('It is fine.')
+    expect(clean('You know, it is fine.', { rules: { ...rules, casing: false } })).toBe(
+      'it is fine.'
+    )
+    expect(clean('hello, world', { rules })).toBe('hello, world')
+  })
+
+  it.each([
+    ['Um. We should go.', 'We should go.'],
+    ['You know. It is fine.', 'It is fine.'],
+    ['We should go. Um.', 'We should go.'],
+    ['We go um.', 'We go.'],
+    ['We should go. Um. More.', 'We should go. More.']
+  ])('drops the orphan separator in %j', (input, expected) => {
+    expect(clean(input)).toBe(expected)
   })
 
   it('can be disabled', () => {
     expect(clean('you know, it is fine.', { rules: { casing: false } })).toBe('it is fine.')
+  })
+})
+
+describe('postprocess: masking layers', () => {
+  const PROTECT = { vocabulary: { protect: ['JustSpeak'] } }
+
+  it.each([
+    'JustSpeak v1.2.3 is out.',
+    'Mail JustSpeak at dev@example.com.',
+    'See JustSpeak at https://example.com/JustSpeak tomorrow.'
+  ])('never lets one layer rewrite another in %j', (input) => {
+    const result = postprocess(input, PROTECT)
+    expect(result).toEqual({ text: input, applied: [] })
+    for (const sentinel of MASK_SENTINELS) expect(result.text).not.toContain(sentinel)
+  })
+
+  it('keeps multiple protect and code spans independent', () => {
+    const input = 'JustSpeak v1.2.3 and FD2008 v2.0.1 are out.'
+    const result = postprocess(input, {
+      vocabulary: { protect: ['JustSpeak', 'FD2008'], replace: [{ from: 'cat', to: 'dog' }] }
+    })
+    expect(result).toEqual({ text: input, applied: [] })
+    for (const sentinel of MASK_SENTINELS) expect(result.text).not.toContain(sentinel)
+  })
+
+  it('never lets a numeric replacement edit mask encoding', () => {
+    const input = 'JustSpeak 和 FD2008 都在。'
+    const result = postprocess(input, {
+      vocabulary: {
+        protect: ['JustSpeak', 'FD2008'],
+        replace: [{ from: '1', to: '一' }]
+      }
+    })
+    expect(result).toEqual({ text: input, applied: [] })
+  })
+
+  it('masks with provably disjoint namespaces', () => {
+    const outer = maskSpans('AAA bbb', [{ start: 0, end: 3 }], 'protect')
+    const inner = maskSpans(outer.masked, [{ start: 4, end: 7 }], 'code')
+    expect(outer.masked[0]).not.toBe(inner.masked[4])
+    // Restoring the code layer leaves the protect placeholder intact.
+    expect(inner.restore(inner.masked)).toBe(outer.masked)
+    expect(outer.restore(inner.restore(inner.masked))).toBe('AAA bbb')
+  })
+
+  it('fails closed when a sentinel would leak', () => {
+    const protectSentinel = `x\uE0000\uE001y`
+    const codeSentinel = `x\uE0020\uE003y`
+    // Guard the guard: the inputs really do contain the sentinel characters.
+    for (const input of [protectSentinel, codeSentinel]) {
+      expect(MASK_SENTINELS.some((sentinel) => input.includes(sentinel))).toBe(true)
+      expect(postprocess(input)).toEqual({ text: input, applied: [] })
+    }
+  })
+
+  it('does not let vocabulary rewrite code-like tokens', () => {
+    const vocabulary = { replace: [{ from: 'cat', to: 'dog' }] }
+    expect(clean('`cat` and cat', { vocabulary })).toBe('`cat` and dog')
+    expect(clean('https://example.com/cat', { vocabulary })).toBe('https://example.com/cat')
+  })
+
+  it('stays bounded on a long token', () => {
+    const input = 'a.'.repeat(30_000)
+    const started = performance.now()
+    const result = postprocess(input)
+    const elapsed = performance.now() - started
+    expect(result.text.length).toBeGreaterThan(0)
+    expect(elapsed).toBeLessThan(1000)
   })
 })
 

@@ -1,24 +1,39 @@
-import { findLiteralSpans, type Span } from './vocabulary'
+import { findLiteralSpans, mergeSpans, type Span } from './vocabulary'
 
 /* ------------------------------------------------------------------ */
 /* Masking                                                             */
 /* ------------------------------------------------------------------ */
 
-const MASK_START = '\uE000'
-const MASK_END = '\uE001'
+export type MaskLayer = 'protect' | 'code'
 
-function mergeSpans(spans: readonly Span[]): Span[] {
-  const sorted = [...spans].sort((a, b) => a.start - b.start || b.end - a.end)
-  const merged: Span[] = []
-  for (const span of sorted) {
-    const last = merged[merged.length - 1]
-    if (last && span.start <= last.end) {
-      last.end = Math.max(last.end, span.end)
-    } else {
-      merged.push({ ...span })
-    }
-  }
-  return merged
+interface MaskMarkers {
+  start: string
+  end: string
+}
+
+/**
+ * Two provably disjoint sentinel namespaces. A restore only matches its own
+ * start/end pair, so restoring the code layer can never rewrite a protect
+ * placeholder (the previous shared `<id>` scheme did exactly that).
+ */
+const MASK_MARKERS: Readonly<Record<MaskLayer, MaskMarkers>> = {
+  protect: { start: '\uE000', end: '\uE001' },
+  code: { start: '\uE002', end: '\uE003' }
+}
+
+export const MASK_SENTINELS: readonly string[] = Object.values(MASK_MARKERS).flatMap(
+  ({ start, end }) => [start, end]
+)
+
+export function containsSentinel(text: string): boolean {
+  return MASK_SENTINELS.some((sentinel) => text.includes(sentinel))
+}
+
+function isMaskStart(char: string | undefined): boolean {
+  return (
+    char !== undefined &&
+    (char === MASK_MARKERS.protect.start || char === MASK_MARKERS.code.start)
+  )
 }
 
 export interface MaskedText {
@@ -29,24 +44,26 @@ export interface MaskedText {
 /**
  * Replace spans with private-use placeholders so no rule can edit them, then
  * put the original text back. Placeholder ids stay stable while rules delete
- * or reorder the text around them.
+ * or reorder the text around them. The layer chooses the namespace, and each
+ * restore matches only that namespace.
  */
-export function maskSpans(text: string, spans: readonly Span[]): MaskedText {
+export function maskSpans(text: string, spans: readonly Span[], layer: MaskLayer): MaskedText {
   const merged = mergeSpans(spans)
   if (merged.length === 0) return { masked: text, restore: (value) => value }
 
+  const markers = MASK_MARKERS[layer]
   const originals: string[] = []
   let masked = ''
   let cursor = 0
   for (const span of merged) {
     masked += text.slice(cursor, span.start)
-    masked += `${MASK_START}${originals.length}${MASK_END}`
+    masked += `${markers.start}${originals.length}${markers.end}`
     originals.push(text.slice(span.start, span.end))
     cursor = span.end
   }
   masked += text.slice(cursor)
 
-  const pattern = new RegExp(`${MASK_START}(\\d+)${MASK_END}`, 'g')
+  const pattern = new RegExp(`${markers.start}(\\d+)${markers.end}`, 'g')
   return {
     masked,
     restore: (value) =>
@@ -65,7 +82,9 @@ const CODE_PATTERNS: readonly RegExp[] = [
   /`[^`\n]+`/g,
   /\b(?:https?|ftp):\/\/[^\s<>"'`]+/gi,
   /\bwww\.[^\s<>"'`]+/gi,
-  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+  // The lookbehind prevents a restart inside a local part, and the bounds cap
+  // backtracking: a bare greedy local part was quadratic on long tokens.
+  /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}\b/g,
   /(?<=^|[\s(（"'\[])(?:\/[\w.@%+-]+){2,}/g,
   /\b[A-Za-z]:\\[^\s<>"'`]+/g,
   /\b[A-Za-z_$][\w$]*\([^()\n]*\)/g,
@@ -77,6 +96,13 @@ const CODE_PATTERNS: readonly RegExp[] = [
   /\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+\b/g,
   /(?<=\s|^)--?[A-Za-z][\w-]*/g,
   /\$[A-Za-z_][A-Za-z0-9_]*|\$\{[^}]+\}/g,
+  // Bare multi-word commands are literals too: `pnpm test` must not become
+  // `Pnpm test` just because it starts a sentence.
+  /\b(?:pnpm|npm|yarn|npx|bun|deno)\s+[\w@./:=+-]+(?:\s+[\w@./:=+-]+)*/gi,
+  /\bgit\s+(?:commit|push|pull|merge|rebase|checkout|switch|status|diff|log|branch|tag|stash|add|reset|clone|fetch|cherry-pick|revert|worktree)(?:\s+[\w@./:=+-]+)*/g,
+  /\b(?:cargo|docker|kubectl|brew)\s+[\w@./:=+-]+(?:\s+[\w@./:=+-]+)*/g,
+  /\bgo\s+(?:build|test|run|mod|get|install)(?:\s+[\w@./:=+-]+)*/g,
+  /\b(?:python3?|node)\s+[\w./-]+(?:\s+[\w@./:=+-]+)*/g,
   /\b[0-9a-f]{7,40}\b/gi
 ]
 
@@ -198,6 +224,32 @@ const COMMA_SEPARATORS = new Set([',', '，', ';', '；', ':', '：'])
 
 const CJK_SEPARATORS = new Set(['，', '。', '；', '：', '！', '？', '、'])
 
+const SENTENCE_SEPARATORS = new Set(['.', '。', '!', '！', '?', '？'])
+
+// Characters that can precede the first word without starting it. Quotes and
+// brackets are transparent for casing and for "leading removal" detection; a
+// mask placeholder is not, because its case belongs to the user.
+const LEADING_TRANSPARENT = new Set([
+  '"', "'", '“', '”', '‘', '’', '(', ')', '[', ']', '{', '}',
+  '（', '）', '【', '】', '「', '」', '『', '』', '《', '》', '〈', '〉'
+])
+
+/** True when only whitespace and opening quotes precede `index`. */
+function isLeadingPosition(text: string, index: number): boolean {
+  for (let i = 0; i < index; i += 1) {
+    const char = text[i] ?? ''
+    if (/\s/.test(char) || LEADING_TRANSPARENT.has(char)) continue
+    return false
+  }
+  return true
+}
+
+export interface RuleResult {
+  text: string
+  /** A deletion started at the beginning of the text. */
+  removedLeading: boolean
+}
+
 const MARKER_PATTERN = /no\s+wait|i\s+mean|不对|我是说/giu
 
 function isSpace(char: string | undefined): boolean {
@@ -291,13 +343,15 @@ function findCorrectionDeletion(text: string): Deletion | null {
   return null
 }
 
-export function applySelfCorrections(text: string): string {
+export function applySelfCorrections(text: string): RuleResult {
   let output = text
+  let removedLeading = false
   // A handful of markers can chain ("A, no wait, B, no wait, C"); the bound
   // makes the rule total even on adversarial input.
   for (let pass = 0; pass < 8; pass += 1) {
     const deletion = findCorrectionDeletion(output)
     if (!deletion) break
+    if (isLeadingPosition(output, deletion.start)) removedLeading = true
     const before = output.slice(0, deletion.start)
     const after = output.slice(deletion.end)
     // Deleting a clause can butt a Latin sentence stop against the next word;
@@ -315,7 +369,7 @@ export function applySelfCorrections(text: string): string {
         : ''
     output = before + joiner + after
   }
-  return normalizeSpacing(output)
+  return { text: normalizeSpacing(output), removedLeading }
 }
 
 /* ------------------------------------------------------------------ */
@@ -371,6 +425,19 @@ function joinerBetween(text: string, leftIndex: number, rightIndex: number): str
 function removeFiller(text: string, match: FillerMatch): string {
   const left = previousNonSpace(text, match.start)
   const right = nextNonSpace(text, match.end)
+
+  // A leading filler takes the sentence's opening capital with it. Drop the
+  // following separator too, or the result would start with a dangling mark.
+  if (isLeadingPosition(text, match.start)) {
+    let end = match.end
+    while (end < text.length && isSpace(text[end])) end += 1
+    if (end < text.length && SEPARATORS.has(text[end] ?? '')) {
+      end += 1
+      while (end < text.length && isSpace(text[end])) end += 1
+    }
+    return text.slice(0, match.start) + text.slice(end)
+  }
+
   const leftIsComma = left >= 0 && COMMA_SEPARATORS.has(text[left] ?? '')
   const rightIsComma = right >= 0 && COMMA_SEPARATORS.has(text[right] ?? '')
 
@@ -385,6 +452,25 @@ function removeFiller(text: string, match: FillerMatch): string {
     return text.slice(0, match.start) + text.slice(right + 1)
   }
 
+  // A filler that ends its own sentence: drop the filler and its mark, but
+  // keep the mark that already ended the previous sentence.
+  if (right >= 0 && SENTENCE_SEPARATORS.has(text[right] ?? '')) {
+    let start = match.start
+    while (start > 0 && isSpace(text[start - 1])) start -= 1
+    if (left >= 0 && SENTENCE_SEPARATORS.has(text[left] ?? '')) {
+      return text.slice(0, start) + text.slice(right + 1)
+    }
+    // The filler followed a word: the sentence mark still terminates it.
+    return text.slice(0, start) + text.slice(right)
+  }
+
+  // A filler at the very end without its own mark.
+  if (right < 0) {
+    let start = match.start
+    while (start > 0 && isSpace(text[start - 1])) start -= 1
+    return text.slice(0, start)
+  }
+
   let start = match.start
   let end = match.end
   if (isSpace(text[end])) end += 1
@@ -392,13 +478,17 @@ function removeFiller(text: string, match: FillerMatch): string {
   return text.slice(0, start) + text.slice(end)
 }
 
-export function removeFillers(text: string): string {
+export function removeFillers(text: string): RuleResult {
   let output = text
+  let removedLeading = false
   // Matches are disjoint and processed right-to-left, so every earlier offset
   // stays valid while the text shrinks.
   const matches = fillerMatches(output).sort((a, b) => b.start - a.start)
-  for (const match of matches) output = removeFiller(output, match)
-  return normalizeSpacing(output)
+  for (const match of matches) {
+    if (isLeadingPosition(output, match.start)) removedLeading = true
+    output = removeFiller(output, match)
+  }
+  return { text: normalizeSpacing(output), removedLeading }
 }
 
 /* ------------------------------------------------------------------ */
@@ -430,18 +520,12 @@ const KEEP_REPEATED_TOKENS = new Set(['had', 'that'])
 /* Sentence-initial casing                                             */
 /* ------------------------------------------------------------------ */
 
-// Opening quotes and brackets are transparent for the first letter; a masked
-// protected or code-like token is not, because its case belongs to the user.
-const LEADING_TRANSPARENT = new Set([
-  '"', "'", '“', '”', '‘', '’', '(', ')', '[', ']', '{', '}',
-  '（', '）', '【', '】', '「', '」', '『', '』', '《', '》', '〈', '〉'
-])
-
 /**
  * Restore the capital that a dropped leading filler or correction took with
  * it. Only the first Latin letter of the result is considered: a CJK start, a
  * digit, or a protected/code-like token leaves the text alone, and nothing
  * after the first letter is ever touched, so inner casing cannot be damaged.
+ * The caller runs this only when a rule actually removed leading material.
  */
 export function restoreSentenceCase(text: string): string {
   let index = 0
@@ -457,7 +541,7 @@ export function restoreSentenceCase(text: string): string {
   const first = text[index]
   if (first === undefined) return text
   // A placeholder means the sentence starts with text the rules must not edit.
-  if (first === MASK_START) return text
+  if (isMaskStart(first)) return text
   if (!LATIN.test(first)) return text
 
   const upper = first.toUpperCase()

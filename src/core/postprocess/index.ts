@@ -1,13 +1,19 @@
 import {
   applySelfCorrections,
   collapseRepetitions,
+  containsSentinel,
   findCodeSpans,
   maskSpans,
   normalizeText,
   removeFillers,
   restoreSentenceCase
 } from './rules'
-import { applyVocabulary, findProtectSpans, ruleEnabled } from './vocabulary'
+import {
+  applyVocabulary,
+  applyVocabularyOutside,
+  findProtectSpans,
+  ruleEnabled
+} from './vocabulary'
 import type {
   PostprocessOptions,
   PostprocessResult,
@@ -48,10 +54,12 @@ function record(
  * list of rules that changed it out. No Electron, DOM, filesystem, network, or
  * clock is involved, so it runs identically for the fake and local providers.
  *
- * Order matters. Protected and code-like spans are masked first so nothing can
- * edit them. Vocabulary replacement runs before normalisation, as a user
- * spelling is the authority. Corrections resolve before fillers, so a filler
- * inside an abandoned fragment disappears with it.
+ * Order matters. Vocabulary edits only the text between protected and
+ * code-like spans, so it cannot rewrite a user literal or a mask id; then the
+ * two disjoint mask layers hide those spans from normalisation and the rule
+ * pass. Vocabulary still runs before normalisation, as a user spelling is the
+ * authority. Corrections resolve before fillers, so a filler inside an
+ * abandoned fragment disappears with it.
  */
 export function postprocess(text: string, options: PostprocessOptions = {}): PostprocessResult {
   if (text.length === 0) return { text, applied: [] }
@@ -66,18 +74,28 @@ export function postprocess(text: string, options: PostprocessOptions = {}): Pos
     Math.min(10, Math.floor(options.repetitionThreshold ?? DEFAULT_REPETITION_THRESHOLD))
   )
 
-  // Protect entries survive NFKC too, so their mask is installed first.
-  const protectMask = maskSpans(text, findProtectSpans(text, vocabulary.protect))
-  let working = protectMask.masked
-
+  let working = text
   if (ruleEnabled(options, 'vocabulary') && vocabulary.replace.length > 0) {
-    const next = applyVocabulary(working, vocabulary)
+    // Code-like spans are part of the exclusion, so "masked first" is true for
+    // literals as well as for protect entries even though vocabulary runs
+    // before the masks are installed.
+    const excluded = [...findProtectSpans(text, vocabulary.protect), ...findCodeSpans(text)]
+    const next = applyVocabularyOutside(text, vocabulary, excluded)
     record(applied, 'vocabulary', working, next)
     working = next
   }
 
-  const codeMask = maskSpans(working, findCodeSpans(working))
+  // Re-detect on the vocabulary output: a replacement can move spans or
+  // introduce a new protected or code-like token.
+  const protectMask = maskSpans(
+    working,
+    findProtectSpans(working, vocabulary.protect),
+    'protect'
+  )
+  const codeMask = maskSpans(protectMask.masked, findCodeSpans(protectMask.masked), 'code')
   working = codeMask.masked
+
+  let removedLeading = false
 
   if (ruleEnabled(options, 'normalize')) {
     const next = normalizeText(working)
@@ -86,15 +104,17 @@ export function postprocess(text: string, options: PostprocessOptions = {}): Pos
   }
 
   if (ruleEnabled(options, 'self-correction')) {
-    const next = applySelfCorrections(working)
-    record(applied, 'self-correction', working, next)
-    working = next
+    const result = applySelfCorrections(working)
+    record(applied, 'self-correction', working, result.text)
+    removedLeading ||= result.removedLeading
+    working = result.text
   }
 
   if (ruleEnabled(options, 'filler')) {
-    const next = removeFillers(working)
-    record(applied, 'filler', working, next)
-    working = next
+    const result = removeFillers(working)
+    record(applied, 'filler', working, result.text)
+    removedLeading ||= result.removedLeading
+    working = result.text
   }
 
   if (ruleEnabled(options, 'repetition')) {
@@ -103,16 +123,19 @@ export function postprocess(text: string, options: PostprocessOptions = {}): Pos
     working = next
   }
 
-  // Last, because fillers and corrections are what remove the sentence's
-  // original first word. The function only touches the first Latin letter and
-  // skips a protected/code-like mask, so it cannot lower or rewrite inner text.
-  if (ruleEnabled(options, 'casing')) {
+  // Only after a rule actually removed the sentence's original first word.
+  // The function touches only the first Latin letter and skips a
+  // protected/code-like mask, so it cannot lower or rewrite inner text.
+  if (ruleEnabled(options, 'casing') && removedLeading) {
     const next = restoreSentenceCase(working)
     record(applied, 'casing', working, next)
     working = next
   }
 
   const output = protectMask.restore(codeMask.restore(working))
+
+  // Fail closed on a sentinel leak: never emit invisible control characters.
+  if (containsSentinel(output)) return { text, applied: [] }
 
   // The safety contract: a non-empty input never becomes empty. If every rule
   // would delete it (a filler-only utterance, for example), inject the

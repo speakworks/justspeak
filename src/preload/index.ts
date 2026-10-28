@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AppState,
   AppStatus,
+  HotkeySetResult,
   JustSpeakApi,
   PcmBatch,
   RecordingCommand,
@@ -19,6 +20,8 @@ const api: JustSpeakApi = {
   sendCaptureFailed: (message: string) => ipcRenderer.send('capture:failed', message),
   sendPcmBatch: (batch: PcmBatch) => ipcRenderer.send('capture:pcm', batch),
   setTheme: (theme) => ipcRenderer.invoke('theme:set', theme) as Promise<ThemePreference>,
+  setHotkey: (accelerator) =>
+    ipcRenderer.invoke('hotkey:set', accelerator) as Promise<HotkeySetResult>,
   onThemeChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, theme: ThemePreference) => {
       listener(theme)

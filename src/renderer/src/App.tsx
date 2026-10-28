@@ -5,6 +5,7 @@ import {
   type CaptureStreamPort,
   type WorkletNodePort
 } from '../../core/capture/capture-controller'
+import { describeCapabilities } from '../../core/asr/capabilities'
 import {
   acceleratorDisplayParts,
   DEFAULT_ACCELERATOR,
@@ -17,9 +18,11 @@ import {
 } from '../../core/theme/theme'
 import type {
   AppState,
+  AsrProviderSelection,
   ModelInfo,
   RecordingSummary,
   ResolvedTheme,
+  SelectableAsrProviderId,
   ThemePreference,
   TranscriptEvent
 } from '../../shared/ipc'
@@ -112,6 +115,7 @@ export function App(): React.JSX.Element {
   const [level, setLevel] = useState(0)
   const [transcript, setTranscript] = useState<TranscriptEvent | null>(null)
   const [modelInfo, setModelInfo] = useState<ModelInfo | undefined>()
+  const [asr, setAsr] = useState<AsrProviderSelection | undefined>()
   const [theme, setTheme] = useState<ThemePreference>('system')
   const [hotkey, setHotkey] = useState(DEFAULT_ACCELERATOR)
   const [hotkeyDraft, setHotkeyDraft] = useState(DEFAULT_ACCELERATOR)
@@ -150,6 +154,20 @@ export function App(): React.JSX.Element {
     }
     query.addEventListener('change', onChange)
     return () => query.removeEventListener('change', onChange)
+  }, [])
+
+  const changeProvider = useCallback((next: SelectableAsrProviderId): void => {
+    void window.justspeak
+      .setAsrProvider(next)
+      .then((status) => {
+        setAsr(status.asr)
+        setModelInfo(status.modelInfo)
+        setState(status.state)
+        setMessage(status.message)
+      })
+      .catch((error: unknown) => {
+        setMessage(error instanceof Error ? error.message : String(error))
+      })
   }, [])
 
   const cycleTheme = useCallback((): void => {
@@ -215,6 +233,7 @@ export function App(): React.JSX.Element {
       .then((status) => {
         if (disposed) return
         setModelInfo(status.modelInfo)
+        setAsr(status.asr)
         if (status.theme) setTheme(status.theme)
         if (typeof status.hotkey === 'string') {
           setHotkey(status.hotkey)
@@ -261,6 +280,23 @@ export function App(): React.JSX.Element {
           <h1>按一下，开始说话</h1>
         </div>
         <div className="header-actions">
+          {asr ? (
+            <select
+              className="provider-select"
+              aria-label="识别模型"
+              value={asr.id}
+              disabled={isBusy || state === 'recording'}
+              onChange={(event) =>
+                changeProvider(event.target.value as SelectableAsrProviderId)
+              }
+            >
+              {asr.options.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <button
             type="button"
             className="theme-toggle"
@@ -333,12 +369,15 @@ export function App(): React.JSX.Element {
         </div>
 
         {modelInfo ? (
-          // The URL is long enough to wrap onto a second row and waste height;
-          // show it on hover instead. Not a link: the main process denies new
-          // windows, so a clickable element here would be a dead affordance.
-          <p className="hint model-meta" title={modelInfo.sourceUrl}>
-            模型：{modelInfo.name} · {modelInfo.license} · 来源{' '}
-            {modelInfo.sourceUrl.replace(/^https?:\/\//, '').split('/')[0]}
+          // The source URL is long enough to wrap onto a second row and waste
+          // height, so it stays on hover. The capability summary comes from the
+          // provider's declared flags, not from the selected provider id.
+          <p
+            className="hint model-meta"
+            title={`${modelInfo.sourceUrl} · ${modelInfo.quantization}`}
+          >
+            模型：{modelInfo.name} · {modelInfo.license} ·{' '}
+            {describeCapabilities(modelInfo.capabilities)}
           </p>
         ) : null}
 

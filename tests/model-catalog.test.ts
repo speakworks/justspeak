@@ -7,9 +7,12 @@ import {
   toModelDescriptor
 } from '../src/core/asr/model-catalog'
 import { QWEN3_CAPABILITIES } from '../src/core/asr/qwen3-provider'
+import { SENSEVOICE_CAPABILITIES } from '../src/core/asr/sensevoice-provider'
 
 const PINNED_SHA = 'f081b2d5e23bd669d92cc331d722a8a0681943b8e6f34b48996fd5c319b5acd8'
 const PINNED_SIZE = 850423456
+const SENSEVOICE_SHA = '6c759ee4c9748c9b3f7a5a60ca74f0f7e685fb9d45d1378fce7cfd62f59adf29'
+const SENSEVOICE_SIZE = 252684608
 
 describe('embedded model catalog', () => {
   it('parses and pins the Qwen3 model digest and size', () => {
@@ -33,6 +36,23 @@ describe('embedded model catalog', () => {
     expect(model.capabilities.languages).toEqual(
       expect.arrayContaining(['zh', 'en', 'mixed'])
     )
+  })
+
+  it('pins the SenseVoice digest, size, license, source revision, and 30 s window', () => {
+    const catalog = parseModelCatalog(rawCatalog)
+    const model = findModel(catalog, 'sensevoice-small-q8')
+    expect(model.files).toHaveLength(1)
+    expect(model.files[0]?.sha256).toBe(SENSEVOICE_SHA)
+    expect(model.files[0]?.sizeBytes).toBe(SENSEVOICE_SIZE)
+    expect(model.sizeBytes).toBe(SENSEVOICE_SIZE)
+    expect(model.files[0]?.url).toContain('ff8f085a8fa2e5ccae0e849ef19ebc6dc18e608b')
+    // The weights are not MIT; do not let a future "cleanup" relabel them.
+    expect(model.license).toBe('FunASR-Model-License-1.1')
+    expect(model.license).not.toBe('MIT')
+    expect(model.quantization).toBe('Q8_0')
+    expect(model.capabilities.maxAudioMs).toBe(SENSEVOICE_CAPABILITIES.maxAudioMs)
+    expect(model.capabilities.languages).toEqual(SENSEVOICE_CAPABILITIES.languages)
+    expect(model.capabilities.streaming).toBe(false)
   })
 
   it('pins the runtime tag and commit', () => {

@@ -22,6 +22,7 @@ const api: JustSpeakApi = {
   setTheme: (theme) => ipcRenderer.invoke('theme:set', theme) as Promise<ThemePreference>,
   setHotkey: (accelerator) =>
     ipcRenderer.invoke('hotkey:set', accelerator) as Promise<HotkeySetResult>,
+  setAsrProvider: (provider) => ipcRenderer.invoke('asr:set-provider', provider) as Promise<AppStatus>,
   onThemeChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, theme: ThemePreference) => {
       listener(theme)

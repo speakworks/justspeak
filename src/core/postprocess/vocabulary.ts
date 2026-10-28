@@ -183,8 +183,10 @@ export function parseVocabularyConfig(raw: unknown): PostprocessOptions {
   const rules = parseRules(raw.rules)
   if (rules) options.rules = rules
 
+  // The Han threshold has a floor of 3; a stored 2 is ignored and the default
+  // applies. The keep list is retained for a future lower floor.
   const threshold = raw.repetitionThreshold
-  if (typeof threshold === 'number' && Number.isInteger(threshold) && threshold >= 2 && threshold <= 10) {
+  if (typeof threshold === 'number' && Number.isInteger(threshold) && threshold >= 3 && threshold <= 10) {
     options.repetitionThreshold = threshold
   }
 

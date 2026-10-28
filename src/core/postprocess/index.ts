@@ -3,6 +3,7 @@ import {
   collapseRepetitions,
   containsSentinel,
   findCodeSpans,
+  findPunctuationRunSpans,
   maskSpans,
   normalizeText,
   removeFillers,
@@ -97,7 +98,15 @@ export function postprocess(text: string, options: PostprocessOptions = {}): Pos
     'protect'
   )
   const codeMask = maskSpans(protectMask.masked, findCodeSpans(protectMask.masked), 'code')
-  working = codeMask.masked
+  // Punctuation runs are masked before NFKC so `……` is not expanded and the
+  // first dot of `...` cannot become `。`; restore them before fillers so the
+  // separator logic can still consume a run whole.
+  const punctuationMask = maskSpans(
+    codeMask.masked,
+    findPunctuationRunSpans(codeMask.masked),
+    'punctuation'
+  )
+  working = punctuationMask.masked
 
   let removedLeading = false
 
@@ -106,6 +115,8 @@ export function postprocess(text: string, options: PostprocessOptions = {}): Pos
     record(applied, 'normalize', working, next)
     working = next
   }
+
+  working = punctuationMask.restore(working)
 
   if (ruleEnabled(options, 'self-correction')) {
     const result = applySelfCorrections(working)

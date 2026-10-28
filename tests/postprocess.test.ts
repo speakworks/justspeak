@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   postprocess,
@@ -124,9 +126,7 @@ describe('postprocess: repetition collapse', () => {
   it.each([
     ['我我我觉得可以。', '我觉得可以。'],
     ['the the plan is ready.', 'the plan is ready.'],
-    ['The The plan is ready.', 'The plan is ready.'],
-    ['hello!!', 'hello!'],
-    ['真的。。', '真的。']
+    ['The The plan is ready.', 'The plan is ready.']
   ])('collapses repeats in %j', (input, expected) => {
     expect(clean(input)).toBe(expected)
   })
@@ -150,7 +150,11 @@ describe('postprocess: repetition collapse', () => {
     expect(clean('我我走了。')).toBe('我我走了。')
     expect(clean('我我我走了。')).toBe('我走了。')
     expect(clean('the the plan')).toBe('the plan')
-    expect(clean('谢谢', { repetitionThreshold: 2 })).toBe('谢谢')
+  })
+
+  it('clamps the Han threshold to a floor of 3', () => {
+    expect(clean('我我走了。', { repetitionThreshold: 2 })).toBe('我我走了。')
+    expect(clean('我我我走了。', { repetitionThreshold: 2 })).toBe('我走了。')
   })
 
   it('honours the configurable threshold', () => {
@@ -161,6 +165,47 @@ describe('postprocess: repetition collapse', () => {
 
   it('is individually disableable', () => {
     expect(clean('我我我觉得可以。', { rules: { repetition: false } })).toBe('我我我觉得可以。')
+  })
+})
+
+describe('postprocess: punctuation runs', () => {
+  it.each([
+    ['他说……', '他说……'],
+    ['他说...', '他说...'],
+    ['他说…', '他说…'],
+    ['等一下……', '等一下……'],
+    ['真的吗?!', '真的吗?!'],
+    ['Wait...', 'Wait...'],
+    ['hello!!', 'hello!!'],
+    ['真的。。', '真的。。']
+  ])('treats the run in %j atomically', (input, expected) => {
+    expect(clean(input)).toBe(expected)
+  })
+
+  it('leaves a preserved ellipsis without reporting a rule', () => {
+    expect(postprocess('他说……')).toEqual({ text: '他说……', applied: [] })
+    expect(postprocess('真的吗?!')).toEqual({ text: '真的吗?!', applied: [] })
+  })
+
+  it('still lets a filler consume an ellipsis run', () => {
+    expect(clean('um... hello')).toBe('Hello')
+    expect(clean('嗯……我们走吧。')).toBe('我们走吧。')
+  })
+})
+
+describe('postprocess: purity', () => {
+  it('has no Electron, DOM, filesystem, or network imports', () => {
+    const dir = path.resolve(process.cwd(), 'src/core/postprocess')
+    const files = readdirSync(dir).filter((file) => file.endsWith('.ts'))
+    expect(files.length).toBeGreaterThan(0)
+    for (const file of files) {
+      const source = readFileSync(path.join(dir, file), 'utf8')
+      expect(source, file).not.toMatch(
+        /\bfrom\s+['"](?:electron|node:fs|node:path|node:os|node:child_process)['"]/
+      )
+      expect(source, file).not.toMatch(/\b(?:document|window)\./)
+      expect(source, file).not.toMatch(/\bfetch\s*\(/)
+    }
   })
 })
 

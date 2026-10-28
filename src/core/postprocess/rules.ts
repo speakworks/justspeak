@@ -4,7 +4,7 @@ import { findLiteralSpans, mergeSpans, type Span } from './vocabulary'
 /* Masking                                                             */
 /* ------------------------------------------------------------------ */
 
-export type MaskLayer = 'protect' | 'code'
+export type MaskLayer = 'protect' | 'code' | 'punctuation'
 
 interface MaskMarkers {
   start: string
@@ -18,7 +18,8 @@ interface MaskMarkers {
  */
 const MASK_MARKERS: Readonly<Record<MaskLayer, MaskMarkers>> = {
   protect: { start: '\uE000', end: '\uE001' },
-  code: { start: '\uE002', end: '\uE003' }
+  code: { start: '\uE002', end: '\uE003' },
+  punctuation: { start: '\uE004', end: '\uE005' }
 }
 
 export const MASK_SENTINELS: readonly string[] = Object.values(MASK_MARKERS).flatMap(
@@ -137,6 +138,29 @@ export function findCodeSpans(text: string): Span[] {
       if (match.index === undefined) continue
       spans.push({ start: match.index, end: match.index + match[0].length })
     }
+  }
+  return spans
+}
+
+// Punctuation runs are atomic: a width conversion or a per-character collapse
+// must not split `...` into `。.`. A lone `…` is included because NFKC would
+// otherwise turn it into three dots and lose the original character.
+const PUNCTUATION_RUN_CHARS = new Set([
+  '.', '…', '!', '?', ',', ';', ':', '。', '，', '！', '？', '；', '：', '、'
+])
+
+export function findPunctuationRunSpans(text: string): Span[] {
+  const spans: Span[] = []
+  let index = 0
+  while (index < text.length) {
+    if (!PUNCTUATION_RUN_CHARS.has(text[index] ?? '')) {
+      index += 1
+      continue
+    }
+    const start = index
+    while (index < text.length && PUNCTUATION_RUN_CHARS.has(text[index] ?? '')) index += 1
+    const run = text.slice(start, index)
+    if (run.includes('…') || run.length >= 2) spans.push({ start, end: index })
   }
   return spans
 }
@@ -605,17 +629,13 @@ export function collapseRepetitions(text: string, hanThreshold: number): string 
   output = output.replace(/([一-鿿])\1+/g, (whole: string, char: string) => {
     if (whole.length < hanThreshold) return whole
     if (KEEP_REPEATED_CHARS.has(char)) return whole
-    // The keep list is only reachable when a user lowers the threshold to 2;
-    // at the default 3, every two-character reduplication already survives.
+    // The keep list is retained for a future lower floor; with the current
+    // floor of 3, every two-character reduplication already survives.
     if (whole.length === 2 && KEEP_REDUPLICATIONS.has(whole)) return whole
     return char
   })
 
-  // Identical punctuation runs collapse; a three-dot ellipsis is intentional
-  // prose rather than a duplicate.
-  output = output.replace(/([.,，。；;：:！!？?])\1+/g, (whole: string, char: string) =>
-    char === '.' && whole.length === 3 ? whole : char
-  )
-
+  // Punctuation runs are atomic and preserved; only filler/self-correction
+  // removal may consume one, so there is deliberately no punctuation collapse.
   return output
 }

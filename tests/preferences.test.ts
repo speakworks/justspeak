@@ -231,6 +231,13 @@ describe('vocabulary config parsing', () => {
       expect(parseVocabularyConfig(value)).toEqual({})
     }
   })
+
+  it('rejects a Han threshold below the floor of 3', () => {
+    expect(parseVocabularyConfig({ repetitionThreshold: 2 })).toEqual({})
+    expect(parseVocabularyConfig({ repetitionThreshold: 3 })).toEqual({
+      repetitionThreshold: 3
+    })
+  })
 })
 
 describe('vocabulary store', () => {

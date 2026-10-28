@@ -38,9 +38,9 @@ export interface PostprocessOptions {
   /** An omitted rule is on; only an explicit `false` disables it. */
   rules?: RuleSwitches
   /**
-   * Shortest Han-character run that collapse removes. Defaults to 3, so
-   * legitimate two-character reduplication survives; Latin word repeats
-   * always collapse at 2.
+   * Shortest Han-character run that collapse removes. Defaults to, and is
+   * floored at, 3, so legitimate two-character reduplication survives; Latin
+   * word repeats always collapse at 2.
    */
   repetitionThreshold?: number
 }

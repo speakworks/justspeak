@@ -27,7 +27,7 @@ Defines the deterministic transcript-cleaning stage that runs between the ASR re
 
 ### Requirement: Normalisation SHALL be conservative
 
-The stage SHALL apply Unicode NFKC, collapse repeated whitespace, trim, remove stray spacing before punctuation, and convert punctuation to the dominant script. It SHALL NOT edit code-like tokens, including backtick spans, URLs, emails, paths, versions, numbers with units, environment variables, CLI flags, code identifiers, and bare multi-word commands such as `pnpm test`, `npm run build`, and `git commit`.
+The stage SHALL apply Unicode NFKC, collapse repeated whitespace, trim, remove stray spacing before punctuation, and convert punctuation to the dominant script. It SHALL NOT edit code-like tokens, including backtick spans, URLs, emails, paths, versions, numbers with units, environment variables, CLI flags, code identifiers, and bare multi-word commands such as `pnpm test`, `npm run build`, and `git commit`. A punctuation run of two or more marks, and every ellipsis character, SHALL be treated as an atomic token: it SHALL NOT be width-converted, split, or otherwise edited, and SHALL survive normalisation exactly as spoken.
 
 #### Scenario: Full-width input
 
@@ -57,9 +57,20 @@ The stage SHALL apply Unicode NFKC, collapse repeated whitespace, trim, remove s
 - **THEN** the output is `pnpm test`
 - **AND** the command is not capitalised
 
+#### Scenario: Ellipsis run
+
+- **WHEN** the transcript is `他说……`, `他说...`, `他说…`, or `等一下……`
+- **THEN** the text is unchanged
+- **AND** no `。.` or other split run appears
+
+#### Scenario: Mixed punctuation run
+
+- **WHEN** the transcript is `真的吗?!`
+- **THEN** the run is unchanged and is not width-converted
+
 ### Requirement: Filler removal SHALL avoid real words
 
-The stage SHALL remove the standalone Chinese fillers `嗯`, `呃`, `啊`, `那个`, and `就是说`, and the English fillers `um`, `uh`, and `er`, when they are set off from surrounding words. It SHALL remove `like` and `you know` only when punctuation or the start/end of the text sets them off. It SHALL NOT delete a filler that is part of a real word or phrase. When a filler is leading or sentence-final, the stage SHALL remove the entire adjacent separator run (for example `...`, `?!`, or `……`) together with the filler, not a single mark.
+The stage SHALL remove the standalone Chinese fillers `嗯`, `呃`, `啊`, `那个`, and `就是说`, and the English fillers `um`, `uh`, and `er`, when they are set off from surrounding words. It SHALL remove `like` and `you know` only when punctuation or the start/end of the text sets them off. It SHALL NOT delete a filler that is part of a real word or phrase. When a leading filler is removed, the stage SHALL remove the entire adjacent separator run (for example `...`, `?!`, or `……`). When a sentence-final filler is removed, the stage SHALL remove its adjacent separator run and SHALL keep at most the single mark that terminated the preceding sentence, or one mark when the filler followed a word.
 
 #### Scenario: Chinese filler
 
@@ -102,11 +113,11 @@ The stage SHALL remove the standalone Chinese fillers `嗯`, `呃`, `啊`, `那�
 
 - **WHEN** the transcript is `We should go. Um...` or `We go um...`
 - **THEN** the output is `We should go.` or `We go.`
-- **AND** no duplicate separator run remains
+- **AND** at most one terminating mark remains
 
 ### Requirement: Repetition collapse SHALL be bounded
 
-The stage SHALL collapse an immediately repeated Latin word at two occurrences (`the the` to `the`), an immediately repeated Han character when the run reaches the configurable Han threshold (default 3, so `我我我` becomes `我`), and duplicated identical punctuation. It SHALL preserve any two-character Chinese reduplication at the default threshold (`默默`, `冉冉`, `匆匆`, `津津`, `欣欣`, and other productive forms), laughter (`哈哈哈`), grammatical English doubles (`had had`, `that that`), and a three-dot ellipsis. The curated keep list SHALL apply only when a user lowers the Han threshold to 2.
+The stage SHALL collapse an immediately repeated Latin word at two occurrences (`the the` to `the`) and an immediately repeated Han character when the run reaches the configurable Han threshold. The Han threshold SHALL default to 3 and SHALL have a floor of 3: a configured value below 3 SHALL be ignored and the default SHALL apply. The stage SHALL preserve any two-character Chinese reduplication at the default threshold (`默默`, `冉冉`, `匆匆`, `津津`, `欣欣`, and other productive forms), laughter (`哈哈哈`), grammatical English doubles (`had had`, `that that`), and all punctuation runs; only filler or self-correction removal may consume a punctuation run. The curated keep list SHALL be retained for a future lower floor but is not reachable through configuration today.
 
 #### Scenario: Stutter
 
@@ -131,8 +142,14 @@ The stage SHALL collapse an immediately repeated Latin word at two occurrences (
 
 #### Scenario: Lowered threshold guard
 
-- **WHEN** `repetitionThreshold` is 2 and the transcript is `谢谢`
-- **THEN** the text is unchanged because the keep list still guards it
+- **WHEN** `repetitionThreshold` is 2
+- **THEN** it is raised to the floor of 3
+- **AND** `我我走了。` is unchanged and `我我我走了。` becomes `我走了。`
+
+#### Scenario: Punctuation runs survive repetition
+
+- **WHEN** the transcript is `hello!!`, `真的。。`, or `他说……`
+- **THEN** the punctuation run is unchanged
 
 ### Requirement: Personal vocabulary SHALL be local and applied first
 
@@ -285,7 +302,7 @@ every rule would empty it.
 
 ### Requirement: Masking SHALL use disjoint layers and fail closed
 
-The protect and code masks SHALL use disjoint sentinel namespaces, and each restore SHALL match only the placeholders that its own mask call emitted, using a call-scoped namespace that is absent from the input. Vocabulary SHALL run only over text between protected and code-like spans, so a replacement SHALL NOT edit a protected token, a code-like token, or a mask placeholder. If any sentinel remains after restoration, the stage SHALL return the original input with an empty `applied` list rather than emit invisible characters.
+The protect, code, and punctuation-run masks SHALL use disjoint sentinel namespaces, and each restore SHALL match only the placeholders that its own mask call emitted, using a call-scoped namespace that is absent from the input. Vocabulary SHALL run only over text between protected and code-like spans, so a replacement SHALL NOT edit a protected token, a code-like token, or a mask placeholder. If any sentinel remains after restoration, the stage SHALL return the original input with an empty `applied` list rather than emit invisible characters.
 
 #### Scenario: Protected token beside a version
 

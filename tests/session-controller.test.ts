@@ -181,6 +181,25 @@ describe('session state machine', () => {
     expect(harness.pastes).toHaveLength(0)
   })
 
+  it('does not run post-processing when the provider fails', async () => {
+    const postprocess = vi.fn((text: string) => ({ text, applied: [] }))
+    const harness = setup({
+      provider: fakeProvider({
+        ok: false,
+        error: { code: 'MODEL_MISSING', message: '模型缺失', retryable: false }
+      }),
+      postprocess
+    })
+    harness.controller.toggle(true)
+    harness.advance(1000)
+    harness.controller.toggle(true)
+    await harness.controller.handleCaptureStopped(SUMMARY)
+
+    expect(postprocess).not.toHaveBeenCalled()
+    expect(harness.transcripts).toHaveLength(0)
+    expect(harness.pastes).toHaveLength(0)
+  })
+
   it('returns to idle with a notice for an empty capture', async () => {
     const harness = setup({ getAudio: () => null })
     harness.controller.toggle(true)

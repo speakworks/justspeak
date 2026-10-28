@@ -38,7 +38,11 @@ export type {
   VocabularyReplacement
 } from './types'
 
-export const DEFAULT_REPETITION_THRESHOLD = 2
+// Shortest Han-character run that collapse removes. Three is deliberate: a
+// two-character Han reduplication is a productive, legitimate pattern
+// (默默, 冉冉, 匆匆, 津津), while `我我我` is a stutter. Latin word repeats
+// collapse at two independently.
+export const DEFAULT_REPETITION_THRESHOLD = 3
 
 function record(
   applied: PostprocessRule[],

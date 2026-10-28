@@ -42,28 +42,52 @@ export interface MaskedText {
 }
 
 /**
+ * A deterministic per-call namespace derived from the text and its spans. The
+ * extra salt keeps the prefix out of the input, so restore can only rewrite
+ * placeholders this masker emitted and never sentinel-shaped user text.
+ */
+function maskNonce(text: string, markers: MaskMarkers, originals: readonly string[]): string {
+  let hash = 0x811c9dc5
+  const payload = `${markers.start}\u0000${text}\u0000${originals.join('\u0000')}`
+  for (let i = 0; i < payload.length; i += 1) {
+    hash ^= payload.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  const base = (hash >>> 0).toString(36)
+  let nonce = base
+  let salt = 0
+  while (text.includes(`${markers.start}${nonce}.`)) {
+    salt += 1
+    nonce = `${base}x${salt}`
+  }
+  return nonce
+}
+
+/**
  * Replace spans with private-use placeholders so no rule can edit them, then
  * put the original text back. Placeholder ids stay stable while rules delete
  * or reorder the text around them. The layer chooses the namespace, and each
- * restore matches only that namespace.
+ * restore matches only that namespace and that call's nonce.
  */
 export function maskSpans(text: string, spans: readonly Span[], layer: MaskLayer): MaskedText {
   const merged = mergeSpans(spans)
   if (merged.length === 0) return { masked: text, restore: (value) => value }
 
   const markers = MASK_MARKERS[layer]
-  const originals: string[] = []
+  const originals = merged.map((span) => text.slice(span.start, span.end))
+  const nonce = maskNonce(text, markers, originals)
+
   let masked = ''
   let cursor = 0
-  for (const span of merged) {
+  for (let index = 0; index < merged.length; index += 1) {
+    const span = merged[index] as Span
     masked += text.slice(cursor, span.start)
-    masked += `${markers.start}${originals.length}${markers.end}`
-    originals.push(text.slice(span.start, span.end))
+    masked += `${markers.start}${nonce}.${index}${markers.end}`
     cursor = span.end
   }
   masked += text.slice(cursor)
 
-  const pattern = new RegExp(`${markers.start}(\\d+)${markers.end}`, 'g')
+  const pattern = new RegExp(`${markers.start}${nonce}\\.(\\d+)${markers.end}`, 'g')
   return {
     masked,
     restore: (value) =>
@@ -217,14 +241,14 @@ export function normalizeText(text: string): string {
 /* ------------------------------------------------------------------ */
 
 const SEPARATORS = new Set([
-  ',', '，', ';', '；', ':', '：', '.', '。', '!', '！', '?', '？', '、'
+  ',', '，', ';', '；', ':', '：', '.', '。', '!', '！', '?', '？', '、', '…'
 ])
 
 const COMMA_SEPARATORS = new Set([',', '，', ';', '；', ':', '：'])
 
 const CJK_SEPARATORS = new Set(['，', '。', '；', '：', '！', '？', '、'])
 
-const SENTENCE_SEPARATORS = new Set(['.', '。', '!', '！', '?', '？'])
+const SENTENCE_SEPARATORS = new Set(['.', '。', '!', '！', '?', '？', '…'])
 
 // Characters that can precede the first word without starting it. Quotes and
 // brackets are transparent for casing and for "leading removal" detection; a
@@ -242,6 +266,13 @@ function isLeadingPosition(text: string, index: number): boolean {
     return false
   }
   return true
+}
+
+/** End of the whole separator run starting at `index` (not including spaces). */
+function separatorRunEnd(text: string, index: number): number {
+  let end = index
+  while (end < text.length && SEPARATORS.has(text[end] ?? '')) end += 1
+  return end
 }
 
 export interface RuleResult {
@@ -325,17 +356,25 @@ function findCorrectionDeletion(text: string): Deletion | null {
     let deleteEnd = end
     for (;;) {
       let cursor = deleteEnd
-      while (cursor < text.length && isSpace(text[cursor])) cursor += 1
-      if (cursor < text.length && SEPARATORS.has(text[cursor] ?? '')) cursor += 1
-      while (cursor < text.length && isSpace(text[cursor])) cursor += 1
+      while (
+        cursor < text.length &&
+        (isSpace(text[cursor]) || SEPARATORS.has(text[cursor] ?? ''))
+      ) {
+        cursor += 1
+      }
       const nextMarkerEnd = matchMarkerAt(text, cursor)
       if (nextMarkerEnd === null) break
       deleteEnd = nextMarkerEnd
     }
 
-    while (deleteEnd < text.length && isSpace(text[deleteEnd])) deleteEnd += 1
-    if (deleteEnd < text.length && SEPARATORS.has(text[deleteEnd] ?? '')) deleteEnd += 1
-    while (deleteEnd < text.length && isSpace(text[deleteEnd])) deleteEnd += 1
+    // Consume the entire separator run after the marker, not one character:
+    // `No wait... Tuesday.` must not become `. Tuesday.`.
+    while (
+      deleteEnd < text.length &&
+      (isSpace(text[deleteEnd]) || SEPARATORS.has(text[deleteEnd] ?? ''))
+    ) {
+      deleteEnd += 1
+    }
 
     return { start: fragmentStart, end: deleteEnd }
   }
@@ -427,14 +466,13 @@ function removeFiller(text: string, match: FillerMatch): string {
   const right = nextNonSpace(text, match.end)
 
   // A leading filler takes the sentence's opening capital with it. Drop the
-  // following separator too, or the result would start with a dangling mark.
+  // whole adjacent separator run (an ellipsis, `?!`, `……`, ...), not one mark,
+  // or the result would start with dangling punctuation.
   if (isLeadingPosition(text, match.start)) {
     let end = match.end
     while (end < text.length && isSpace(text[end])) end += 1
-    if (end < text.length && SEPARATORS.has(text[end] ?? '')) {
-      end += 1
-      while (end < text.length && isSpace(text[end])) end += 1
-    }
+    end = separatorRunEnd(text, end)
+    while (end < text.length && isSpace(text[end])) end += 1
     return text.slice(0, match.start) + text.slice(end)
   }
 
@@ -452,16 +490,17 @@ function removeFiller(text: string, match: FillerMatch): string {
     return text.slice(0, match.start) + text.slice(right + 1)
   }
 
-  // A filler that ends its own sentence: drop the filler and its mark, but
-  // keep the mark that already ended the previous sentence.
+  // A filler that ends its own sentence: drop the filler and its whole
+  // separator run, but keep the mark that already ended the previous sentence.
   if (right >= 0 && SENTENCE_SEPARATORS.has(text[right] ?? '')) {
     let start = match.start
     while (start > 0 && isSpace(text[start - 1])) start -= 1
+    const runEnd = separatorRunEnd(text, right)
     if (left >= 0 && SENTENCE_SEPARATORS.has(text[left] ?? '')) {
-      return text.slice(0, start) + text.slice(right + 1)
+      return text.slice(0, start) + text.slice(runEnd)
     }
-    // The filler followed a word: the sentence mark still terminates it.
-    return text.slice(0, start) + text.slice(right)
+    // The filler followed a word: keep one mark to terminate the sentence.
+    return text.slice(0, start) + text.slice(right, right + 1)
   }
 
   // A filler at the very end without its own mark.
@@ -549,20 +588,25 @@ export function restoreSentenceCase(text: string): string {
   return text.slice(0, index) + upper + text.slice(index + 1)
 }
 
-export function collapseRepetitions(text: string, threshold: number): string {
+export function collapseRepetitions(text: string, hanThreshold: number): string {
   let output = text.replace(
     /\b([A-Za-z]+)((?:\s+\1\b)+)/gi,
     (whole: string, word: string, tail: string) => {
       const run = 1 + tail.trim().split(/\s+/).length
-      if (run < threshold) return whole
+      // A repeated Latin word is never grammatical prose, so it collapses at
+      // two regardless of the Han threshold. `had had` / `that that` remain
+      // guarded by the keep set.
+      if (run < 2) return whole
       if (KEEP_REPEATED_TOKENS.has(word.toLowerCase())) return whole
       return word
     }
   )
 
   output = output.replace(/([一-鿿])\1+/g, (whole: string, char: string) => {
-    if (whole.length < threshold) return whole
+    if (whole.length < hanThreshold) return whole
     if (KEEP_REPEATED_CHARS.has(char)) return whole
+    // The keep list is only reachable when a user lowers the threshold to 2;
+    // at the default 3, every two-character reduplication already survives.
     if (whole.length === 2 && KEEP_REDUPLICATIONS.has(whole)) return whole
     return char
   })

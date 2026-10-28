@@ -99,6 +99,7 @@ describe('postprocess: self-corrections', () => {
     ['先做A，然后B，不对，我是说C。', '先做A，C。'],
     ['Send it Monday, no wait, Tuesday.', 'Tuesday.'],
     ['I mean, Tuesday.', 'Tuesday.'],
+    ['No wait... Tuesday.', 'Tuesday.'],
     ['First we test. Send it Monday. No wait, Tuesday.', 'First we test. Tuesday.']
   ])('drops the abandoned fragment in %j', (input, expected) => {
     expect(clean(input)).toBe(expected)
@@ -133,11 +134,23 @@ describe('postprocess: repetition collapse', () => {
   it.each([
     ['谢谢你的帮助。', '谢谢你的帮助。'],
     ['妈妈和爸爸来了。', '妈妈和爸爸来了。'],
+    ['默默无闻', '默默无闻'],
+    ['冉冉升起', '冉冉升起'],
+    ['匆匆忙忙', '匆匆忙忙'],
+    ['津津有味', '津津有味'],
+    ['欣欣向荣', '欣欣向荣'],
     ['哈哈哈', '哈哈哈'],
     ['I had had enough.', 'I had had enough.'],
     ['Wait...', 'Wait...']
   ])('keeps legitimate repetition in %j', (input, expected) => {
     expect(clean(input)).toBe(expected)
+  })
+
+  it('defaults Han runs to 3 and keeps Latin word repeats at 2', () => {
+    expect(clean('我我走了。')).toBe('我我走了。')
+    expect(clean('我我我走了。')).toBe('我走了。')
+    expect(clean('the the plan')).toBe('the plan')
+    expect(clean('谢谢', { repetitionThreshold: 2 })).toBe('谢谢')
   })
 
   it('honours the configurable threshold', () => {
@@ -313,10 +326,18 @@ describe('postprocess: sentence-initial casing', () => {
   it.each([
     ['Um. We should go.', 'We should go.'],
     ['You know. It is fine.', 'It is fine.'],
+    ['um... hello', 'Hello'],
+    ['um.... hello', 'Hello'],
+    ['um?? hello', 'Hello'],
+    ['um...', 'um...'],
+    ['um?!', 'um?!'],
+    ['嗯……我们走吧。', '我们走吧。'],
     ['We should go. Um.', 'We should go.'],
+    ['We should go. Um...', 'We should go.'],
     ['We go um.', 'We go.'],
+    ['We go um...', 'We go.'],
     ['We should go. Um. More.', 'We should go. More.']
-  ])('drops the orphan separator in %j', (input, expected) => {
+  ])('drops the whole orphan separator run in %j', (input, expected) => {
     expect(clean(input)).toBe(expected)
   })
 
@@ -348,33 +369,66 @@ describe('postprocess: masking layers', () => {
   })
 
   it('never lets a numeric replacement edit mask encoding', () => {
-    const input = 'JustSpeak 和 FD2008 都在。'
+    // The plain `1` must be replaced, proving vocabulary ran; the protected
+    // names and the mask ids must survive. A guard-only fallback would leave
+    // the plain `1` untouched and fail this assertion.
+    const input = 'JustSpeak 和 FD2008 都在，第 1 版。'
     const result = postprocess(input, {
       vocabulary: {
         protect: ['JustSpeak', 'FD2008'],
         replace: [{ from: '1', to: '一' }]
       }
     })
-    expect(result).toEqual({ text: input, applied: [] })
+    expect(result).toEqual({
+      text: 'JustSpeak 和 FD2008 都在，第 一 版。',
+      applied: ['vocabulary']
+    })
+    for (const sentinel of MASK_SENTINELS) expect(result.text).not.toContain(sentinel)
   })
 
   it('masks with provably disjoint namespaces', () => {
     const outer = maskSpans('AAA bbb', [{ start: 0, end: 3 }], 'protect')
-    const inner = maskSpans(outer.masked, [{ start: 4, end: 7 }], 'code')
-    expect(outer.masked[0]).not.toBe(inner.masked[4])
+    const bStart = outer.masked.indexOf('bbb')
+    const inner = maskSpans(outer.masked, [{ start: bStart, end: bStart + 3 }], 'code')
+    expect(inner.masked[bStart]).not.toBe(outer.masked[0])
     // Restoring the code layer leaves the protect placeholder intact.
     expect(inner.restore(inner.masked)).toBe(outer.masked)
     expect(outer.restore(inner.restore(inner.masked))).toBe('AAA bbb')
   })
 
   it('fails closed when a sentinel would leak', () => {
-    const protectSentinel = `x\uE0000\uE001y`
-    const codeSentinel = `x\uE0020\uE003y`
+    const sentinel = (layer: 'protect' | 'code'): string => {
+      const [start, end] = layer === 'protect' ? [0xe000, 0xe001] : [0xe002, 0xe003]
+      return `x${String.fromCharCode(start)}0${String.fromCharCode(end)}y`
+    }
+    const protectSentinel = sentinel('protect')
+    const codeSentinel = sentinel('code')
     // Guard the guard: the inputs really do contain the sentinel characters.
     for (const input of [protectSentinel, codeSentinel]) {
-      expect(MASK_SENTINELS.some((sentinel) => input.includes(sentinel))).toBe(true)
+      expect(MASK_SENTINELS.some((marker) => input.includes(marker))).toBe(true)
       expect(postprocess(input)).toEqual({ text: input, applied: [] })
     }
+  })
+
+  it('fails closed when a rule would otherwise change a sentinel-bearing text', () => {
+    // The filler would remove `um,`; the guard must still return the original.
+    const input = `um, hello ${String.fromCharCode(0xe000)}0${String.fromCharCode(0xe001)}`
+    expect(postprocess(input)).toEqual({ text: input, applied: [] })
+  })
+
+  it('does not restore sentinel-shaped text it did not emit', () => {
+    const userSentinel = `${String.fromCharCode(0xe002)}0${String.fromCharCode(0xe003)}`
+    const input = `use \`pnpm test\` then ${userSentinel}`
+    const result = postprocess(input)
+    expect(result).toEqual({ text: input, applied: [] })
+    // The old shared-restore bug duplicated the code span here instead.
+    expect(result.text).not.toBe('use `pnpm test` then `pnpm test`')
+  })
+
+  it('returns identical output across calls', () => {
+    const input = 'um, JustSpeak v1.2.3 and `pnpm test`'
+    const options = { vocabulary: { protect: ['JustSpeak'] } }
+    expect(postprocess(input, options)).toEqual(postprocess(input, options))
   })
 
   it('does not let vocabulary rewrite code-like tokens', () => {

@@ -37,7 +37,11 @@ export interface PostprocessOptions {
   vocabulary?: Partial<Vocabulary>
   /** An omitted rule is on; only an explicit `false` disables it. */
   rules?: RuleSwitches
-  /** Shortest repeated run that collapse removes. Defaults to 2. */
+  /**
+   * Shortest Han-character run that collapse removes. Defaults to 3, so
+   * legitimate two-character reduplication survives; Latin word repeats
+   * always collapse at 2.
+   */
   repetitionThreshold?: number
 }
 

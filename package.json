@@ -15,6 +15,9 @@
     "test:watch": "vitest",
     "setup:asr": "node scripts/setup-asr.mjs",
     "bench:asr": "tsx scripts/bench-asr.ts",
+    "notices": "node scripts/notices.mjs",
+    "package:mac": "electron-vite build && electron-builder --mac --arm64 --dir",
+    "package:mac:artifacts": "electron-vite build && electron-builder --mac --arm64",
     "postinstall": "node node_modules/electron/install.js"
   },
   "dependencies": {
@@ -28,6 +31,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.1.2",
     "electron": "^45.0.0",
+    "electron-builder": "26.18.0",
     "electron-vite": "^6.0.0",
     "tsx": "^4.23.15",
     "typescript": "^5.9.0",

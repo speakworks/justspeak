@@ -410,6 +410,26 @@ The recommendation is conditional on a signing/notarization spike on a signed bu
 before the first public release. Ad-hoc or unsigned builds do not prove TCC identity,
 notarization, or auto-update behavior.
 
+## Local Packaging Implementation (v0.1)
+
+The repository now contains the first slice of this design: a local, unsigned packaging
+configuration and a generated third-party notices file. It does not change the release
+targets described below.
+
+| Item | Current state |
+|---|---|
+| Config | `electron-builder.yml` reads the `electron-vite` output in `out/`, targets arm64 macOS, and writes to `release/` (gitignored). `appId` is `com.justspeak.app`; the product name is `JustSpeak`. |
+| Build | `pnpm package:mac` produces the unpacked, unsigned arm64 `.app` under `release/` (fast; the current local path). `pnpm package:mac:artifacts` additionally builds the DMG and ZIP from the same config; it is slower and is the step to use once signing exists. |
+| Signing | **Disabled.** `mac.identity` is `null` and `mac.notarize` is `false`. Enabling them is pending the human's Developer ID Application certificate, team ID, and `notarytool` credentials. Hardened runtime is also left off until signing exists. Do not sign or notarize a local build. |
+| Upload | **Disabled.** `publish` is `null`; a local build never uploads artifacts. Publishing is a release-process step that needs credentials and a release channel decision. |
+| Model weights | **Not bundled.** The installer contains no `.gguf` files. Only the small `resources/models.json` catalog is copied to the app's resources directory; the ~850 MB Qwen3-ASR weights are downloaded on first run after consent, exactly as designed in "Model Distribution Design". |
+| Network at build time | The build uses the Electron installation in `node_modules` (`electronDist`) and does not rebuild native modules (`npmRebuild: false`), so packaging does not fetch a runtime. |
+| Notices | `pnpm notices` regenerates [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) from the production dependency tree and `resources/models.json`. The script is deterministic: sorting and the absence of timestamps make a second run byte-identical. |
+
+Before a public release, supply signing credentials, add the hardened-runtime and
+entitlements configuration described in the next section, and verify the signed build on
+a clean macOS account. None of that is part of the current local configuration.
+
 ## macOS Distribution Design
 
 ### Signing identity and custody
@@ -722,7 +742,7 @@ feed change.
   commercial distribution.
 - SenseVoice weights use the FunASR Model Open Source License Agreement, which permits
   commercial use under its conditions and requires attribution. Include the license text
-  and attribution in `THIRD-PARTY-NOTICES` and in the About window.
+  and attribution in `THIRD_PARTY_NOTICES.md` and in the About window.
 - sherpa-onnx is Apache-2.0; whisper.cpp is MIT. Include their notices and license texts.
 - Parakeet weights are CC-BY-4.0, which requires attribution if used. Moonshine models
   under the non-commercial Community License are excluded from v0.1 distribution.
@@ -839,7 +859,7 @@ Rules:
 | `JustSpeak-<version>-x64-mac.zip` | Yes | Auto-update payload and fallback |
 | `latest-mac.yml` (and channel metadata) | Yes | electron-updater feed metadata |
 | `SHA256SUMS` | Yes | Independent artifact verification |
-| `THIRD-PARTY-NOTICES` / license bundle | Yes | License compliance |
+| `THIRD_PARTY_NOTICES.md` / license bundle | Yes | License compliance |
 | SBOM (CycloneDX or SPDX) | Yes | Supply-chain transparency |
 | Build provenance/attestation | Optional for v0.1 | Stronger supply-chain evidence when CI supports it |
 
@@ -943,7 +963,7 @@ macOS design does not paint the project into a corner.
 | A bad update reaches users | Medium | High | Beta channel; staged publication; signature and hash verification; retained previous artifacts; rehearsed rollback |
 | Update feed or signing key is compromised | Low | High | Protect credentials in a release environment; HTTPS; fixed feed URL; plan key rotation; signed metadata as follow-up |
 | Model download is tampered with or interrupted | Medium | Medium | Pin catalog URLs; SHA-256 per file; atomic install; fail closed; no arbitrary URLs |
-| Model license or attribution is incomplete | Medium | High | Legal review; license texts in `THIRD-PARTY-NOTICES`; UI attribution; exclude non-commercial models |
+| Model license or attribution is incomplete | Medium | High | Legal review; license texts in `THIRD_PARTY_NOTICES.md`; UI attribution; exclude non-commercial models |
 | Installer or model disk usage hurts adoption | Medium | Medium | First-run download; show sizes; delete action; measure the installer at release |
 | Electron major upgrades break signing or native helper loading | Medium | Medium | Pin Electron 45.x; test the signing pipeline on every Electron upgrade; keep the helper contract stable |
 | CI secrets leak through logs or artifacts | Low | High | Protected release environment; no secrets in PR workflows; redact logs; rotate after exposure |

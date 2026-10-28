@@ -249,7 +249,8 @@ export function App(): React.JSX.Element {
   const parsedDraft = parseAccelerator(hotkeyDraft)
   const hotkeyDirty = parsedDraft.ok && parsedDraft.value.accelerator !== hotkey
   const liveError = parsedDraft.ok ? undefined : parsedDraft.error.message
-  const hotkeyStatus = hotkeyFeedback ?? liveError
+  const hotkeyMessage = hotkeyFeedback ?? liveError
+  const hotkeyMessageIsError = hotkeyError || liveError !== undefined
   const hotkeyDisplay = hotkey ? acceleratorDisplayParts(hotkey) : []
 
   return (
@@ -282,52 +283,53 @@ export function App(): React.JSX.Element {
           {state === 'recording' ? '停止并粘贴' : '开始录音'}
         </button>
 
-        <div className="hint hotkey-row" title="需要麦克风与辅助功能权限">
-          <label className="hotkey-label" htmlFor="hotkey-input">
-            快捷键
-          </label>
-          <input
-            id="hotkey-input"
-            className={liveError ? 'hotkey-input invalid' : 'hotkey-input'}
-            value={hotkeyDraft}
-            onChange={(event) => {
-              setHotkeyDraft(event.target.value)
-              setHotkeyFeedback(undefined)
-              setHotkeyError(false)
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') applyHotkey()
-            }}
-            aria-invalid={liveError ? true : undefined}
-            aria-describedby="hotkey-status"
-            spellCheck={false}
-            autoComplete="off"
-          />
-          <button
-            type="button"
-            className="hotkey-apply"
-            onClick={applyHotkey}
-            disabled={hotkeyBusy || !parsedDraft.ok || !hotkeyDirty}
-          >
-            应用
-          </button>
-          <span
-            id="hotkey-status"
-            className={hotkeyError || liveError ? 'hotkey-status error' : 'hotkey-status'}
-          >
-            {hotkeyStatus ?? (
-              <>
-                当前
-                {hotkeyDisplay.length > 0 ? (
-                  hotkeyDisplay.map((part, index) => (
-                    <kbd key={`${part}-${index}`}>{part}</kbd>
-                  ))
-                ) : (
-                  <span className="hotkey-missing">未注册</span>
-                )}
-              </>
-            )}
-          </span>
+        <div className="hotkey">
+          <div className="hint hotkey-row" title="需要麦克风与辅助功能权限">
+            <label className="hotkey-label" htmlFor="hotkey-input">
+              快捷键
+            </label>
+            <input
+              id="hotkey-input"
+              className={liveError ? 'hotkey-input invalid' : 'hotkey-input'}
+              value={hotkeyDraft}
+              onChange={(event) => {
+                setHotkeyDraft(event.target.value)
+                setHotkeyFeedback(undefined)
+                setHotkeyError(false)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') applyHotkey()
+              }}
+              aria-invalid={liveError ? true : undefined}
+              aria-describedby={hotkeyMessage ? 'hotkey-message' : 'hotkey-status'}
+              spellCheck={false}
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              className="hotkey-apply"
+              onClick={applyHotkey}
+              disabled={hotkeyBusy || !parsedDraft.ok || !hotkeyDirty}
+            >
+              应用
+            </button>
+            <span id="hotkey-status" className="hotkey-status">
+              当前
+              {hotkeyDisplay.length > 0 ? (
+                hotkeyDisplay.map((part, index) => <kbd key={`${part}-${index}`}>{part}</kbd>)
+              ) : (
+                <span className="hotkey-missing">未注册</span>
+              )}
+            </span>
+          </div>
+          {hotkeyMessage ? (
+            <p
+              id="hotkey-message"
+              className={hotkeyMessageIsError ? 'hotkey-message error' : 'hotkey-message'}
+            >
+              {hotkeyMessage}
+            </p>
+          ) : null}
         </div>
 
         {modelInfo ? (

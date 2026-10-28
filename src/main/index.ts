@@ -330,8 +330,10 @@ function createWindow(): void {
   // Height is measured in the real qwen3 mode: the model line only renders
   // there, so measuring in fake mode under-counts and lets the page scroll.
   // The transcript card has a fixed height, so empty, one-line, long
-  // transcript and long-error states all measure the same 632 CSS px; 640
-  // leaves an 8 px margin. Shrink only, never grow, on a smaller display.
+  // transcript and long-error states all measure the same 632 CSS px. The
+  // hotkey editor's error message adds at most one line, which the reduced
+  // app bottom padding absorbs; 640 still leaves a margin. Shrink only,
+  // never grow, on a smaller display.
   const PREFERRED_WIDTH = 720
   const PREFERRED_HEIGHT = 640
   const workArea = screen.getPrimaryDisplay().workAreaSize

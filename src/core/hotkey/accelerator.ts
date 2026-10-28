@@ -48,20 +48,25 @@ export type ParseAcceleratorResult =
   | { ok: true; value: ParsedAccelerator }
   | { ok: false; error: AcceleratorError }
 
-const MODIFIER_ALIASES: Record<string, HotkeyModifier> = {
-  command: 'Command',
-  cmd: 'Command',
-  control: 'Control',
-  ctrl: 'Control',
-  commandorcontrol: 'CommandOrControl',
-  cmdorctrl: 'CommandOrControl',
-  alt: 'Alt',
-  option: 'Alt',
-  altgr: 'AltGr',
-  shift: 'Shift',
-  super: 'Super',
-  meta: 'Meta'
-}
+/**
+ * Map, not an object literal: `MODIFIER_ALIASES[token]` would resolve inherited
+ * properties (`constructor`, `__proto__`, …) and let them masquerade as
+ * modifiers, silently producing a bare-key accelerator.
+ */
+const MODIFIER_ALIASES = new Map<string, HotkeyModifier>([
+  ['command', 'Command'],
+  ['cmd', 'Command'],
+  ['control', 'Control'],
+  ['ctrl', 'Control'],
+  ['commandorcontrol', 'CommandOrControl'],
+  ['cmdorctrl', 'CommandOrControl'],
+  ['alt', 'Alt'],
+  ['option', 'Alt'],
+  ['altgr', 'AltGr'],
+  ['shift', 'Shift'],
+  ['super', 'Super'],
+  ['meta', 'Meta']
+])
 
 /** Emission order for a canonical accelerator string. */
 const MODIFIER_ORDER: readonly HotkeyModifier[] = [
@@ -75,42 +80,43 @@ const MODIFIER_ORDER: readonly HotkeyModifier[] = [
   'Meta'
 ]
 
-const NAMED_KEYS: Record<string, HotkeyKey> = {
-  space: 'Space',
-  tab: 'Tab',
-  capslock: 'Capslock',
-  numlock: 'Numlock',
-  scrolllock: 'Scrolllock',
-  backspace: 'Backspace',
-  delete: 'Delete',
-  insert: 'Insert',
-  return: 'Return',
-  enter: 'Return',
-  up: 'Up',
-  down: 'Down',
-  left: 'Left',
-  right: 'Right',
-  home: 'Home',
-  end: 'End',
-  pageup: 'PageUp',
-  pagedown: 'PageDown',
-  escape: 'Escape',
-  esc: 'Escape',
-  volumeup: 'VolumeUp',
-  volumedown: 'VolumeDown',
-  volumemute: 'VolumeMute',
-  medianexttrack: 'MediaNextTrack',
-  mediaprevioustrack: 'MediaPreviousTrack',
-  mediastop: 'MediaStop',
-  mediaplaypause: 'MediaPlayPause',
-  printscreen: 'PrintScreen',
-  plus: 'Plus',
-  numdec: 'numdec',
-  numadd: 'numadd',
-  numsub: 'numsub',
-  nummult: 'nummult',
-  numdiv: 'numdiv'
-}
+/** Map for the same inherited-property reason as `MODIFIER_ALIASES`. */
+const NAMED_KEYS = new Map<string, HotkeyKey>([
+  ['space', 'Space'],
+  ['tab', 'Tab'],
+  ['capslock', 'Capslock'],
+  ['numlock', 'Numlock'],
+  ['scrolllock', 'Scrolllock'],
+  ['backspace', 'Backspace'],
+  ['delete', 'Delete'],
+  ['insert', 'Insert'],
+  ['return', 'Return'],
+  ['enter', 'Return'],
+  ['up', 'Up'],
+  ['down', 'Down'],
+  ['left', 'Left'],
+  ['right', 'Right'],
+  ['home', 'Home'],
+  ['end', 'End'],
+  ['pageup', 'PageUp'],
+  ['pagedown', 'PageDown'],
+  ['escape', 'Escape'],
+  ['esc', 'Escape'],
+  ['volumeup', 'VolumeUp'],
+  ['volumedown', 'VolumeDown'],
+  ['volumemute', 'VolumeMute'],
+  ['medianexttrack', 'MediaNextTrack'],
+  ['mediaprevioustrack', 'MediaPreviousTrack'],
+  ['mediastop', 'MediaStop'],
+  ['mediaplaypause', 'MediaPlayPause'],
+  ['printscreen', 'PrintScreen'],
+  ['plus', 'Plus'],
+  ['numdec', 'numdec'],
+  ['numadd', 'numadd'],
+  ['numsub', 'numsub'],
+  ['nummult', 'nummult'],
+  ['numdiv', 'numdiv']
+])
 
 const PUNCTUATION = new Set([
   ')',
@@ -151,9 +157,13 @@ const DIGIT = /^[0-9]$/
 const FUNCTION_KEY = /^f([1-9]|1[0-9]|2[0-4])$/i
 const NUM_PAD = /^num[0-9]$/
 
+const NO_KEY_MESSAGE = '快捷键缺少要按下的主键。'
+const NO_MODIFIER_MESSAGE =
+  '快捷键必须包含至少一个修饰键（Command、Control、Alt 或 Shift）。'
+
 function canonicalKey(token: string): HotkeyKey | undefined {
   const lower = token.toLowerCase()
-  const named = NAMED_KEYS[lower]
+  const named = NAMED_KEYS.get(lower)
   if (named) return named
   if (LETTER.test(token)) return token.toUpperCase()
   if (DIGIT.test(token)) return token
@@ -161,6 +171,19 @@ function canonicalKey(token: string): HotkeyKey | undefined {
   if (NUM_PAD.test(lower)) return lower
   if (PUNCTUATION.has(token)) return token
   return undefined
+}
+
+/**
+ * Independent invariant checks. These do not trust the alias/key tables: even
+ * if a future table gained an inherited or malformed entry, a binding cannot
+ * leave the parser without at least one real modifier and one real key.
+ */
+function isRealModifier(value: unknown): value is HotkeyModifier {
+  return typeof value === 'string' && (MODIFIER_ORDER as readonly string[]).includes(value)
+}
+
+function isRealKey(value: unknown): value is HotkeyKey {
+  return typeof value === 'string' && canonicalKey(value) === value
 }
 
 function fail(
@@ -193,7 +216,7 @@ export function parseAccelerator(value: unknown): ParseAcceleratorResult {
     if (token.length === 0) {
       return fail('UNKNOWN_TOKEN', `无法识别「${token}」。`, token)
     }
-    const modifier = MODIFIER_ALIASES[token.toLowerCase()]
+    const modifier = MODIFIER_ALIASES.get(token.toLowerCase())
     if (modifier) {
       if (seen.has(modifier)) {
         return fail('DUPLICATE_MODIFIER', `修饰键「${token}」重复。`, token)
@@ -213,17 +236,19 @@ export function parseAccelerator(value: unknown): ParseAcceleratorResult {
   }
 
   if (key === undefined) {
-    return fail('NO_KEY', '快捷键缺少要按下的主键。')
+    return fail('NO_KEY', NO_KEY_MESSAGE)
   }
-  if (modifiers.length === 0) {
-    return fail(
-      'NO_MODIFIER',
-      '快捷键必须包含至少一个修饰键（Command、Control、Alt 或 Shift）。',
-      key
-    )
+  if (!isRealKey(key)) {
+    return fail('NO_KEY', NO_KEY_MESSAGE)
   }
 
-  const ordered = MODIFIER_ORDER.filter((modifier) => seen.has(modifier))
+  const ordered = MODIFIER_ORDER.filter(
+    (modifier) => seen.has(modifier) && isRealModifier(modifier)
+  )
+  if (ordered.length === 0) {
+    return fail('NO_MODIFIER', NO_MODIFIER_MESSAGE, key)
+  }
+
   return ok({
     accelerator: [...ordered, key].join('+'),
     modifiers: ordered,

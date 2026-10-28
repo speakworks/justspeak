@@ -35,7 +35,7 @@ export async function registerHotkeyWithFallback(
       accelerator: '',
       ok: false,
       fallbackUsed: false,
-      message: `无法注册快捷键 ${requested}：${describe(error)}`
+      message: `无法注册 ${requested}：${describe(error)}`
     }
   }
 
@@ -44,7 +44,7 @@ export async function registerHotkeyWithFallback(
       accelerator: '',
       ok: false,
       fallbackUsed: false,
-      message: `无法注册快捷键 ${requested}，可能已被其他应用占用。`
+      message: `无法注册 ${requested}，可能已被其他应用占用。`
     }
   }
 
@@ -55,7 +55,9 @@ export async function registerHotkeyWithFallback(
         accelerator: fallback,
         ok: false,
         fallbackUsed: true,
-        message: `无法注册快捷键 ${requested}（可能已被其他应用占用），已改用默认快捷键 ${fallback}。`
+        // Keep this line short enough for the settings row; the renderer shows
+        // the actual registered accelerator separately.
+        message: `无法注册 ${requested}（可能已被其他应用占用），已回退到默认快捷键。`
       }
     }
   } catch (error) {
@@ -63,7 +65,7 @@ export async function registerHotkeyWithFallback(
       accelerator: '',
       ok: false,
       fallbackUsed: false,
-      message: `无法注册快捷键 ${requested}；默认快捷键 ${fallback} 也不可用：${describe(error)}`
+      message: `无法注册 ${requested}；默认快捷键 ${fallback} 也不可用：${describe(error)}`
     }
   }
 
@@ -71,6 +73,6 @@ export async function registerHotkeyWithFallback(
     accelerator: '',
     ok: false,
     fallbackUsed: false,
-    message: `无法注册快捷键 ${requested}；默认快捷键 ${fallback} 也不可用。请关闭占用该快捷键的应用后重启。`
+    message: `无法注册 ${requested}；默认快捷键 ${fallback} 也不可用。`
   }
 }

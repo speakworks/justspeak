@@ -27,6 +27,8 @@ const DEFAULT_DEPS: ThemeStoreDeps = { readFile, writeFile, mkdir }
 export class ThemeStore {
   private readonly file: string
   private readonly deps: ThemeStoreDeps
+  /** Tail of the write chain; see `write` for why writes must not interleave. */
+  private writeQueue: Promise<void> = Promise.resolve()
 
   constructor(userDataDir: string, deps: ThemeStoreDeps = DEFAULT_DEPS) {
     this.file = path.join(userDataDir, 'preferences.json')
@@ -56,8 +58,20 @@ export class ThemeStore {
   /**
    * Unknown keys survive a write: a corrupt or non-object file is treated as
    * empty, which is the same tolerance `load` already had.
+   *
+   * `theme:set` and `hotkey:set` are independent async handlers, so two saves
+   * can otherwise both read the old object and then write only their own key,
+   * dropping the other preference. Chaining every read-modify-write makes the
+   * last writer observe the previous result.
    */
-  private async write(patch: Record<string, unknown>): Promise<void> {
+  private write(patch: Record<string, unknown>): Promise<void> {
+    const next = this.writeQueue.then(() => this.writeNow(patch))
+    // A failed save must reject its own caller without poisoning the chain.
+    this.writeQueue = next.catch(() => {})
+    return next
+  }
+
+  private async writeNow(patch: Record<string, unknown>): Promise<void> {
     const existing = await this.readRecord()
     const payload = JSON.stringify({ ...existing, ...patch }, null, 2)
     await this.deps.mkdir(path.dirname(this.file), { recursive: true })

@@ -108,6 +108,47 @@ describe('accelerator parser', () => {
     }
   })
 
+  // Regression for the prototype-chain bypass: object-literal lookup tables
+  // resolved inherited properties such as `constructor` and `__proto__`, so
+  // `constructor+Space` parsed as a modified binding and produced bare `Space`.
+  const prototypeTokens: Array<[input: string, code: string]> = [
+    ['constructor+Space', 'UNKNOWN_TOKEN'],
+    ['__proto__+Space', 'UNKNOWN_TOKEN'],
+    ['Space+constructor', 'UNKNOWN_TOKEN'],
+    ['hasOwnProperty+Space', 'UNKNOWN_TOKEN'],
+    ['toString+Space', 'UNKNOWN_TOKEN'],
+    ['valueOf+A', 'UNKNOWN_TOKEN'],
+    ['constructor', 'UNKNOWN_TOKEN']
+  ]
+
+  it.each(prototypeTokens)('rejects prototype-named token %s', (input, code) => {
+    const parsed = parseAccelerator(input)
+    expect(parsed.ok).toBe(false)
+    if (!parsed.ok) expect(parsed.error.code).toBe(code)
+  })
+
+  it('can never produce a bare accelerator from prototype-named tokens', () => {
+    const produced = prototypeTokens.map(([input]) => {
+      const parsed = parseAccelerator(input)
+      return parsed.ok ? parsed.value.accelerator : undefined
+    })
+    // Direct invariant, not just an error-code check: a bare `Space` must be
+    // impossible, because it would register a system-wide unmodified key.
+    expect(produced).not.toContain('Space')
+    expect(produced.every((value) => value === undefined)).toBe(true)
+  })
+
+  it('still accepts legitimately modified Space bindings', () => {
+    expect(parseAccelerator('CommandOrControl+Space')).toMatchObject({
+      ok: true,
+      value: { accelerator: 'CommandOrControl+Space', modifiers: ['CommandOrControl'], key: 'Space' }
+    })
+    expect(parseAccelerator('Shift+Space')).toMatchObject({
+      ok: true,
+      value: { accelerator: 'Shift+Space', modifiers: ['Shift'], key: 'Space' }
+    })
+  })
+
   it('keeps the documented default valid', () => {
     const parsed = parseAccelerator(DEFAULT_ACCELERATOR)
     expect(parsed.ok).toBe(true)
@@ -142,7 +183,6 @@ describe('hotkey registration with fallback', () => {
     expect(outcome.ok).toBe(false)
     expect(outcome.fallbackUsed).toBe(true)
     expect(outcome.message).toContain('Command+Shift+K')
-    expect(outcome.message).toContain(DEFAULT_ACCELERATOR)
     expect(source.attempts).toEqual(['Command+Shift+K', DEFAULT_ACCELERATOR])
   })
 

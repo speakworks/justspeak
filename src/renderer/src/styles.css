@@ -91,7 +91,8 @@ body {
 .app {
   max-width: 680px;
   margin: 0 auto;
-  padding: 56px 28px 40px;
+  /* 16 px bottom leaves room for the one-line hotkey message without scrolling. */
+  padding: 56px 28px 16px;
 }
 
 .header {
@@ -220,13 +221,17 @@ h1 {
 }
 
 /* Hotkey editor: one compact row, so the measured window height does not grow. */
+.hotkey {
+  margin: 12px 0 10px;
+}
+
 .hint.hotkey-row {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   min-height: 20px;
-  margin: 12px 0 11px;
+  margin: 0;
   text-align: left;
 }
 
@@ -288,16 +293,22 @@ h1 {
 }
 
 .hotkey-status {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
+  flex: none;
   color: var(--muted);
   font-size: 12px;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.hotkey-status.error {
+.hotkey-message {
+  margin: 4px 0 0;
+  color: var(--amber);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.hotkey-message.error {
   color: var(--red);
 }
 

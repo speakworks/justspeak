@@ -144,7 +144,7 @@ interface InjectionStrategy {
 interface HotkeySource {
   readonly id: string;
   readonly capabilities: HotkeyCapabilities;
-  start(bindings: HotkeyBinding[]): Promise<void>;
+  start(bindings: HotkeyBinding[]): Promise<HotkeyStartResult>;
   stop(): Promise<void>;
   onPress(listener: (binding: HotkeyBinding) => void): Unsubscribe;
   onRelease(listener: (binding: HotkeyBinding) => void): Unsubscribe;
@@ -163,6 +163,14 @@ interface HotkeyCapabilities {
 - `NativeEventTap` is the later adapter for Fn, Right Option, hold-to-talk, and
   suppression. It must recover when macOS disables the tap.
 - The hotkey layer never embeds ASR or injection behavior; it emits press/release events.
+- `start` returns `HotkeyStartResult` rather than `void` because Electron's
+  `globalShortcut.register` reports a refused binding with `false`. The caller
+  needs the per-binding outcome to fall back to the default and tell the user;
+  a `void` signature would force the adapter to swallow that refusal.
+- `HotkeyBinding` carries only `accelerator` in v0.1: the app registers one
+  toggle binding and never branches on an id or hold-vs-toggle mode. `id` and
+  `mode` return with the native event tap that introduces multiple bindings and
+  hold-to-talk.
 
 ### Type appendix (v1 contract)
 
@@ -301,9 +309,12 @@ interface FocusTarget {
 }
 
 interface HotkeyBinding {
-  id: string;
   accelerator: string;
-  mode: "toggle" | "hold";
+}
+
+interface HotkeyStartResult {
+  registered: string[];
+  failed: string[];
 }
 ```
 

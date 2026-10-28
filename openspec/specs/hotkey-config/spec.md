@@ -27,6 +27,12 @@ The accelerator parser SHALL live in `src/core` without importing Electron, SHAL
 - **THEN** validation fails with a message naming the problem
 - **AND** the previously registered accelerator stays live
 
+#### Scenario: Prototype-named tokens cannot act as modifiers
+
+- **WHEN** the user enters `constructor+Space`, `__proto__+Space`, or `Space+constructor`
+- **THEN** validation fails with an unknown-token error
+- **AND** no accelerator equal to a bare `Space` is produced or registered
+
 ### Requirement: Registration SHALL use the HotkeySource boundary and fall back visibly
 
 The main process SHALL register the stored accelerator through a `HotkeySource` implementation, SHALL fall back to `CommandOrControl+Shift+Space` when the OS refuses the stored binding, and SHALL surface a message naming the refused binding. If the fallback also fails, the message SHALL name both bindings.

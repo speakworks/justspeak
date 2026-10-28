@@ -485,6 +485,12 @@ function joinerBetween(text: string, leftIndex: number, rightIndex: number): str
   return left !== undefined && right !== undefined && HAN.test(left) && HAN.test(right) ? '' : ' '
 }
 
+/** Separate a Latin tail that followed a removed separator run. */
+function separateTail(tail: string): string {
+  const first = tail[0]
+  return first !== undefined && /[A-Za-z0-9]/.test(first) ? ` ${tail}` : tail
+}
+
 function removeFiller(text: string, match: FillerMatch): string {
   const left = previousNonSpace(text, match.start)
   const right = nextNonSpace(text, match.end)
@@ -521,10 +527,16 @@ function removeFiller(text: string, match: FillerMatch): string {
     while (start > 0 && isSpace(text[start - 1])) start -= 1
     const runEnd = separatorRunEnd(text, right)
     if (left >= 0 && SENTENCE_SEPARATORS.has(text[left] ?? '')) {
-      return text.slice(0, start) + text.slice(runEnd)
+      return text.slice(0, start) + separateTail(text.slice(runEnd))
     }
-    // The filler followed a word: keep one mark to terminate the sentence.
-    return text.slice(0, start) + text.slice(right, right + 1)
+    // The filler followed a word: keep one mark to terminate the sentence and
+    // the entire tail after the run. Dropping the tail here would lose the
+    // rest of the dictation.
+    return (
+      text.slice(0, start) +
+      text.slice(right, right + 1) +
+      separateTail(text.slice(runEnd))
+    )
   }
 
   // A filler at the very end without its own mark.

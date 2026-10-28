@@ -381,9 +381,19 @@ describe('postprocess: sentence-initial casing', () => {
     ['We should go. Um...', 'We should go.'],
     ['We go um.', 'We go.'],
     ['We go um...', 'We go.'],
-    ['We should go. Um. More.', 'We should go. More.']
+    ['We should go. Um. More.', 'We should go. More.'],
+    ['I went um. Then home.', 'I went. Then home.'],
+    ['I went um. Then home. And more.', 'I went. Then home. And more.'],
+    ['We go um...Then home.', 'We go. Then home.'],
+    ['We go um?! Then home.', 'We go? Then home.']
   ])('drops the whole orphan separator run in %j', (input, expected) => {
     expect(clean(input)).toBe(expected)
+  })
+
+  it('keeps the tail after a sentence-final filler with a protected term', () => {
+    expect(
+      clean('I went um. Then JustSpeak shipped.', { vocabulary: { protect: ['JustSpeak'] } })
+    ).toBe('I went. Then JustSpeak shipped.')
   })
 
   it('can be disabled', () => {

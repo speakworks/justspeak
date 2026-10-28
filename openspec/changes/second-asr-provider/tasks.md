@@ -8,6 +8,7 @@
 - [x] 2.1 Extract the shared ADR-0003 behavior into `InferenceProvider` and make `Qwen3AsrProvider` a thin subclass with unchanged exports and behavior.
 - [x] 2.2 Add `SenseVoiceAsrProvider` with truthful capabilities (`streaming: false`, `timestamps: false`, `vad: false`, `maxAudioMs: 30_000`, languages `zh/yue/en/ja/ko`, `Q8_0`).
 - [x] 2.3 Add `describeCapabilities` so the UI can render capabilities without a provider-id lookup.
+- [x] 2.4 Add a provider-local RMS silence gate (`SENSEVOICE_SILENCE_RMS_THRESHOLD = 0.002`, overridable) that returns empty text with `NO_SPEECH` and never spawns the CLI; keep it off Qwen3 so that path is unchanged.
 
 ## 3. Catalog and licensing
 
@@ -25,6 +26,7 @@
 
 - [x] 5.1 Run the unchanged `tests/provider-contract.ts` suite over the SenseVoice adapter; add capability honesty, 30 s boundary, and language-hint tests.
 - [x] 5.2 Add mode/precedence, preference round-trip/corrupt-file, unknown-id failure, and fake/qwen3/sensevoice construction tests.
-- [x] 5.3 Add an opt-in real CLI smoke for SenseVoice (fixture transcription) and record the digital-silence hallucination limitation.
-- [x] 5.4 Run `pnpm typecheck`, `pnpm test`, `pnpm build`, and `openspec validate --specs --strict`; record the results.
-- [x] 5.5 Commit on `feat/second-provider`, push, and open a PR against `main` without merging.
+- [x] 5.3 Add an opt-in real CLI smoke for SenseVoice (fixture transcription) and assert digital silence maps to empty text without the hallucinated token.
+- [x] 5.4 Test the silence gate: digital zeros return empty text and never call the runner; speech still transcribes; the 65/66-of-32768 boundary is documented; the threshold override works.
+- [x] 5.5 Run `pnpm typecheck`, `pnpm test`, `pnpm build`, and `openspec validate --specs --strict`; record the results.
+- [x] 5.6 Commit on `feat/second-provider`, push, and open a PR against `main` without merging.

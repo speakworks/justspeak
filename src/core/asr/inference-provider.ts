@@ -51,8 +51,8 @@ export class InferenceProvider implements AsrProvider {
   readonly capabilities: AsrCapabilities
 
   protected readonly model: AsrModelDescriptor
+  protected readonly now: () => number
   private readonly runner: AsrRunner
-  private readonly now: () => number
   private readonly defaultTimeoutMs: number
   private lastHealth: ProviderHealth = { status: 'unavailable' }
   private prepared = false
@@ -75,6 +75,19 @@ export class InferenceProvider implements AsrProvider {
       this.prepared = false
       throw new Error(health.message ?? `${this.id} ASR runtime is unavailable`)
     }
+  }
+
+  /**
+   * Hook for adapters whose model needs a pre-inference guard. Returning a
+   * result skips the runner entirely; returning undefined keeps the normal
+   * path. Qwen3 does not override it, so its behaviour is unchanged.
+   */
+  protected beforeInference(
+    _input: AudioInput,
+    _options: TranscribeOptions,
+    _startedAt: number
+  ): ProviderResult<TranscriptionResult> | undefined {
+    return undefined
   }
 
   async transcribe(
@@ -111,6 +124,11 @@ export class InferenceProvider implements AsrProvider {
         false
       )
     }
+
+    // Provider-specific short-circuit after validation and before spawning the
+    // runtime. The default adapter has no gate and always runs inference.
+    const gated = this.beforeInference(input, options, startedAt)
+    if (gated) return gated
 
     const controller = new AbortController()
     const abortFromCaller = (): void => controller.abort()

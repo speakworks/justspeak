@@ -28,9 +28,16 @@ Every ASR adapter SHALL expose an `id`, truthful `capabilities`, `prepare`, `tra
 
 #### Scenario: Silent or empty audio
 
-- **WHEN** the provider receives audio that contains no recognizable speech
+- **WHEN** the Qwen3 or SenseVoice provider receives audio that contains no recognizable speech
 - **THEN** it returns a successful result with empty text and no invented text
+- **AND** the SenseVoice result carries a `NO_SPEECH` warning and the SenseVoice runtime is not spawned
 - **AND** the caller may surface an empty-transcript notice
+
+#### Scenario: Digital silence does not become pasted text
+
+- **WHEN** the selected provider receives an utterance that is entirely digital silence
+- **THEN** the transcript is empty for both catalog-backed providers
+- **AND** no hallucinated token reaches the paste path
 
 ### Requirement: Model installation SHALL be verified before use
 
@@ -120,8 +127,9 @@ The SenseVoice adapter SHALL invoke the pinned transcribe.cpp v0.4.1 CLI against
 - **THEN** the catalog records `FunASR-Model-License-1.1`, the pinned source revision, size, and SHA-256
 - **AND** the weights are not described as MIT and are downloaded on first use rather than bundled
 
-#### Scenario: Known silence limitation is not papered over
+#### Scenario: Digital silence is gated before inference
 
-- **WHEN** SenseVoice is offered as a selectable provider
-- **THEN** the change records that the pinned build can emit a short hallucinated token on digital silence
-- **AND** no silence-robustness claim is made until a core silence gate or VAD exists
+- **WHEN** the utterance's normalized RMS is below the documented `SENSEVOICE_SILENCE_RMS_THRESHOLD`
+- **THEN** the adapter returns empty text with a `NO_SPEECH` warning without invoking the CLI
+- **AND** audio at or above the threshold still runs inference
+- **AND** the threshold is a named constant overridable per instance for tests

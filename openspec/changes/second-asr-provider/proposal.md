@@ -11,6 +11,7 @@ The hard gate was run before any adapter code: the pinned `transcribe.cpp` v0.4.
 - Read the selected provider from a persisted preference (`asr-preference.json`), keep `JUSTSPEAK_ASR` as an explicit override, default to `qwen3`, and fail visibly on an unknown id. `fake` stays available only through the environment variable.
 - Add a provider picker and a capability summary to the renderer. The summary is derived from `AsrCapabilities`, so a future adapter needs no renderer branch.
 - Keep `streaming: false`, `timestamps: false`, `vad: false`, and `maxAudioMs: 30_000` for SenseVoice; audio above the window is rejected with `AUDIO_TOO_LONG` instead of being silently truncated.
+- Gate digital silence inside `SenseVoiceAsrProvider`: RMS below `0.002` (≈ -54 dBFS) returns empty text with a `NO_SPEECH` warning and never spawns the CLI, matching Qwen3's existing empty result instead of pasting the model's hallucinated token.
 - Extend the shared contract suite to the SenseVoice adapter and add tests for capability honesty, 30 s enforcement, unknown-id failure, preference round-trips, and fake/qwen3/sensevoice construction.
 
 ## Capabilities

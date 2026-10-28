@@ -44,24 +44,39 @@ The download required no VPN and used the public Hugging Face endpoint. No alter
 
 SenseVoice declares `languages: ['zh','yue','en','ja','ko']`, `streaming: false`, `punctuation: true` (ITN on by default produces casing, punctuation, and digits), `itn: true`, `timestamps: false`, `vad: false`, `maxAudioMs: 30_000`, and `quantizations: ['Q8_0']`. The runtime accepts longer audio with a warning and degraded accuracy; advertising that permissiveness as a capability would be dishonest. The provider rejects audio over 30 s with `AUDIO_TOO_LONG` before spawning the CLI.
 
-Known limitation, observed at the gate: on 1 s of digital zeros the pinned SenseVoice build emits a short hallucinated token (`그。`) where Qwen3 returns empty text. This change does not claim silence robustness for SenseVoice; the library/design records it, and a core-side silence gate or VAD is follow-up work.
+### 4. Silence gate
 
-### 4. Selection and persistence
+At the gate, 1 s of digital zeros produced `text: 그。` from the pinned SenseVoice build while Qwen3 returns empty text for the same input. Shipping that would paste a fake word.
+
+`SenseVoiceAsrProvider` therefore computes RMS over the normalized Int16 PCM and, when it is below `SENSEVOICE_SILENCE_RMS_THRESHOLD = 0.002` (≈ -54 dBFS), returns `{ ok: true, text: '', warnings: [{ code: 'NO_SPEECH' }] }` without spawning the CLI. The threshold is a named constant with the rationale in code and is overridable per instance for tests:
+
+- Speech RMS is typically -30 to -20 dBFS; quiet room tone is near -60 dBFS. -54 dBFS sits between them, so it only catches digital/near-silence and leaves quiet speech to the model.
+- The comparison is strict (`rms < threshold` gates), so a sample exactly at the threshold runs inference; tests document both sides of the boundary (65/32768 gated, 66/32768 transcribes).
+- The gate lives in the provider, not in callers: callers still receive the ordinary success result and the warning list, and the session/paste path is unchanged.
+
+The shared `InferenceProvider` exposes a `beforeInference` hook, but only SenseVoice overrides it. Qwen3 keeps invoking its runtime, which already returns `(empty)`; its silence smoke still passes, so Qwen3's behaviour is unchanged.
+
+### 5. Why not the card-20 VAD yet
+
+Card 20's `src/core/audio/vad.ts` lives on an unmerged branch, so importing it here would couple this change to code that is neither reviewed nor available on `main`. A ~10-line RMS check is duplicated instead: the two checks answer the same question (is there speech?), the dependency is trivial, and this branch stays self-contained. Follow-up ticket: when card 20 lands, replace the local RMS gate with the shared VAD, keep the `NO_SPEECH` warning and empty result, and run the same silence fixtures across Qwen3 and SenseVoice. Until then, do not add the gate to Qwen3: its existing runtime path is already correct and must not change.
+
+### 6. Selection and persistence
 
 `resolveAsrMode` applies precedence: non-empty `JUSTSPEAK_ASR` (explicit override) → persisted `asr-preference.json` → `qwen3`. `parseAsrMode` accepts `qwen3`, `sensevoice`, and `fake`; `parseAsrPreference` rejects `fake` so a persisted value can never show demo transcripts as real ones. Unknown values fail visibly with the accepted list. The preference file is separate from `preferences.json` so a theme write cannot drop the provider.
 
-### 5. UI reads capabilities
+### 7. UI reads capabilities
 
 `AppStatus.modelInfo` carries the active provider's declared `AsrCapabilities`; `describeCapabilities` renders `非流式 · 单次最长 30 秒 · …`. The renderer iterates provider options and never maps a provider id to a capability value. The `FAKE ASR` badge remains a mode label, not a capability claim.
 
-### 6. License and distribution
+### 8. License and distribution
 
 `docs/LICENSING.md` records the SenseVoice weights as the FunASR Model Open Source License v1.1, not MIT. The catalog stores `FunASR-Model-License-1.1`, the pinned Hugging Face revision, and the source URL; the base installer ships no weights, and the model is downloaded on first use with SHA-256 verification. `THIRD_PARTY_NOTICES.md` and counsel sign-off remain release prerequisites outside this change.
 
 ## Risks / Trade-offs
 
 - **30 s window** → fixed-length dictation beyond 30 s fails visibly; chunking is out of scope and is not faked.
-- **Silence hallucination** → see decision 3; the UI must not promise silence robustness that the model does not have.
+- **Silence gate false positives** → a genuinely quiet utterance below -54 dBFS is reported as empty instead of transcribed; the threshold is named, tunable, and documented, and the boundary is tested.
+- **VAD convergence** → the local RMS check duplicates card 20's intent; see decision 5 and the follow-up ticket.
 - **No silent fallback** → a SenseVoice failure names the provider and keeps the audio/last transcript; it never retries on Qwen3.
 - **Preference validation** → the store returns the raw string so an unknown id reaches `resolveAsrMode` and errors, rather than being coerced to the default.
 - **Composition wiring** → `src/main/index.ts` and `src/preload/index.ts` receive minimal wiring (preference load + one IPC channel) even though the card's module list named only `src/main/asr/**`; no unrelated main/preload behavior changes.

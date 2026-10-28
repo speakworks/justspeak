@@ -110,10 +110,6 @@ sensevoiceSuite('real pinned SenseVoice CLI smoke', () => {
     await provider?.dispose()
   })
 
-  // Deliberately no digital-silence assertion here: the pinned SenseVoice
-  // build emits a short hallucinated token on 1 s of zero samples ("그。",
-  // observed 2026-10-29). Qwen3 returns empty text; SenseVoice needs VAD or a
-  // core-side silence gate before that behavior can be claimed.
   it('transcribes the committed Chinese fixture', async () => {
     const audio = decodeWav(readFileSync(path.join(ROOT, 'bench/fixtures/zh-4s.wav')))
     const result = await provider.transcribe(audio, { timeoutMs: 180_000 })
@@ -122,5 +118,15 @@ sensevoiceSuite('real pinned SenseVoice CLI smoke', () => {
     expect(result.value.text).toContain('语音识别')
     expect(result.value.language).toBe('zh')
     expect(result.value.modelId).toBe('sensevoice-small-q8')
+  })
+
+  it('gates digital silence to empty text instead of the model hallucination', async () => {
+    // Without the provider gate the pinned build returns "그。" for this input.
+    const audio = decodeWav(Buffer.from(encodeWav(new Int16Array(16000))))
+    const result = await provider.transcribe(audio, { timeoutMs: 180_000 })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.text).toBe('')
+    expect(result.value.warnings.map((w) => w.code)).toEqual(['NO_SPEECH'])
   })
 })

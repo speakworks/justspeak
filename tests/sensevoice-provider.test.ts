@@ -76,6 +76,72 @@ describe('SenseVoice capabilities are honest', () => {
     )
   })
 
+  it('returns empty text for digital silence without invoking the runner', async () => {
+    const run = vi.fn(runner().run)
+    const result = await provider({ run }).transcribe(
+      pcmInput(16_000, { pcm: new Int16Array(16_000) }),
+      {}
+    )
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.text).toBe('')
+      expect(result.value.warnings.map((w) => w.code)).toEqual(['NO_SPEECH'])
+    }
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('still transcribes real speech above the silence threshold', async () => {
+    const run = vi.fn(runner().run)
+    const result = await provider({ run }).transcribe(pcmInput(1600), {})
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.text).toBe('你好，世界')
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('documents the borderline amplitude: below the threshold is gated, at/above passes', async () => {
+    // 0.002 * 32768 = 65.536, so 65/32768 is below the default gate and
+    // 66/32768 is at/above it. RMS is compared with `<`, so the boundary passes.
+    const belowRun = vi.fn(runner().run)
+    const below = await provider({ run: belowRun }).transcribe(
+      pcmInput(1600, { pcm: new Int16Array(1600).fill(65) }),
+      {}
+    )
+    expect(below.ok).toBe(true)
+    if (below.ok) expect(below.value.text).toBe('')
+    expect(belowRun).not.toHaveBeenCalled()
+
+    const aboveRun = vi.fn(runner().run)
+    const above = await provider({ run: aboveRun }).transcribe(
+      pcmInput(1600, { pcm: new Int16Array(1600).fill(66) }),
+      {}
+    )
+    expect(above.ok).toBe(true)
+    if (above.ok) expect(above.value.text).toBe('你好，世界')
+    expect(aboveRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows the silence threshold to be overridden per instance', async () => {
+    const run = vi.fn(runner().run)
+    const gated = new SenseVoiceAsrProvider({
+      model: TEST_MODEL,
+      runner: runner({ run }),
+      silenceRmsThreshold: 0.01
+    })
+    // 100/32768 ≈ 0.00305 is above the default but below this override.
+    const result = await gated.transcribe(pcmInput(1600), {})
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.text).toBe('')
+    expect(run).not.toHaveBeenCalled()
+
+    const open = new SenseVoiceAsrProvider({
+      model: TEST_MODEL,
+      runner: runner({ run }),
+      silenceRmsThreshold: 0
+    })
+    await open.transcribe(pcmInput(1600, { pcm: new Int16Array(1600) }), {})
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
   it('reports the catalog model id and runtime on a successful result', async () => {
     const result = await provider().transcribe(pcmInput(), {})
     expect(result.ok).toBe(true)

@@ -20,13 +20,15 @@ export type PostprocessRule =
   | 'self-correction'
   | 'filler'
   | 'repetition'
+  | 'casing'
 
 export const POSTPROCESS_RULES: readonly PostprocessRule[] = [
   'vocabulary',
   'normalize',
   'self-correction',
   'filler',
-  'repetition'
+  'repetition',
+  'casing'
 ]
 
 export type RuleSwitches = Partial<Record<PostprocessRule, boolean>>

@@ -426,6 +426,45 @@ const KEEP_REPEATED_CHARS = new Set(['哈', '呵', '嘿', '嘻'])
 // English doubles that are grammatical rather than a stutter.
 const KEEP_REPEATED_TOKENS = new Set(['had', 'that'])
 
+/* ------------------------------------------------------------------ */
+/* Sentence-initial casing                                             */
+/* ------------------------------------------------------------------ */
+
+// Opening quotes and brackets are transparent for the first letter; a masked
+// protected or code-like token is not, because its case belongs to the user.
+const LEADING_TRANSPARENT = new Set([
+  '"', "'", '“', '”', '‘', '’', '(', ')', '[', ']', '{', '}',
+  '（', '）', '【', '】', '「', '」', '『', '』', '《', '》', '〈', '〉'
+])
+
+/**
+ * Restore the capital that a dropped leading filler or correction took with
+ * it. Only the first Latin letter of the result is considered: a CJK start, a
+ * digit, or a protected/code-like token leaves the text alone, and nothing
+ * after the first letter is ever touched, so inner casing cannot be damaged.
+ */
+export function restoreSentenceCase(text: string): string {
+  let index = 0
+  while (index < text.length) {
+    const char = text[index] ?? ''
+    if (/\s/.test(char) || LEADING_TRANSPARENT.has(char)) {
+      index += 1
+      continue
+    }
+    break
+  }
+
+  const first = text[index]
+  if (first === undefined) return text
+  // A placeholder means the sentence starts with text the rules must not edit.
+  if (first === MASK_START) return text
+  if (!LATIN.test(first)) return text
+
+  const upper = first.toUpperCase()
+  if (upper === first) return text
+  return text.slice(0, index) + upper + text.slice(index + 1)
+}
+
 export function collapseRepetitions(text: string, threshold: number): string {
   let output = text.replace(
     /\b([A-Za-z]+)((?:\s+\1\b)+)/gi,

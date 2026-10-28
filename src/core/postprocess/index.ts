@@ -4,7 +4,8 @@ import {
   findCodeSpans,
   maskSpans,
   normalizeText,
-  removeFillers
+  removeFillers,
+  restoreSentenceCase
 } from './rules'
 import { applyVocabulary, findProtectSpans, ruleEnabled } from './vocabulary'
 import type {
@@ -99,6 +100,15 @@ export function postprocess(text: string, options: PostprocessOptions = {}): Pos
   if (ruleEnabled(options, 'repetition')) {
     const next = collapseRepetitions(working, threshold)
     record(applied, 'repetition', working, next)
+    working = next
+  }
+
+  // Last, because fillers and corrections are what remove the sentence's
+  // original first word. The function only touches the first Latin letter and
+  // skips a protected/code-like mask, so it cannot lower or rewrite inner text.
+  if (ruleEnabled(options, 'casing')) {
+    const next = restoreSentenceCase(working)
+    record(applied, 'casing', working, next)
     working = next
   }
 

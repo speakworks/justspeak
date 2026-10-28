@@ -25,7 +25,7 @@ function expectCase(
 describe('postprocess: normalisation', () => {
   it.each([
     ['ＡＢＣ１２３', 'ABC123'],
-    ['  hello   world  ', 'hello world'],
+    ['  hello   world  ', 'Hello world'],
     ['你好,世界!', '你好，世界！'],
     ['Hello， world。', 'Hello, world.'],
     ['I said 中文， ok。', 'I said 中文, ok.'],
@@ -74,7 +74,7 @@ describe('postprocess: filler removal', () => {
     ['我今天嗯去了。', '我今天嗯去了。'],
     ['那个东西很好。', '那个东西很好。'],
     ['好啊。', '好啊。'],
-    ['her umbrella', 'her umbrella'],
+    ['her umbrella', 'Her umbrella'],
     ['I like it.', 'I like it.'],
     ['Do you know what I mean?', 'Do you know what I mean?']
   ])('keeps non-filler %j', (input, expected) => {
@@ -82,7 +82,7 @@ describe('postprocess: filler removal', () => {
   })
 
   it('removes an ambiguous filler only when punctuation sets it off', () => {
-    expect(clean('You know, it works.')).toBe('it works.')
+    expect(clean('You know, it works.')).toBe('It works.')
     expect(clean('It is, you know, fine.')).toBe('It is fine.')
   })
 
@@ -121,9 +121,9 @@ describe('postprocess: self-corrections', () => {
 describe('postprocess: repetition collapse', () => {
   it.each([
     ['我我我觉得可以。', '我觉得可以。'],
-    ['the the plan is ready.', 'the plan is ready.'],
+    ['the the plan is ready.', 'The plan is ready.'],
     ['The The plan is ready.', 'The plan is ready.'],
-    ['hello!!', 'hello!'],
+    ['hello!!', 'Hello!'],
     ['真的。。', '真的。']
   ])('collapses repeats in %j', (input, expected) => {
     expect(clean(input)).toBe(expected)
@@ -142,7 +142,7 @@ describe('postprocess: repetition collapse', () => {
   it('honours the configurable threshold', () => {
     expect(clean('我我走了。', { repetitionThreshold: 3 })).toBe('我我走了。')
     expect(clean('我我我走了。', { repetitionThreshold: 3 })).toBe('我走了。')
-    expect(clean('the the the plan', { repetitionThreshold: 3 })).toBe('the plan')
+    expect(clean('the the the plan', { repetitionThreshold: 3 })).toBe('The plan')
   })
 
   it('is individually disableable', () => {
@@ -161,7 +161,7 @@ describe('postprocess: personal vocabulary', () => {
 
   it('respects ASCII word boundaries and case-insensitive matching', () => {
     const vocabulary = { replace: [{ from: 'cat', to: 'dog' }] }
-    expect(clean('concatenate the cat', { vocabulary })).toBe('concatenate the dog')
+    expect(clean('concatenate the cat', { vocabulary })).toBe('Concatenate the dog')
     expect(
       clean('KUBERNETES is ready', {
         vocabulary: { replace: [{ from: 'kubernetes', to: 'Kubernetes' }] }
@@ -198,7 +198,8 @@ describe('postprocess: rule isolation', () => {
       normalize: rule === 'normalize',
       'self-correction': rule === 'self-correction',
       filler: rule === 'filler',
-      repetition: rule === 'repetition'
+      repetition: rule === 'repetition',
+      casing: rule === 'casing'
     }
   }
 
@@ -207,7 +208,8 @@ describe('postprocess: rule isolation', () => {
     ['self-correction', '周一发，不对，周二发。', '周二发。'],
     ['filler', '嗯，我觉得可以。', '我觉得可以。'],
     ['repetition', '我我我觉得可以。', '我觉得可以。'],
-    ['vocabulary', '库贝内特斯', 'Kubernetes']
+    ['vocabulary', '库贝内特斯', 'Kubernetes'],
+    ['casing', 'it is fine.', 'It is fine.']
   ]
 
   it.each(cases)('%s works with every other rule off', (rule, input, expected) => {
@@ -229,11 +231,52 @@ describe('postprocess: rule isolation', () => {
         normalize: false,
         'self-correction': false,
         filler: false,
-        repetition: false
+        repetition: false,
+        casing: false
       }
     }
     const input = ' 嗯，我我我 不对，the the 你好,世界! '
     expect(clean(input, allOff)).toBe(input)
+  })
+})
+
+describe('postprocess: sentence-initial casing', () => {
+  it.each([
+    ['You know, it is fine.', 'It is fine.'],
+    ['um, we should go', 'We should go'],
+    ['I mean, tuesday.', 'Tuesday.'],
+    ['嗯，我们开始吧。', '我们开始吧。']
+  ])('restores the dropped capital in %j', (input, expected) => {
+    expect(clean(input)).toBe(expected)
+  })
+
+  it('does not capitalise a word left mid-sentence', () => {
+    expect(clean('I think, um, we should ship it.')).toBe('I think we should ship it.')
+    expect(clean('We test, um, we ship.')).toBe('We test we ship.')
+    expect(clean('I like it.')).toBe('I like it.')
+  })
+
+  it('reports the casing rule when it fires', () => {
+    expectCase('You know, it is fine.', 'It is fine.', ['filler', 'casing'])
+    expect(postprocess('I like it.')).toEqual({ text: 'I like it.', applied: [] })
+  })
+
+  it('never capitalises a protected token', () => {
+    expect(clean('you know, iPhone is good.', { vocabulary: { protect: ['iPhone'] } })).toBe(
+      'iPhone is good.'
+    )
+    expect(clean('iPhone is great.', { vocabulary: { protect: ['iPhone'] } })).toBe(
+      'iPhone is great.'
+    )
+  })
+
+  it('never capitalises inside a code span or URL', () => {
+    expect(clean('`foo` is good.')).toBe('`foo` is good.')
+    expect(clean('https://example.com is down.')).toBe('https://example.com is down.')
+  })
+
+  it('can be disabled', () => {
+    expect(clean('you know, it is fine.', { rules: { casing: false } })).toBe('it is fine.')
   })
 })
 

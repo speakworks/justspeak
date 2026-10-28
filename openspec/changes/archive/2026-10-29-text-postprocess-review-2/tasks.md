@@ -24,4 +24,4 @@
 ## 5. Verification and delivery
 
 - [x] 5.1 Run `pnpm typecheck`, `pnpm test`, `pnpm build`, and `openspec validate --specs --strict`.
-- [ ] 5.2 Commit on `feat/text-postprocess`, push, and update PR #6 without merging.
+- [x] 5.2 Commit on `feat/text-postprocess`, push, and update PR #6 without merging.

@@ -21,4 +21,4 @@
 
 - [x] 4.1 Run `pnpm typecheck`, `pnpm test`, and `pnpm build`; record the command output in the run report.
 - [x] 4.2 Archive the change and confirm `openspec validate --specs --strict` passes.
-- [ ] 4.3 Commit on `feat/text-postprocess`, push, and open a PR against `main` without merging; record the URL.
+- [x] 4.3 Commit on `feat/text-postprocess`, push, and open a PR against `main` without merging; record the URL.

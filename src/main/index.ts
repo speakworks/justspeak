@@ -23,10 +23,14 @@ import type {
   TranscribeOptions,
   TranscriptionResult
 } from '../core/asr/types'
+import { DEFAULT_ACCELERATOR, parseAccelerator } from '../core/hotkey/accelerator'
+import { registerHotkeyWithFallback } from '../core/hotkey/registration'
+import type { HotkeySource } from '../core/hotkey/types'
 import { SessionController } from '../core/session/session-controller'
 import { isThemePreference } from '../core/theme/theme'
 import type {
   AppStatus,
+  HotkeySetResult,
   ModelInfo,
   ResolvedTheme,
   ThemePreference,
@@ -37,6 +41,7 @@ import { TranscribeCliRunner } from './asr/cli-runner'
 import { ModelManager } from './asr/model-manager'
 import { parseAsrMode } from './asr/mode'
 import { resolveAsrPaths } from './asr/paths'
+import { ElectronGlobalShortcutSource } from './hotkey-source'
 import { pasteText } from './injection'
 import { isTrustedSender } from './ipc-sender'
 import { PcmBuffer } from './pcm-buffer'
@@ -63,6 +68,9 @@ let pcmBuffer = new PcmBuffer()
 let activeModelInfo: ModelInfo | undefined
 let themePreference: ThemePreference = 'system'
 let themeStore: ThemeStore
+let hotkeySource: HotkeySource | undefined
+let activeHotkey = DEFAULT_ACCELERATOR
+let hotkeyNotice: string | undefined
 
 class UnavailableAsrProvider implements AsrProvider {
   readonly id = 'unavailable'
@@ -322,8 +330,10 @@ function createWindow(): void {
   // Height is measured in the real qwen3 mode: the model line only renders
   // there, so measuring in fake mode under-counts and lets the page scroll.
   // The transcript card has a fixed height, so empty, one-line, long
-  // transcript and long-error states all measure the same 632 CSS px; 640
-  // leaves an 8 px margin. Shrink only, never grow, on a smaller display.
+  // transcript and long-error states all measure the same 632 CSS px. The
+  // hotkey editor's error message adds at most one line, which the reduced
+  // app bottom padding absorbs; 640 still leaves a margin. Shrink only,
+  // never grow, on a smaller display.
   const PREFERRED_WIDTH = 720
   const PREFERRED_HEIGHT = 640
   const workArea = screen.getPrimaryDisplay().workAreaSize
@@ -394,7 +404,8 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   themeStore = new ThemeStore(app.getPath('userData'))
-  themePreference = await themeStore.load()
+  const preferences = await themeStore.loadPreferences()
+  themePreference = preferences.theme
   applyTheme()
   nativeTheme.on('updated', () => {
     // Only `system` follows the OS; pinned choices ignore the OS change.
@@ -432,7 +443,9 @@ app.whenReady().then(async () => {
     state: session?.state ?? 'idle',
     message: session?.lastMessage,
     modelInfo: activeModelInfo,
-    theme: themePreference
+    theme: themePreference,
+    hotkey: activeHotkey,
+    hotkeyMessage: hotkeyNotice
   }))
   ipcMain.handle('theme:set', async (event, payload: unknown): Promise<ThemePreference> => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
@@ -450,21 +463,65 @@ app.whenReady().then(async () => {
     }
     return themePreference
   })
+  ipcMain.handle('hotkey:set', async (event, payload: unknown): Promise<HotkeySetResult> => {
+    const requested = typeof payload === 'string' ? payload : ''
+    const rejected = (message: string): HotkeySetResult => ({
+      accelerator: activeHotkey,
+      requested,
+      ok: false,
+      fallbackUsed: false,
+      message
+    })
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      console.warn('[hotkey] rejected untrusted sender')
+      return rejected('未授权的请求。')
+    }
+    const parsed = parseAccelerator(payload)
+    if (!parsed.ok) return rejected(parsed.error.message)
+    if (!hotkeySource) return rejected('快捷键服务尚未就绪。')
+    // Re-registering unregisters the current accelerator, which would swallow
+    // the stop press mid-dictation; only a quiet session may rebind.
+    const currentState = session?.state ?? 'idle'
+    if (currentState !== 'idle' && currentState !== 'error') {
+      return rejected('录音或识别过程中不能更改快捷键。')
+    }
+
+    const outcome = await registerHotkeyWithFallback(hotkeySource, parsed.value.accelerator)
+    activeHotkey = outcome.accelerator
+    hotkeyNotice = outcome.message
+    if (outcome.message) console.warn('[hotkey]', outcome.message)
+    if (outcome.ok) {
+      try {
+        await themeStore.saveHotkey(outcome.accelerator)
+      } catch (error) {
+        console.warn('[hotkey] failed to persist preference', error)
+      }
+    }
+    return {
+      accelerator: activeHotkey,
+      requested: parsed.value.accelerator,
+      ok: outcome.ok,
+      fallbackUsed: outcome.fallbackUsed,
+      message: outcome.message
+    }
+  })
 
   createWindow()
   void initializeProvider()
 
-  const registered = globalShortcut.register('CommandOrControl+Shift+Space', () => {
+  hotkeySource = new ElectronGlobalShortcutSource(globalShortcut)
+  hotkeySource.onPress(() => {
     console.log('[hotkey] event')
     toggleRecording()
   })
-  if (!registered) {
-    session?.fail('无法注册 Command+Shift+Space，可能已被其他应用占用。')
-  }
+  const outcome = await registerHotkeyWithFallback(hotkeySource, preferences.hotkey)
+  activeHotkey = outcome.accelerator
+  hotkeyNotice = outcome.message
+  if (outcome.message) console.warn('[hotkey]', outcome.message)
 })
 
 app.on('will-quit', () => {
-  globalShortcut.unregisterAll()
+  void hotkeySource?.stop()
 })
 
 app.on('window-all-closed', () => {

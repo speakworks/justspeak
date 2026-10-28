@@ -23,6 +23,19 @@ export interface AppStatus {
   message?: string
   modelInfo?: ModelInfo
   theme?: ThemePreference
+  /** The accelerator currently registered with the OS; `''` means none. */
+  hotkey?: string
+  /** Non-empty when the stored binding was refused and a fallback was used. */
+  hotkeyMessage?: string
+}
+
+/** Result of a `hotkey:set` round trip; `accelerator` is what is actually live. */
+export interface HotkeySetResult {
+  accelerator: string
+  requested: string
+  ok: boolean
+  fallbackUsed: boolean
+  message?: string
 }
 
 /** `system` follows macOS appearance; `light` / `dark` pin it. */
@@ -57,6 +70,7 @@ export interface JustSpeakApi {
   sendCaptureFailed: (message: string) => void
   sendPcmBatch: (batch: PcmBatch) => void
   setTheme: (theme: ThemePreference) => Promise<ThemePreference>
+  setHotkey: (accelerator: string) => Promise<HotkeySetResult>
   onState: (listener: (state: AppState, message?: string) => void) => () => void
   onTranscript: (listener: (event: TranscriptEvent) => void) => () => void
   onRecordingCommand: (listener: (command: RecordingCommand) => void) => () => void

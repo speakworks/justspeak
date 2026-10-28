@@ -6,6 +6,11 @@ import {
   type WorkletNodePort
 } from '../../core/capture/capture-controller'
 import {
+  acceleratorDisplayParts,
+  DEFAULT_ACCELERATOR,
+  parseAccelerator
+} from '../../core/hotkey/accelerator'
+import {
   THEME_LABEL,
   nextThemePreference,
   resolveTheme
@@ -108,6 +113,11 @@ export function App(): React.JSX.Element {
   const [transcript, setTranscript] = useState<TranscriptEvent | null>(null)
   const [modelInfo, setModelInfo] = useState<ModelInfo | undefined>()
   const [theme, setTheme] = useState<ThemePreference>('system')
+  const [hotkey, setHotkey] = useState(DEFAULT_ACCELERATOR)
+  const [hotkeyDraft, setHotkeyDraft] = useState(DEFAULT_ACCELERATOR)
+  const [hotkeyFeedback, setHotkeyFeedback] = useState<string | undefined>()
+  const [hotkeyError, setHotkeyError] = useState(false)
+  const [hotkeyBusy, setHotkeyBusy] = useState(false)
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() =>
     typeof window !== 'undefined' &&
     window.matchMedia?.('(prefers-color-scheme: dark)').matches
@@ -150,6 +160,31 @@ export function App(): React.JSX.Element {
     })
   }, [theme])
 
+  const applyHotkey = useCallback((): void => {
+    const parsed = parseAccelerator(hotkeyDraft)
+    if (!parsed.ok) {
+      setHotkeyFeedback(parsed.error.message)
+      setHotkeyError(true)
+      return
+    }
+    setHotkeyBusy(true)
+    void window.justspeak
+      .setHotkey(parsed.value.accelerator)
+      .then((result) => {
+        // `accelerator` is what the OS accepted, which may be the default after
+        // a refused binding; the message names what failed.
+        setHotkey(result.accelerator)
+        if (result.ok) setHotkeyDraft(result.accelerator)
+        setHotkeyError(!result.ok)
+        setHotkeyFeedback(result.message)
+      })
+      .catch((error: unknown) => {
+        setHotkeyError(true)
+        setHotkeyFeedback(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => setHotkeyBusy(false))
+  }, [hotkeyDraft])
+
   useEffect(() => {
     const controller = controllerRef.current
     if (!controller) return
@@ -181,6 +216,14 @@ export function App(): React.JSX.Element {
         if (disposed) return
         setModelInfo(status.modelInfo)
         if (status.theme) setTheme(status.theme)
+        if (typeof status.hotkey === 'string') {
+          setHotkey(status.hotkey)
+          if (status.hotkey) setHotkeyDraft(status.hotkey)
+        }
+        if (status.hotkeyMessage) {
+          setHotkeyFeedback(status.hotkeyMessage)
+          setHotkeyError(true)
+        }
         if (sawStateEvent) return
         setState(status.state)
         setMessage(status.message)
@@ -203,6 +246,12 @@ export function App(): React.JSX.Element {
   }, [reportFailure])
 
   const isBusy = state === 'transcribing' || state === 'pasting'
+  const parsedDraft = parseAccelerator(hotkeyDraft)
+  const hotkeyDirty = parsedDraft.ok && parsedDraft.value.accelerator !== hotkey
+  const liveError = parsedDraft.ok ? undefined : parsedDraft.error.message
+  const hotkeyMessage = hotkeyFeedback ?? liveError
+  const hotkeyMessageIsError = hotkeyError || liveError !== undefined
+  const hotkeyDisplay = hotkey ? acceleratorDisplayParts(hotkey) : []
 
   return (
     <main className="app">
@@ -234,9 +283,54 @@ export function App(): React.JSX.Element {
           {state === 'recording' ? '停止并粘贴' : '开始录音'}
         </button>
 
-        <p className="hint">
-          快捷键 <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>Space</kbd> · 需要麦克风与辅助功能权限
-        </p>
+        <div className="hotkey">
+          <div className="hint hotkey-row" title="需要麦克风与辅助功能权限">
+            <label className="hotkey-label" htmlFor="hotkey-input">
+              快捷键
+            </label>
+            <input
+              id="hotkey-input"
+              className={liveError ? 'hotkey-input invalid' : 'hotkey-input'}
+              value={hotkeyDraft}
+              onChange={(event) => {
+                setHotkeyDraft(event.target.value)
+                setHotkeyFeedback(undefined)
+                setHotkeyError(false)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') applyHotkey()
+              }}
+              aria-invalid={liveError ? true : undefined}
+              aria-describedby={hotkeyMessage ? 'hotkey-message' : 'hotkey-status'}
+              spellCheck={false}
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              className="hotkey-apply"
+              onClick={applyHotkey}
+              disabled={hotkeyBusy || !parsedDraft.ok || !hotkeyDirty}
+            >
+              应用
+            </button>
+            <span id="hotkey-status" className="hotkey-status">
+              当前
+              {hotkeyDisplay.length > 0 ? (
+                hotkeyDisplay.map((part, index) => <kbd key={`${part}-${index}`}>{part}</kbd>)
+              ) : (
+                <span className="hotkey-missing">未注册</span>
+              )}
+            </span>
+          </div>
+          {hotkeyMessage ? (
+            <p
+              id="hotkey-message"
+              className={hotkeyMessageIsError ? 'hotkey-message error' : 'hotkey-message'}
+            >
+              {hotkeyMessage}
+            </p>
+          ) : null}
+        </div>
 
         {modelInfo ? (
           // The URL is long enough to wrap onto a second row and waste height;

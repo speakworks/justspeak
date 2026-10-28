@@ -104,6 +104,22 @@ describe('Qwen3 provider error and timeout mapping', () => {
     await new Promise((resolve) => setTimeout(resolve, 70))
   })
 
+  it('does not accumulate caller abort listeners across transcriptions', async () => {
+    const controller = new AbortController()
+    const add = vi.spyOn(controller.signal, 'addEventListener')
+    const remove = vi.spyOn(controller.signal, 'removeEventListener')
+    const abortAdds = (): number => add.mock.calls.filter(([type]) => type === 'abort').length
+    const abortRemoves = (): number =>
+      remove.mock.calls.filter(([type]) => type === 'abort').length
+
+    const instance = provider()
+    for (let i = 0; i < 5; i += 1) {
+      const result = await instance.transcribe(pcmInput(), { signal: controller.signal })
+      expect(result.ok).toBe(true)
+      expect(abortAdds()).toBe(abortRemoves())
+    }
+  })
+
   it('reports model metadata and measured latency', async () => {
     let tick = 0
     const instance = new Qwen3AsrProvider({

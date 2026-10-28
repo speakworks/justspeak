@@ -506,10 +506,14 @@ Silero VAD worker, final-only local ASR, and the Swift helper for OS-level opera
 Concretely:
 
 1. **Capture path.** Renderer `getUserMedia` → `AudioContext` → `AudioWorkletNode`
-   ("justspeak-capture"). The worklet batches frames and posts `Int16Array` buffers; the
-   renderer forwards them over a narrow, allowlisted preload channel to main. No audio
-   is written to disk, logged, or sent to the network by the renderer. The renderer does
-   not get Node, filesystem, helper, or provider-key access.
+   ("pcm-collector"). The worklet posts raw Float32 render quanta (plus RMS and a capture
+   timestamp); the pure `PcmBatcher` in `src/core/capture/pcm-batcher.ts` clamps them and
+   emits 20 ms Int16 batches (320 samples at 16 kHz), which the renderer forwards over a
+   narrow, allowlisted preload channel to main. The wiring lives in
+   `src/renderer/src/App.tsx` and `src/core/capture/capture-controller.ts`; the batch
+   contract is in `openspec/specs/audio-capture/spec.md`. No audio is written to disk,
+   logged, or sent to the network by the renderer. The renderer does not get Node,
+   filesystem, helper, or provider-key access.
 
 2. **Format and resampling.** Target 16 kHz mono, 16-bit PCM. Capture at the device's
    native rate (typically 48 kHz) and resample to 16 kHz in `src/core` with a
@@ -519,7 +523,10 @@ Concretely:
    utility process; do not silently fall back to Chromium's resampler without measuring
    the quality difference. The `AudioContext({ sampleRate: 16000 })` path is the
    documented fallback, not the default, because it hides resampling behind the browser
-   and weakens ADR-0001's ownership of the DSP.
+   and weakens ADR-0001's ownership of the DSP. **Implementation status:** the shipped
+   renderer path currently creates a 16 kHz `AudioContext` and rejects other rates
+   (`src/renderer/src/App.tsx`, `src/core/capture/capture-controller.ts`); that deviation
+   is recorded as an open item in ADR-0003 (Open questions item 8), not ratified here.
 
 3. **Frames and ring buffer.** Batch 320 samples at 16 kHz (20 ms) or 480 samples
    (30 ms); do not copy the Typeless 64 ms batch, which adds avoidable stop latency on a

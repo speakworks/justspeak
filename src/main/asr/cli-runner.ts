@@ -184,7 +184,16 @@ export class TranscribeCliRunner implements Qwen3Runner {
     }
 
     const wavPath = this.deps.makeTempPath()
-    await this.deps.writeFile(wavPath, encodeWav(input.pcm))
+    const removeWav = (): void => {
+      void this.deps.unlink(wavPath).catch(() => {})
+    }
+
+    try {
+      await this.deps.writeFile(wavPath, encodeWav(input.pcm))
+    } catch (cause) {
+      removeWav()
+      throw cause
+    }
 
     return new Promise<ProviderResult<Qwen3RunnerResult>>((resolve) => {
       let stdout = ''
@@ -194,14 +203,20 @@ export class TranscribeCliRunner implements Qwen3Runner {
       let cancelled = false
       let timeout: ReturnType<typeof setTimeout> | undefined
 
-      const child = this.deps.spawn(this.cliPath, ['-q', '-m', this.modelPath, wavPath])
+      let child: ChildProcessPort
+      try {
+        child = this.deps.spawn(this.cliPath, ['-q', '-m', this.modelPath, wavPath])
+      } catch (cause) {
+        removeWav()
+        throw cause
+      }
 
       const settle = (result: ProviderResult<Qwen3RunnerResult>): void => {
         if (settled) return
         settled = true
         if (timeout) clearTimeout(timeout)
         options.signal?.removeEventListener('abort', onAbort)
-        void this.deps.unlink(wavPath).catch(() => {})
+        removeWav()
         resolve(result)
       }
 

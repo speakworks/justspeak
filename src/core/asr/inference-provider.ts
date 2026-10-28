@@ -145,13 +145,19 @@ export class InferenceProvider implements AsrProvider {
       timeout.unref?.()
     })
 
+    // Named so the caller's abort listener is removed on every exit path. An
+    // anonymous listener leaked one closure per transcription whenever a caller
+    // reused its AbortSignal across utterances. This is the fix from the
+    // deferred-defects work, re-applied here after the provider refactor moved
+    // transcribe() out of Qwen3AsrProvider into this base class.
+    let resolveCancelled: (result: ProviderResult<AsrRunnerResult>) => void = () => {}
+    const onCallerAbort = (): void => {
+      resolveCancelled(error('CANCELLED', 'Transcription cancelled', false))
+    }
     const cancelledResult = new Promise<ProviderResult<AsrRunnerResult>>((resolve) => {
+      resolveCancelled = resolve
       if (!options.signal) return
-      options.signal.addEventListener(
-        'abort',
-        () => resolve(error('CANCELLED', 'Transcription cancelled', false)),
-        { once: true }
-      )
+      options.signal.addEventListener('abort', onCallerAbort, { once: true })
     })
 
     let runnerResult: ProviderResult<AsrRunnerResult>
@@ -174,6 +180,7 @@ export class InferenceProvider implements AsrProvider {
     } finally {
       if (timeout) clearTimeout(timeout)
       options.signal?.removeEventListener('abort', abortFromCaller)
+      options.signal?.removeEventListener('abort', onCallerAbort)
     }
 
     if (!runnerResult.ok) return runnerResult

@@ -13,6 +13,8 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { QWEN3_CAPABILITIES } from '../core/asr/qwen3-provider'
 import { SENSEVOICE_CAPABILITIES } from '../core/asr/sensevoice-provider'
+import type { SegmenterOptions } from '../core/audio/segmenter'
+import { createTranscriptionProvider } from '../core/audio/segmented-provider'
 import type {
   AsrCapabilities,
   AsrModelDescriptor,
@@ -29,6 +31,7 @@ import { registerHotkeyWithFallback } from '../core/hotkey/registration'
 import type { HotkeySource } from '../core/hotkey/types'
 import { postprocess, type PostprocessOptions } from '../core/postprocess'
 import { SessionController } from '../core/session/session-controller'
+import { consumePendingNotice } from '../core/session/state-notice'
 import { isThemePreference } from '../core/theme/theme'
 import type {
   AppStatus,
@@ -52,6 +55,10 @@ import {
 import { ProviderPreferenceStore } from './asr/provider-preference'
 import { buildProvider } from './asr/providers'
 import { downloadFailureHint } from './asr/download-hint'
+import {
+  parseSegmentationConfig,
+  type SegmentationMode
+} from './asr/segmentation-mode'
 import { ElectronGlobalShortcutSource } from './hotkey-source'
 import { pasteText } from './injection'
 import { isTrustedSender } from './ipc-sender'
@@ -85,6 +92,15 @@ let postprocessOptions: PostprocessOptions = {}
 let providerPreference: ProviderPreferenceStore
 /** Raw persisted value; validation happens in `resolveAsrMode`. */
 let preferredProvider: string | undefined
+let segmentationMode: SegmentationMode = 'single'
+let segmenterOptions: SegmenterOptions | undefined
+/**
+ * A partial segmented transcript is returned as provider success (the frozen
+ * provider contract cannot carry text and an error together). Main attaches
+ * the typed failure message to the next idle event so the user still learns
+ * which segment was lost.
+ */
+let pendingSegmentFailure: string | undefined
 
 class UnavailableAsrProvider implements AsrProvider {
   readonly id = 'unavailable'
@@ -125,6 +141,9 @@ function preloadPath(): string {
 }
 
 function sendState(next: AppStatus['state'], message?: string): void {
+  const notice = consumePendingNotice(next, message, pendingSegmentFailure)
+  message = notice.message
+  pendingSegmentFailure = notice.pending
   console.log('[state]', next, message ?? '')
   mainWindow?.webContents.send('state', next, message)
 }
@@ -172,8 +191,17 @@ function getAudio(): AudioInput {
 }
 
 function makeSession(provider: AsrProvider, fake: boolean): SessionController {
+  // The default mode returns the inner provider untouched, so this wiring has
+  // no effect on the one-shot path.
+  const selected = createTranscriptionProvider(provider, segmentationMode, {
+    segmenter: segmenterOptions,
+    onPartialFailure: (error) => {
+      pendingSegmentFailure = error.message
+      console.warn('[segment]', error.message)
+    }
+  })
   return new SessionController({
-    provider,
+    provider: selected,
     paste: pasteText,
     sendState,
     sendTranscript,
@@ -246,6 +274,7 @@ async function initializeProvider(): Promise<void> {
   initializing = true
   providerError = undefined
   activeModelInfo = undefined
+  pendingSegmentFailure = undefined
 
   const selection = resolveAsrMode({
     env: process.env.JUSTSPEAK_ASR,
@@ -258,6 +287,20 @@ async function initializeProvider(): Promise<void> {
     failSession(selection.message)
     return
   }
+
+  // Experimental segmentation knobs fail closed: an invalid value must not
+  // silently fall back to the single-shot path, or the user would believe
+  // segmentation ran when it did not.
+  const segmentation = parseSegmentationConfig(process.env)
+  if (!segmentation.ok) {
+    await disposeActiveProvider()
+    session = makeSession(new UnavailableAsrProvider(), false)
+    initializing = false
+    failSession(segmentation.message)
+    return
+  }
+  segmentationMode = segmentation.config.mode
+  segmenterOptions = segmentation.config.segmenter
 
   const built = buildProvider({
     mode: selection.mode,
@@ -417,6 +460,7 @@ function toggleRecording(): void {
 
   const action = session.toggle(rendererReady)
   if (action === 'start') {
+    pendingSegmentFailure = undefined
     pcmBuffer.begin()
     mainWindow?.webContents.send('recording:start')
     return

@@ -20,4 +20,4 @@
 
 - [x] 4.1 Validate and archive this change; confirm `openspec validate --specs --strict`.
 - [x] 4.2 Run `pnpm typecheck`, `pnpm test`, and `pnpm build`.
-- [ ] 4.3 Commit on `feat/text-postprocess`, push, and update PR #6 without merging.
+- [x] 4.3 Commit on `feat/text-postprocess`, push, and update PR #6 without merging.

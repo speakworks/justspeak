@@ -17,6 +17,8 @@ build/
 release/
 coverage/
 *.log
+*.dmg
+*.blockmap
 
 # Python
 __pycache__/

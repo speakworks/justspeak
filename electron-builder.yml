@@ -1,0 +1,60 @@
+# electron-builder configuration for JustSpeak.
+#
+# This configuration builds an unsigned, local arm64 macOS app from the
+# electron-vite output in out/. Signing and notarisation are intentionally
+# disabled until the project has Developer ID and Apple notary credentials
+# (see docs/PACKAGING-RELEASE.md). Do not add credentials here.
+#
+#   pnpm package:mac            # unpacked .app under release/ (fast config/build check)
+#   pnpm package:mac:artifacts  # DMG + ZIP under release/
+appId: com.justspeak.app
+productName: JustSpeak
+copyright: Copyright (c) 2026 FD2008
+
+directories:
+  output: release
+
+# Use the Electron already installed in node_modules so packaging does not
+# download a runtime at build time. No native modules are rebuilt.
+electronDist: node_modules/electron/dist
+npmRebuild: false
+
+files:
+  - out/**/*
+  - package.json
+
+asar: true
+
+# The catalog ships with the app; the 850 MB model weights never do. Models are
+# downloaded on first run into the user's data directory.
+extraResources:
+  - from: resources/models.json
+    to: resources/models.json
+
+artifactName: ${productName}-${version}-${arch}.${ext}
+
+# Never publish from a local build. Uploading is a release-process step that
+# needs credentials and is out of scope for this configuration.
+publish: null
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  # Signing is disabled pending credentials: Developer ID Application
+  # certificate, team ID, and notarytool credentials. Flip identity and
+  # notarize (and enable hardenedRuntime) only when those are supplied.
+  identity: null
+  notarize: false
+  hardenedRuntime: false
+  extendInfo:
+    NSMicrophoneUsageDescription: >-
+      JustSpeak records audio only while dictation is active, transcribes
+      locally by default, and uploads audio only when the user enables a cloud
+      provider.
+    NSHumanReadableCopyright: Copyright (c) 2026 FD2008. MIT licensed.

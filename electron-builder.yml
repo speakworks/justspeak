@@ -5,8 +5,8 @@
 # disabled until the project has Developer ID and Apple notary credentials
 # (see docs/PACKAGING-RELEASE.md). Do not add credentials here.
 #
-#   pnpm package:mac      # DMG + ZIP under release/
-#   pnpm package:mac:dir  # unpacked .app only (fast config/build check)
+#   pnpm package:mac            # unpacked .app under release/ (fast config/build check)
+#   pnpm package:mac:artifacts  # DMG + ZIP under release/
 appId: com.justspeak.app
 productName: JustSpeak
 copyright: Copyright (c) 2026 FD2008

@@ -59,6 +59,8 @@ export interface TranscriptEvent {
   fake: boolean
   durationMs: number
   latencyMs: number
+  /** Post-processing rule ids that changed the raw ASR text, in order. */
+  applied?: string[]
 }
 
 export interface JustSpeakApi {

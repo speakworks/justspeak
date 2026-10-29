@@ -1,4 +1,5 @@
 import type { AsrErrorCode, AsrProvider, AudioInput } from '../asr/types'
+import type { PostprocessResult } from '../postprocess'
 import type { AppState, RecordingSummary, TranscriptEvent } from '../../shared/ipc'
 
 export const INVALID_SUMMARY_MESSAGE = '录音数据无效，请重试。'
@@ -18,6 +19,8 @@ export interface SessionControllerDeps {
   sendState: (state: AppState, message?: string) => void
   sendTranscript: (event: TranscriptEvent) => void
   fake: boolean
+  /** Deterministic cleanup between the ASR result and the paste call. */
+  postprocess?: (text: string) => PostprocessResult
   getAudio?: (summary: RecordingSummary) => AudioInput | null
   now?: () => number
   startDebounceMs?: number
@@ -135,15 +138,28 @@ export class SessionController {
         return
       }
 
+      const rawText = result.value.text
+      const processed = this.deps.postprocess?.(rawText)
+      // Defence in depth: a processor must never turn a real transcript into
+      // nothing. The core stage already guards this, but the session owns the
+      // paste contract and enforces it regardless of who supplies the stage.
+      let text = rawText
+      let applied: string[] = []
+      if (processed && (processed.text.length > 0 || rawText.length === 0)) {
+        text = processed.text
+        applied = processed.applied
+      }
+
       this.deps.sendTranscript({
-        text: result.value.text,
+        text,
+        applied,
         fake: this.deps.fake,
         durationMs: summary.durationMs,
         latencyMs: (this.deps.now ?? Date.now)() - startedAt
       })
 
       this.setState('pasting')
-      await this.deps.paste(result.value.text)
+      await this.deps.paste(text)
       this.setState('idle')
     } catch (error) {
       this.enterError(error instanceof Error ? error.message : String(error))

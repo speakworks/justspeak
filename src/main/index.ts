@@ -26,6 +26,7 @@ import type {
 import { DEFAULT_ACCELERATOR, parseAccelerator } from '../core/hotkey/accelerator'
 import { registerHotkeyWithFallback } from '../core/hotkey/registration'
 import type { HotkeySource } from '../core/hotkey/types'
+import { postprocess, type PostprocessOptions } from '../core/postprocess'
 import { SessionController } from '../core/session/session-controller'
 import { isThemePreference } from '../core/theme/theme'
 import type {
@@ -46,6 +47,7 @@ import { pasteText } from './injection'
 import { isTrustedSender } from './ipc-sender'
 import { PcmBuffer } from './pcm-buffer'
 import { ThemeStore } from './theme-store'
+import { VocabularyStore } from './vocabulary-store'
 
 const DARK_BACKGROUND = '#0b0f14'
 const LIGHT_BACKGROUND = '#f6f5f2'
@@ -71,6 +73,7 @@ let themeStore: ThemeStore
 let hotkeySource: HotkeySource | undefined
 let activeHotkey = DEFAULT_ACCELERATOR
 let hotkeyNotice: string | undefined
+let postprocessOptions: PostprocessOptions = {}
 
 class UnavailableAsrProvider implements AsrProvider {
   readonly id = 'unavailable'
@@ -164,6 +167,9 @@ function makeSession(provider: AsrProvider, fake: boolean): SessionController {
     sendState,
     sendTranscript,
     fake,
+    // The stage sits between the provider result and paste, so the fake and
+    // the local provider both go through it.
+    postprocess: (text) => postprocess(text, postprocessOptions),
     getAudio,
     transcribeTimeoutMs: 120_000
   })
@@ -407,6 +413,8 @@ app.whenReady().then(async () => {
   const preferences = await themeStore.loadPreferences()
   themePreference = preferences.theme
   applyTheme()
+  // Loaded once at startup; the settings UI that writes it is a later card.
+  postprocessOptions = await new VocabularyStore(app.getPath('userData')).load()
   nativeTheme.on('updated', () => {
     // Only `system` follows the OS; pinned choices ignore the OS change.
     if (themePreference === 'system') applyTheme()

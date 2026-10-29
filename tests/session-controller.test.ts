@@ -181,6 +181,25 @@ describe('session state machine', () => {
     expect(harness.pastes).toHaveLength(0)
   })
 
+  it('does not run post-processing when the provider fails', async () => {
+    const postprocess = vi.fn((text: string) => ({ text, applied: [] }))
+    const harness = setup({
+      provider: fakeProvider({
+        ok: false,
+        error: { code: 'MODEL_MISSING', message: '模型缺失', retryable: false }
+      }),
+      postprocess
+    })
+    harness.controller.toggle(true)
+    harness.advance(1000)
+    harness.controller.toggle(true)
+    await harness.controller.handleCaptureStopped(SUMMARY)
+
+    expect(postprocess).not.toHaveBeenCalled()
+    expect(harness.transcripts).toHaveLength(0)
+    expect(harness.pastes).toHaveLength(0)
+  })
+
   it('returns to idle with a notice for an empty capture', async () => {
     const harness = setup({ getAudio: () => null })
     harness.controller.toggle(true)
@@ -330,6 +349,60 @@ describe('session state machine', () => {
     harness.controller.toggle(true)
     await harness.controller.handleCaptureStopped(SUMMARY)
     expect(harness.transcribe).toHaveBeenCalledWith(expect.any(Object), { timeoutMs: 4321 })
+  })
+
+  it('post-processes the result before paste and records the applied rules', async () => {
+    const harness = setup({
+      postprocess: (text) => ({ text: `${text}!`, applied: ['filler'] })
+    })
+    harness.controller.toggle(true)
+    harness.advance(1000)
+    harness.controller.toggle(true)
+    await harness.controller.handleCaptureStopped(SUMMARY)
+
+    expect(harness.transcripts[0]).toMatchObject({ text: '你好!', applied: ['filler'] })
+    expect(harness.pastes).toEqual(['你好!'])
+  })
+
+  it('post-processes a real-provider transcript too', async () => {
+    const harness = setup({
+      fake: false,
+      postprocess: (text) => ({ text: `[${text}]`, applied: ['normalize'] })
+    })
+    harness.transcribe.mockImplementation(async () => ({
+      ok: true,
+      value: {
+        text: '你好',
+        latencyMs: 5,
+        modelId: 'test-model',
+        runtimeId: 'test-runtime',
+        warnings: []
+      }
+    }))
+    harness.controller.toggle(true)
+    harness.advance(1000)
+    harness.controller.toggle(true)
+    await harness.controller.handleCaptureStopped(SUMMARY)
+
+    expect(harness.transcripts[0]).toMatchObject({
+      text: '[你好]',
+      fake: false,
+      applied: ['normalize']
+    })
+    expect(harness.pastes).toEqual(['[你好]'])
+  })
+
+  it('falls back to the raw transcript when the stage returns empty text', async () => {
+    const harness = setup({
+      postprocess: () => ({ text: '', applied: ['filler'] })
+    })
+    harness.controller.toggle(true)
+    harness.advance(1000)
+    harness.controller.toggle(true)
+    await harness.controller.handleCaptureStopped(SUMMARY)
+
+    expect(harness.transcripts[0]).toMatchObject({ text: '你好', applied: [] })
+    expect(harness.pastes).toEqual(['你好'])
   })
 
   it('drives real bounded PCM batches through the session', async () => {

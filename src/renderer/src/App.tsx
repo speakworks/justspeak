@@ -361,7 +361,8 @@ export function App(): React.JSX.Element {
         </p>
         {transcript ? (
           <p className="meta">
-            录音 {Math.round(transcript.durationMs / 100) / 10}s · 识别 {transcript.latencyMs}ms
+            {`录音 ${Math.round(transcript.durationMs / 100) / 10}s · 识别 ${transcript.latencyMs}ms`}
+            {transcript.applied?.length ? ` · 清理 ${transcript.applied.length} 项` : ''}
           </p>
         ) : null}
       </section>

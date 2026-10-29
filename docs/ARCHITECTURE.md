@@ -14,9 +14,10 @@ TypeScript + React 19 + electron-vite 6 + a small Swift helper (ADR-0002).
 
 The architecture must satisfy these constraints:
 
-- **Native depth where it matters.** Global hotkeys, focused-application context,
-  microphone capture, and text injection are OS APIs. They live in a small native helper,
-  not in the renderer and not spread through the TypeScript app.
+- **Native depth where it matters.** Global hotkeys, focused-application context, and
+  text injection are OS-level operations. v0.1 microphone capture is the exception: it
+  runs in the sandboxed renderer over Web Audio (AUDIO-PIPELINE.md, ADR-0003). OS
+  operations live behind adapters, not spread through the TypeScript app.
 - **A framework-neutral core.** ADR-0001 requires `src/core` to own the audio pipeline,
   VAD, ASR adapters, post-processing, model management, and the transcription settings
   schema, with no UI, platform, or OS-specific imports. The same core must serve
@@ -25,8 +26,8 @@ The architecture must satisfy these constraints:
   enables a cloud ASR provider. No vendor account is required.
 - **Windows later without a rewrite.** Main, preload, renderer, and core stay portable;
   only the helper and packaging are platform-specific.
-- **Small blast radius.** The renderer is sandboxed and has no direct access to the
-  microphone, the filesystem, the helper, or provider credentials.
+- **Small blast radius.** The renderer is sandboxed. It has Web Audio microphone access
+  for capture, but no filesystem, helper, or provider-credential access.
 
 This document is a design baseline. It intentionally does not decide packaging, signing,
 auto-update, the local ASR runtime, or the Windows helper language; those are separate
@@ -44,9 +45,8 @@ flowchart LR
   end
 
   subgraph Helper["Swift native helper (out of process)"]
-    H1["Hotkey + capture"]
+    H1["Hotkey / event tap"]
     H2["Focus / app context"]
-    H3["Text injection"]
     H4["Keychain / permissions"]
   end
 
@@ -58,19 +58,19 @@ flowchart LR
   end
 
   subgraph ASR["ASR runtime"]
-    Local["Local sidecar (whisper.cpp / sherpa-onnx)"]
+    Local["Local child process (transcribe-cli)"]
     Cloud["Cloud provider (opt-in, HTTPS/WSS)"]
   end
 
   Hotkey --> H1
-  Mic --> H1
-  H1 -- "PCM frames over versioned IPC" --> Main
+  Mic --> Renderer
+  H1 -- "hotkey events" --> Main
+  Renderer -- "20 ms PCM batches over preload" --> Main
   Main --> Core
   Core -- "provider adapter" --> Local
   Core -- "provider adapter" --> Cloud
   H2 --> Main
-  Main -- "injectText" --> H3
-  H3 --> Target
+  Main -- "clipboard + Cmd+V" --> Target
   Main <--> Preload
   Preload <--> Renderer
   Main --> H4
@@ -109,8 +109,10 @@ change, not a rewrite.
 **Cons:** capture is tied to a renderer's lifetime; Chromium's audio stack adds latency
 and its own permission path; the audio pipeline then straddles renderer and core, which
 weakens the ADR-0001 boundary; push-to-talk and device switching are awkward.
-**Decision:** reject for v0.1. Revisit only if a latency spike shows the helper capture
-path is worse.
+**Decision:** the original baseline rejected this option for v0.1. The shipped v0.1
+capture path is renderer `getUserMedia` + AudioWorklet (AUDIO-PIPELINE.md, ADR-0003), with
+the helper capture path retained as the fallback. The cons above still apply: capture is
+tied to a renderer's lifetime and the pipeline straddles renderer and core.
 
 ### Option D — Native addon via FFI (`node-ffi`/`koffi`) instead of a helper process
 
@@ -129,17 +131,19 @@ network; privacy story becomes vendor-dependent.
 
 ## Recommendation
 
-Adopt **Option A**: a sandboxed React renderer, a preload bridge, an Electron main process
-that hosts the session state machine and `src/core`, and a small out-of-process Swift
-helper that owns hotkeys, audio capture, focused-app context, and text injection. Keep the
-core free of Electron imports so it can move to a utility process or a different shell
-later.
+Adopt **Option A**: a sandboxed React renderer that also hosts Web Audio capture, a
+preload bridge, an Electron main process that hosts the session state machine, `src/core`,
+and clipboard/paste injection, and an out-of-process Swift helper boundary for hotkeys and
+focused-app context (helper capture remains the documented fallback). Keep the core free
+of Electron imports so it can move to a utility process or a different shell later.
 
 The boundary rules are the load-bearing part:
 
-- Renderer: UI and display state only; no Node, no microphone, no helper, no provider keys.
+- Renderer: UI, display state, and the sandboxed Web Audio capture path; no Node, no
+  helper, no provider keys.
 - Preload: a narrow, typed, allowlisted bridge; no generic `ipcRenderer` exposure.
-- Main: orchestration, validation, permissions, persistence, helper and ASR lifecycle.
+- Main: orchestration, validation, permissions, persistence, clipboard/paste injection,
+  helper and ASR lifecycle.
 - Core: pipeline and product logic; no Electron, DOM, or OS APIs.
 - Helper: OS operations only; no product policy, no network.
 - ASR runtime: local sidecar or opt-in cloud; never called directly by the renderer.
@@ -148,12 +152,12 @@ The boundary rules are the load-bearing part:
 
 | Component | Runtime | Owns | Must not own |
 |---|---|---|---|
-| **Electron main** | Node.js + TypeScript | App lifecycle, windows/tray/menu, session state machine, core host, helper client, ASR provider selection, IPC validation, settings, history persistence, auto-update | Audio DSP internals, UI rendering, direct OS injection |
+| **Electron main** | Node.js + TypeScript | App lifecycle, windows/tray/menu, session state machine, core host, helper client, ASR provider selection, IPC validation, settings, history persistence, auto-update, clipboard/paste injection (v0.1) | Audio DSP internals, UI rendering, direct OS injection |
 | **Preload** | Isolated world, TypeScript | Narrow typed API over `contextBridge`, event subscriptions, request/response wrappers | Business logic, Node module exposure, helper access |
-| **Renderer** | Chromium, sandboxed, React 19 | Settings UI, history view, recording overlay, permission onboarding, error display | Node APIs, microphone capture, file writes, provider keys, transcript post-processing |
-| **`src/core`** | TypeScript, framework-neutral | Audio frame types, resampling/ring buffer, VAD/endpointing/chunking, ASR provider interfaces and adapters, post-processing, model catalog/manager, transcription settings schema, result/error types | Electron/React/DOM imports, OS APIs, window or IPC knowledge |
-| **Swift helper** | Native macOS process | Global hotkey/event tap, microphone capture (`AVAudioEngine`), focused-app/input context, text injection, permission status, Keychain access | Product policy, network calls, transcript storage, UI |
-| **ASR runtime** | Local sidecar process or remote service | Speech-to-text inference, partial/final hypotheses | UI, injection, settings |
+| **Renderer** | Chromium, sandboxed, React 19 | Settings UI, history view, recording overlay, permission onboarding, error display, microphone capture (Web Audio + AudioWorklet) | Node APIs, file writes, helper access, provider keys, transcript post-processing |
+| **`src/core`** | TypeScript, framework-neutral | Audio frame types, ring buffer, VAD/endpointing/chunking, ASR provider interfaces and adapters, post-processing, model catalog/manager, transcription settings schema, result/error types | Electron/React/DOM imports, OS APIs, window or IPC knowledge |
+| **Swift helper** | Native macOS process (v0.1 helper not yet shipped) | Global hotkey/event tap, focused-app/input context, permission status, Keychain access; native text injection and `AVAudioEngine` capture are later/fallback paths | Product policy, network calls, transcript storage, UI |
+| **ASR runtime** | Local child process (`transcribe-cli`) or remote service | Speech-to-text inference; v0.1 returns one final transcript | UI, injection, settings |
 | **Storage** | Main process, local files | Settings, opt-in history, model metadata | Audio retention by default, plaintext secrets |
 
 ### Electron main
@@ -176,8 +180,9 @@ expose `ipcRenderer`, `require`, `process`, or a generic `invoke(channel, payloa
 
 The renderer is a sandboxed React 19 app. It loads only bundled local content, has a
 strict CSP, and cannot navigate away or open new windows. It renders the overlay
-(idle/recording/transcribing/done/error), settings, history, and permission onboarding. It
-never receives raw audio or unredacted provider credentials.
+(idle/recording/transcribing/pasting/error), settings, history, and permission onboarding.
+It also captures raw audio through Web Audio and never receives unredacted provider
+credentials.
 
 ### `src/core`
 
@@ -185,10 +190,11 @@ The core is the reusable product logic described by ADR-0001. It is written as p
 TypeScript with injected ports, so it can run in the main process today and in a utility
 process or a different shell later. It exposes:
 
-- Audio pipeline: frame normalization, resampling to the ASR rate, ring buffer, VAD,
-  endpointing, and chunking.
-- ASR provider interface: capability declaration, streaming or batch mode, partial
-  hypotheses, final result, cancellation, and a typed error taxonomy.
+- Audio pipeline: frame normalization, ring buffer, VAD, endpointing, and chunking. The
+  shipped v0.1 renderer delivers 16 kHz PCM and the core does not resample; owning
+  resampling at the boundary is open in ADR-0003 (item 8).
+- ASR provider interface: capability declaration (v0.1 providers declare `streaming:
+  false`), final result, cancellation, and a typed error taxonomy.
 - Provider adapters: local sidecar and cloud HTTP/WebSocket implementations behind the
   same interface.
 - Post-processing: punctuation/casing, filler removal, personal vocabulary, and optional
@@ -203,7 +209,8 @@ The helper is a small, long-lived process launched and supervised by main. It ex
 versioned command set:
 
 - `hello` / capability handshake (contract version, platform, available features).
-- `startCapture`, `stopCapture`, `cancelCapture` (streams 16 kHz mono PCM frames).
+- `startCapture`, `stopCapture`, `cancelCapture` for the helper-capture fallback (not the
+  v0.1 default; renderer capture ships instead).
 - `getFocusedApp` / `getInputContext` (app name, bundle id, focus state; no surrounding
   text by default).
 - `injectText` (Accessibility insert, or clipboard + paste fallback).
@@ -217,11 +224,10 @@ it never silently degrades into wrong behavior.
 
 ### ASR runtime
 
-Local inference runs in a sidecar process (for example whisper.cpp or sherpa-onnx) rather
-than inside the Electron main process. The sidecar is launched with an explicit model
-path, communicates over a documented local protocol, and is killed when the session ends
-or the model changes. Cloud providers are adapters in `src/core` and require explicit
-user enablement. The renderer never talks to either.
+Local inference runs in a child process (`transcribe-cli` from transcribe.cpp 0.4.1)
+spawned by main, rather than inside the Electron main process itself. Each transcription
+writes a temporary WAV, runs the CLI, and removes the WAV. Cloud providers are adapters in
+`src/core` and require explicit user enablement. The renderer never talks to either.
 
 ### Storage
 
@@ -246,29 +252,27 @@ in renderer storage or plaintext config.
 sequenceDiagram
   participant U as User
   participant M as Electron main
-  participant H as Swift helper
   participant C as src/core
   participant A as ASR provider
   participant R as Renderer overlay
 
   U->>M: Hotkey (toggle or hold)
-  M->>R: state = recording
-  M->>H: startCapture
-  H-->>M: PCM frames (16 kHz mono)
-  M->>C: push frames
-  C->>C: VAD / endpointing / chunking
-  C->>A: chunks (streaming or batch)
-  A-->>C: partial / final transcript
+  M->>R: state = recording; start command
+  R->>R: getUserMedia + AudioWorklet; PcmBatcher
+  R-->>M: 20 ms PCM batches (16 kHz mono)
+  M->>C: push batches
+  C->>C: buffer and finalize the utterance
+  C->>A: complete utterance (batch, final-only)
+  A-->>C: final transcript
   C->>C: post-processing
   C-->>M: final text + metadata
-  M->>H: injectText
-  H-->>M: injection result
-  M->>R: state = done / error
+  M->>M: clipboard write + Cmd+V
+  M->>R: state = pasting / idle / error
 ```
 
 ### Session state machine
 
-`idle → arming → recording → finalizing → injecting → done`
+`idle → recording → transcribing → pasting → idle` (any state may enter `error`)
 
 Any state can transition to `error` or back to `idle` on cancel. A short or silent
 utterance ends in `idle` with a non-blocking notice, not an error dialog. A helper crash
@@ -280,28 +284,32 @@ audio buffer is still valid.
 1. **Hotkey.** Main registers a toggle hotkey via Electron `globalShortcut`. If
    push-to-talk is required, the helper's event tap provides press/release events with the
    same session API. Registration failure is surfaced during onboarding.
-2. **Capture.** Main calls `startCapture` after checking microphone permission. The helper
-   captures 16 kHz mono PCM in ~20 ms frames, timestamps them, and streams them with
-   backpressure. Capture stops immediately on cancel.
-3. **VAD and chunking.** Core normalizes frames, runs VAD, and endpoints the utterance.
-   Streaming mode emits overlapping chunks (roughly 1–3 s with a small overlap) so the
-   provider can return partial hypotheses; batch mode sends the complete utterance. The
-   chunker must be deterministic and unit-testable with synthetic audio.
-4. **ASR.** The selected provider adapter consumes chunks. Local mode uses the sidecar;
-   cloud mode uses an opt-in HTTPS/WSS endpoint. The adapter reports partials, finals,
-   latency, and typed errors. A fallback provider is allowed only if the user configured
-   one.
+2. **Capture.** Main sends the start command to the renderer. The renderer opens
+   `getUserMedia` with echo cancellation, noise suppression, and AGC disabled, creates a
+   16 kHz `AudioContext`, and runs the `pcm-collector` worklet. The worklet posts Float32
+   quanta with RMS and timestamps; `PcmBatcher` converts them to 20 ms Int16 batches that
+   the renderer sends over the preload bridge. Main buffers accepted batches and stops
+   accepting them once the session leaves recording.
+3. **Finalization.** Core bounds the session buffer and, on stop, assembles the complete
+   utterance. v0.1 is final-only: there is no overlapping-chunk streaming path and no
+   partial hypothesis.
+4. **ASR.** The selected provider adapter consumes the complete utterance. Local mode
+   spawns `transcribe-cli`; cloud mode uses an opt-in HTTPS/WSS endpoint. The adapter
+   returns one final transcript with latency and typed errors; v0.1 providers declare
+   `streaming: false`. A fallback provider is allowed only if the user configured one.
 5. **Post-processing.** Core applies punctuation/casing, filler removal, personal
    vocabulary, and optional LLM polish as separate steps. Each step is cancellable and
    records timing without transcript content. The final text preserves the user's language
    and does not invent content.
-6. **Injection.** Main sends the final text to the helper. The helper first tries an
-   Accessibility insert at the focused range, then falls back to clipboard + synthesized
-   paste with clipboard snapshot/restore. If the field is secure or injection fails, the
-   helper returns a typed failure and main copies the text to the clipboard with a visible
-   notice instead of silently losing it.
-7. **Completion.** The overlay shows done, history is written only if enabled, and metrics
-   (duration, provider, latency, error class) are recorded without audio or transcript.
+6. **Injection.** Main writes the final text to the clipboard and sends a synthesized
+   Cmd+V through System Events (`src/main/injection.ts`). Snapshot/restore and ownership
+   policy lives in `src/core/injection/paste.ts`: the previous clipboard is restored only
+   when it still holds this transcript, and a failed paste leaves the transcript on the
+   clipboard with a permission notice. Accessibility insertion is a later upgrade, not a
+   v0.1 path (ADR-0003).
+7. **Completion.** The overlay shows pasting and then returns to idle; history is written
+   only if enabled, and metrics (duration, provider, latency, error class) are recorded
+   without audio or transcript.
 
 ### Latency targets
 
@@ -330,10 +338,10 @@ injection, auto-update, and OS behavior. This architecture makes that concrete:
 | Post-processing steps | Yes | Displays results |
 | Model catalog/download/checksums | Yes | Shows progress, asks consent |
 | Transcription settings schema | Yes | Persists and renders settings |
-| Microphone capture and device selection | No (port) | Yes (Swift helper) |
+| Microphone capture lifecycle and device selection | Yes (lifecycle; media ports injected) | Yes (renderer Web Audio) |
 | Global hotkeys and permissions | No | Yes (main + helper) |
 | Focused-app/input context | No | Yes (helper) |
-| Text injection | No | Yes (helper) |
+| Text injection | Yes (paste policy, `src/core/injection/paste.ts`) | Yes (clipboard + Cmd+V adapter, main) |
 | Windows, tray, menus, overlay | No | Yes (main + renderer) |
 | History storage | No | Yes (main) |
 | Auto-update, telemetry | No | Yes (main) |
@@ -406,9 +414,9 @@ The Windows port must be a helper swap plus packaging, not a rewrite.
 | Capability | macOS v0.1 | Windows later |
 |---|---|---|
 | Global hotkey | Electron `globalShortcut`; helper event tap for hold | `RegisterHotKey` or a low-level keyboard hook in the Windows helper |
-| Audio capture | `AVAudioEngine`, 16 kHz mono PCM | WASAPI capture in the Windows helper, same frame format |
+| Audio capture | Renderer Web Audio + AudioWorklet, 16 kHz mono PCM (`AVAudioEngine` helper is the fallback) | WASAPI capture in the Windows helper, same frame format |
 | Focused-app context | Accessibility API (`AXUIElement`) | UI Automation / Win32 foreground-window APIs |
-| Text injection | Accessibility insert, clipboard + ⌘V fallback | `SendInput`, UI Automation, or TSF; clipboard + Ctrl+V fallback |
+| Text injection | Clipboard + ⌘V (v0.1); Accessibility insert is a later upgrade | `SendInput`, UI Automation, or TSF; clipboard + Ctrl+V fallback |
 | Secure fields | Secure event input check | UIA password-field detection / secure desktop checks |
 | Permissions | Microphone TCC, Accessibility, Input Monitoring | Microphone privacy settings; no TCC equivalent |
 | Secrets | Keychain | DPAPI / Credential Manager |
@@ -433,12 +441,12 @@ Rules for the port:
 | Failure | Behavior |
 |---|---|
 | Microphone permission denied | Onboarding explains why and links to System Settings; no session starts; no crash |
-| Accessibility/Input Monitoring denied | Dictation still records and transcribes; injection falls back to clipboard copy with a notice |
-| Helper crash or hang | Kill and restart the helper, cancel the session, release the mic, show retry if audio is still valid |
+| Accessibility/Input Monitoring denied | Dictation still records and transcribes; the paste fails with a permission notice and the transcript stays on the clipboard |
+| Helper crash or hang | Kill and restart the helper for OS operations; the renderer stops capture and releases the mic; show retry if audio is still valid |
 | ASR timeout or network failure | Keep the buffered audio, offer retry, optionally fall back to a configured provider; never silently drop the transcript |
 | Local model missing or corrupt | Prompt to download/repair; verify checksums before use |
 | Short or silent utterance | Return to idle with a non-blocking notice; do not send empty text to the target app |
-| Secure input field focused | Do not synthesize keystrokes; copy to clipboard with a warning |
+| Secure input field focused | Not detected in v0.1; the clipboard + Cmd+V path still attempts the paste. Secure-input detection is a later hardening item |
 | Injection partially succeeds | Report the failure; do not paste a second copy automatically |
 | App quits mid-session | Release the mic, discard the buffer, and do not write a partial history entry |
 
@@ -490,12 +498,12 @@ architecture shape.
 
 1. **Core hosting:** when does the pipeline move to `utilityProcess` or a worker thread?
    Decide from measured main-thread contention, not speculation.
-2. **Audio capture path:** validate helper capture versus renderer `getUserMedia` with a
-   latency spike before implementation locks in.
-3. **Local ASR runtime:** whisper.cpp sidecar versus sherpa-onnx versus another engine;
-   separate card, with quality and latency measurements.
-4. **Streaming versus batch ASR:** which providers support partial hypotheses, and what
-   the UX should show while waiting.
+2. **Audio capture fallback:** the renderer `getUserMedia` path is shipped; the latency and
+   quality spike, and the helper `AVAudioEngine` fallback comparison, remain open.
+3. **Local ASR runtime:** resolved for v0.1 to the pinned `transcribe.cpp` v0.4.1 CLI;
+   whisper.cpp and sherpa-onnx remain fallback comparators for a later spike.
+4. **Partials in v0.2:** v0.1 is final-only (`streaming: false`); which provider adds
+   partial hypotheses, and what the UX should show while waiting, remains open.
 5. **Injection strategy:** how often Accessibility insert works across target apps versus
    clipboard fallback; build a compatibility matrix.
 6. **Minimum macOS version:** constrained by Electron 45 support and the Swift APIs used.

@@ -200,6 +200,28 @@ describe('transcribe-cli runner', () => {
     expect(unlinked).toHaveLength(1)
   })
 
+  it('unlinks the temp WAV when the write fails', async () => {
+    const { runner, unlinked } = makeRunner({
+      writeFile: async () => {
+        throw new Error('ENOSPC')
+      }
+    })
+
+    await expect(runner.run(pcmInput(), {})).rejects.toThrow('ENOSPC')
+    expect(unlinked).toEqual([path.join(dir, 'utterance-0.wav')])
+  })
+
+  it('unlinks the temp WAV when spawn throws synchronously', async () => {
+    const { runner, unlinked } = makeRunner({
+      spawn: () => {
+        throw new Error('spawn EPERM')
+      }
+    })
+
+    await expect(runner.run(pcmInput(), {})).rejects.toThrow('spawn EPERM')
+    expect(unlinked).toEqual([path.join(dir, 'utterance-0.wav')])
+  })
+
   it('reports health from the runtime and model files', async () => {
     const ready = makeRunner({ access: async () => {} }).runner
     expect((await ready.health()).status).toBe('ready')

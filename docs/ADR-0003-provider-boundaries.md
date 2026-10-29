@@ -106,7 +106,9 @@ interface PcmFrame {
 
 - Capture owns device selection, permission prompts, route changes, echo
   cancellation/noise suppression/AGC policy, and framing. It delivers device-native PCM;
-  `src/core` owns channel mixing and resampling to 16 kHz.
+  `src/core` owns channel mixing and resampling to 16 kHz. The shipped renderer path does
+  not follow this split yet; it is an open exception, not a ratified change (see Open
+  questions item 8).
 - Capture never knows which ASR model is running.
 - Adapters: `RendererAudioWorkletCapture`, `SwiftAVAudioEngineCapture`,
   `WindowsWasapiCapture` (later). The renderer adapter uses a hidden recorder window,
@@ -460,6 +462,16 @@ requirement.
 5. Model registry signing/hosting and offline-pack verification.
 6. Windows helper contract parity (WASAPI, UIA, clipboard, global hotkeys).
 7. Whether capture and ASR should share a process to avoid an extra copy of PCM.
+8. **Renderer-side 16 kHz resampling exception (open, not ratified).** The shipped renderer
+   path creates `AudioContext({ sampleRate: 16000, latencyHint: "interactive" })`
+   (`src/renderer/src/App.tsx`, `createCaptureController`) and rejects any context whose
+   `sampleRate` is not 16,000 (`src/core/capture/capture-controller.ts`, `start()`). That
+   means Chromium resamples device audio, contrary to the `CaptureSource` decision above
+   that capture delivers device-native PCM and `src/core` resamples to 16 kHz. The pure
+   `PcmBatcher` (`src/core/capture/pcm-batcher.ts`) only clamps and converts Float32 quanta
+   to Int16 20 ms batches; it does not resample. This is recorded as an open exception, not
+   ratified: the docs owner decides whether to amend the `CaptureSource` contract, move
+   resampling into core, or accept the renderer path.
 
 ## Decision status
 

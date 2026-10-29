@@ -12,7 +12,8 @@ export interface RecordingSummary {
 }
 
 /** Providers a user may select in the app. Fake is test-only. */
-export type SelectableAsrProviderId = 'qwen3' | 'sensevoice'
+export const SELECTABLE_ASR_PROVIDER_IDS = ['qwen3', 'sensevoice'] as const
+export type SelectableAsrProviderId = (typeof SELECTABLE_ASR_PROVIDER_IDS)[number]
 
 /** Capabilities come from the provider, not from a provider-id lookup. */
 export interface ProviderOption {

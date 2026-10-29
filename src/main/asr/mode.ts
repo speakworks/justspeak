@@ -1,4 +1,7 @@
-import type { SelectableAsrProviderId } from '../../shared/ipc'
+import {
+  SELECTABLE_ASR_PROVIDER_IDS,
+  type SelectableAsrProviderId
+} from '../../shared/ipc'
 
 /** `fake` is a test escape hatch; the other two are user-selectable providers. */
 export type AsrMode = SelectableAsrProviderId | 'fake'
@@ -8,7 +11,10 @@ export type AsrModeResult = { ok: true; mode: AsrMode } | { ok: false; message: 
 export const DEFAULT_ASR_MODE: SelectableAsrProviderId = 'qwen3'
 
 export function isSelectableAsrMode(value: unknown): value is SelectableAsrProviderId {
-  return value === 'qwen3' || value === 'sensevoice'
+  return (
+    typeof value === 'string' &&
+    (SELECTABLE_ASR_PROVIDER_IDS as readonly string[]).includes(value)
+  )
 }
 
 const ACCEPTED = 'qwen3（默认）、sensevoice、fake（测试）'

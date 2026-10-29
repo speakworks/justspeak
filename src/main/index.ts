@@ -37,6 +37,7 @@ import type {
   ModelInfo,
   ProviderOption,
   ResolvedTheme,
+  SelectableAsrProviderId,
   ThemePreference,
   TranscriptEvent
 } from '../shared/ipc'
@@ -48,9 +49,9 @@ import {
   resolveAsrMode,
   type AsrMode
 } from './asr/mode'
-import { resolveAsrPaths } from './asr/paths'
 import { ProviderPreferenceStore } from './asr/provider-preference'
 import { buildProvider } from './asr/providers'
+import { downloadFailureHint } from './asr/download-hint'
 import { ElectronGlobalShortcutSource } from './hotkey-source'
 import { pasteText } from './injection'
 import { isTrustedSender } from './ipc-sender'
@@ -61,10 +62,10 @@ import { VocabularyStore } from './vocabulary-store'
 const DARK_BACKGROUND = '#0b0f14'
 const LIGHT_BACKGROUND = '#f6f5f2'
 
-const PROVIDER_OPTIONS: ProviderOption[] = [
-  { id: 'qwen3', label: 'Qwen3-ASR 0.6B', capabilities: QWEN3_CAPABILITIES },
-  { id: 'sensevoice', label: 'SenseVoice Small', capabilities: SENSEVOICE_CAPABILITIES }
-]
+const PROVIDER_OPTIONS: Record<SelectableAsrProviderId, ProviderOption> = {
+  qwen3: { id: 'qwen3', label: 'Qwen3-ASR 0.6B', capabilities: QWEN3_CAPABILITIES },
+  sensevoice: { id: 'sensevoice', label: 'SenseVoice Small', capabilities: SENSEVOICE_CAPABILITIES }
+}
 
 let mainWindow: BrowserWindow | null = null
 let rendererReady = false
@@ -205,7 +206,7 @@ function modelInfoFor(entry: ModelCatalogEntry, provider: AsrProvider): ModelInf
 
 function asrSelection(): AsrProviderSelection | undefined {
   if (sessionMode === 'fake') return undefined
-  return { id: sessionMode, options: PROVIDER_OPTIONS }
+  return { id: sessionMode, options: Object.values(PROVIDER_OPTIONS) }
 }
 
 function currentStatus(): AppStatus {
@@ -282,7 +283,7 @@ async function initializeProvider(): Promise<void> {
     return
   }
 
-  const { model, descriptor, paths, provider } = built
+  const { mode, model, descriptor, paths, provider } = built
 
   if (!existsSync(paths.cliPath)) {
     session = makeSession(new UnavailableAsrProvider(), false)
@@ -321,7 +322,7 @@ async function initializeProvider(): Promise<void> {
       failSession(
         `模型下载失败：${error instanceof Error ? error.message : String(error)}。` +
           `来源：${model.sourceUrl}；许可证：${model.license}。` +
-          '可运行 pnpm setup:asr 手动准备 Qwen3 模型。'
+          downloadFailureHint(mode, model.name, paths.modelPath)
       )
       return
     }

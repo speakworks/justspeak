@@ -28,9 +28,13 @@ Every ASR adapter SHALL expose an `id`, truthful `capabilities`, `prepare`, `tra
 
 #### Scenario: Silent or empty audio
 
-- **WHEN** the Qwen3 or SenseVoice provider receives audio that contains no recognizable speech
+- **WHEN** the SenseVoice provider receives non-empty audio whose normalized RMS is below the documented silence threshold
 - **THEN** it returns a successful result with empty text and no invented text
-- **AND** the SenseVoice result carries a `NO_SPEECH` warning and the SenseVoice runtime is not spawned
+- **AND** the SenseVoice result carries a `NO_SPEECH` warning and the runtime is not spawned
+- **AND** audio at or above the threshold is sent to the model; gating every speechless input is deferred to the VAD change
+- **WHEN** the Qwen3 provider receives digital silence
+- **THEN** it returns empty text without inventing a token
+- **AND** an empty capture follows the existing empty-input path, where the runner decides the result
 - **AND** the caller may surface an empty-transcript notice
 
 #### Scenario: Digital silence does not become pasted text

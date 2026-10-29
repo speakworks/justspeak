@@ -28,6 +28,24 @@ export type BuiltProvider =
     }
   | { ok: false; message: string }
 
+interface ProviderFactoryInput {
+  model: AsrModelDescriptor
+  runner: TranscribeCliRunner
+}
+
+/**
+ * Keyed by `SelectableAsrProviderId`, so adding an id to that union without
+ * adding a factory is a type error rather than a silent fallback to another
+ * provider at runtime.
+ */
+export const ASR_PROVIDER_FACTORIES: Record<
+  SelectableAsrProviderId,
+  (input: ProviderFactoryInput) => AsrProvider
+> = {
+  qwen3: ({ model, runner }) => new Qwen3AsrProvider({ model, runner }),
+  sensevoice: ({ model, runner }) => new SenseVoiceAsrProvider({ model, runner })
+}
+
 /**
  * One construction point for every provider. Callers pass the resolved mode
  * and never branch on a provider id themselves.
@@ -59,10 +77,7 @@ export function buildProvider(options: BuildProviderOptions): BuiltProvider {
     label: model.name
   })
 
-  const provider =
-    providerId === 'qwen3'
-      ? new Qwen3AsrProvider({ model: descriptor, runner })
-      : new SenseVoiceAsrProvider({ model: descriptor, runner })
+  const provider = ASR_PROVIDER_FACTORIES[providerId]({ model: descriptor, runner })
 
   return { ok: true, mode, provider, model, descriptor, paths }
 }

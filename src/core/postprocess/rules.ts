@@ -40,6 +40,8 @@ function isMaskStart(char: string | undefined): boolean {
 export interface MaskedText {
   masked: string
   restore: (value: string) => string
+  /** Resolve a placeholder at the start of `value` to its original text. */
+  resolveLeading: (value: string) => string | undefined
 }
 
 /**
@@ -72,7 +74,9 @@ function maskNonce(text: string, markers: MaskMarkers, originals: readonly strin
  */
 export function maskSpans(text: string, spans: readonly Span[], layer: MaskLayer): MaskedText {
   const merged = mergeSpans(spans)
-  if (merged.length === 0) return { masked: text, restore: (value) => value }
+  if (merged.length === 0) {
+    return { masked: text, restore: (value) => value, resolveLeading: () => undefined }
+  }
 
   const markers = MASK_MARKERS[layer]
   const originals = merged.map((span) => text.slice(span.start, span.end))
@@ -89,10 +93,15 @@ export function maskSpans(text: string, spans: readonly Span[], layer: MaskLayer
   masked += text.slice(cursor)
 
   const pattern = new RegExp(`${markers.start}${nonce}\\.(\\d+)${markers.end}`, 'g')
+  const leadingPattern = new RegExp(`^${markers.start}${nonce}\\.(\\d+)${markers.end}`)
   return {
     masked,
     restore: (value) =>
-      value.replace(pattern, (placeholder, index: string) => originals[Number(index)] ?? placeholder)
+      value.replace(pattern, (placeholder, index: string) => originals[Number(index)] ?? placeholder),
+    resolveLeading: (value) => {
+      const match = leadingPattern.exec(value)
+      return match ? originals[Number(match[1])] : undefined
+    }
   }
 }
 
@@ -143,10 +152,11 @@ export function findCodeSpans(text: string): Span[] {
 }
 
 // Punctuation runs are atomic: a width conversion or a per-character collapse
-// must not split `...` into `。.`. A lone `…` is included because NFKC would
-// otherwise turn it into three dots and lose the original character.
+// must not split `...` into `。.`. The ellipsis/leader forms are included even
+// when single because NFKC expands every one of them (…, ‥, ︙, ︰).
+const ELLIPSIS_FORMS = new Set(['…', '‥', '︙', '︰'])
 const PUNCTUATION_RUN_CHARS = new Set([
-  '.', '…', '!', '?', ',', ';', ':', '。', '，', '！', '？', '；', '：', '、'
+  '.', '…', '‥', '︙', '︰', '!', '?', ',', ';', ':', '。', '，', '！', '？', '；', '：', '、'
 ])
 
 export function findPunctuationRunSpans(text: string): Span[] {
@@ -160,7 +170,8 @@ export function findPunctuationRunSpans(text: string): Span[] {
     const start = index
     while (index < text.length && PUNCTUATION_RUN_CHARS.has(text[index] ?? '')) index += 1
     const run = text.slice(start, index)
-    if (run.includes('…') || run.length >= 2) spans.push({ start, end: index })
+    const hasEllipsis = [...run].some((char) => ELLIPSIS_FORMS.has(char))
+    if (hasEllipsis || run.length >= 2) spans.push({ start, end: index })
   }
   return spans
 }
@@ -255,6 +266,16 @@ export function normalizeSpacing(text: string): string {
     .trim()
 }
 
+/**
+ * Narrow pre-mask spacing cleanup: punctuation runs are hidden before the
+ * full spacing pass, so remove the space before their first mark while it is
+ * still visible. The rest of the spacing normalisation stays in `normalizeText`
+ * so full-width punctuation keeps its established behaviour.
+ */
+export function removeSpacesBeforePunctuation(text: string): string {
+  return text.replace(/\s+([,.;:!?，。；：！？、…‥︙︰])/g, '$1')
+}
+
 export function normalizeText(text: string): string {
   // Node ships NFKC; no dependency is needed for Unicode normalisation.
   return normalizeSpacing(normalizePunctuation(text.normalize('NFKC')))
@@ -265,14 +286,14 @@ export function normalizeText(text: string): string {
 /* ------------------------------------------------------------------ */
 
 const SEPARATORS = new Set([
-  ',', '，', ';', '；', ':', '：', '.', '。', '!', '！', '?', '？', '、', '…'
+  ',', '，', ';', '；', ':', '：', '.', '。', '!', '！', '?', '？', '、', '…', '‥', '︙', '︰'
 ])
 
 const COMMA_SEPARATORS = new Set([',', '，', ';', '；', ':', '：'])
 
 const CJK_SEPARATORS = new Set(['，', '。', '；', '：', '！', '？', '、'])
 
-const SENTENCE_SEPARATORS = new Set(['.', '。', '!', '！', '?', '？', '…'])
+const SENTENCE_SEPARATORS = new Set(['.', '。', '!', '！', '?', '？', '…', '‥', '︙', '︰'])
 
 // Characters that can precede the first word without starting it. Quotes and
 // brackets are transparent for casing and for "leading removal" detection; a
@@ -485,13 +506,35 @@ function joinerBetween(text: string, leftIndex: number, rightIndex: number): str
   return left !== undefined && right !== undefined && HAN.test(left) && HAN.test(right) ? '' : ' '
 }
 
-/** Separate a Latin tail that followed a removed separator run. */
-function separateTail(tail: string): string {
-  const first = tail[0]
-  return first !== undefined && /[A-Za-z0-9]/.test(first) ? ` ${tail}` : tail
+const CJK_TEXT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
+const CJK_OPENING = new Set(['「', '『', '《', '〈', '【', '（'])
+
+/**
+ * Separate a tail that followed a removed separator run. The boundary is
+ * decided from the first *visible* character, resolving protect/code masks
+ * when the tail starts with a placeholder. CJK text and CJK punctuation take
+ * no space; a non-CJK word, digit, or opening quote/bracket takes one.
+ */
+function separateTail(
+  tail: string,
+  firstVisible?: (value: string) => string | undefined
+): string {
+  if (tail.length === 0) return tail
+  const rawFirst = tail[0]
+  if (rawFirst !== undefined && isSpace(rawFirst)) return tail
+  const visible = firstVisible?.(tail) ?? rawFirst ?? ''
+  if (visible === '') return tail
+  if (CJK_TEXT.test(visible)) return tail
+  if (SEPARATORS.has(visible)) return tail
+  if (CJK_OPENING.has(visible)) return tail
+  return ` ${tail}`
 }
 
-function removeFiller(text: string, match: FillerMatch): string {
+function removeFiller(
+  text: string,
+  match: FillerMatch,
+  firstVisible?: (value: string) => string | undefined
+): string {
   const left = previousNonSpace(text, match.start)
   const right = nextNonSpace(text, match.end)
 
@@ -527,7 +570,7 @@ function removeFiller(text: string, match: FillerMatch): string {
     while (start > 0 && isSpace(text[start - 1])) start -= 1
     const runEnd = separatorRunEnd(text, right)
     if (left >= 0 && SENTENCE_SEPARATORS.has(text[left] ?? '')) {
-      return text.slice(0, start) + separateTail(text.slice(runEnd))
+      return text.slice(0, start) + separateTail(text.slice(runEnd), firstVisible)
     }
     // The filler followed a word: keep one mark to terminate the sentence and
     // the entire tail after the run. Dropping the tail here would lose the
@@ -535,7 +578,7 @@ function removeFiller(text: string, match: FillerMatch): string {
     return (
       text.slice(0, start) +
       text.slice(right, right + 1) +
-      separateTail(text.slice(runEnd))
+      separateTail(text.slice(runEnd), firstVisible)
     )
   }
 
@@ -553,7 +596,10 @@ function removeFiller(text: string, match: FillerMatch): string {
   return text.slice(0, start) + text.slice(end)
 }
 
-export function removeFillers(text: string): RuleResult {
+export function removeFillers(
+  text: string,
+  firstVisible?: (value: string) => string | undefined
+): RuleResult {
   let output = text
   let removedLeading = false
   // Matches are disjoint and processed right-to-left, so every earlier offset
@@ -561,7 +607,7 @@ export function removeFillers(text: string): RuleResult {
   const matches = fillerMatches(output).sort((a, b) => b.start - a.start)
   for (const match of matches) {
     if (isLeadingPosition(output, match.start)) removedLeading = true
-    output = removeFiller(output, match)
+    output = removeFiller(output, match, firstVisible)
   }
   return { text: normalizeSpacing(output), removedLeading }
 }

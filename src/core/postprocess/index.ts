@@ -7,7 +7,9 @@ import {
   maskSpans,
   normalizeText,
   removeFillers,
-  restoreSentenceCase
+  removeSpacesBeforePunctuation,
+  restoreSentenceCase,
+  type MaskedText
 } from './rules'
 import {
   applyVocabulary,
@@ -54,6 +56,24 @@ function record(
   if (before !== after) applied.push(rule)
 }
 
+/** First visible character, resolving nested protect/code placeholders. */
+function firstVisibleCharacter(
+  value: string,
+  masks: readonly MaskedText[]
+): string | undefined {
+  let current = value
+  for (let depth = 0; depth < 8; depth += 1) {
+    let resolved: string | undefined
+    for (const mask of masks) {
+      resolved = mask.resolveLeading(current)
+      if (resolved !== undefined) break
+    }
+    if (resolved === undefined) return current[0]
+    current = resolved
+  }
+  return current[0]
+}
+
 /**
  * The deterministic text-cleaning stage. It is pure: text in, text plus the
  * list of rules that changed it out. No Electron, DOM, filesystem, network, or
@@ -74,10 +94,13 @@ export function postprocess(text: string, options: PostprocessOptions = {}): Pos
     protect: options.vocabulary?.protect ?? []
   }
   const applied: PostprocessRule[] = []
-  const threshold = Math.max(
-    DEFAULT_REPETITION_THRESHOLD,
-    Math.min(10, Math.floor(options.repetitionThreshold ?? DEFAULT_REPETITION_THRESHOLD))
-  )
+  const requestedThreshold = options.repetitionThreshold
+  // A non-finite value would poison Math.min/Math.max into NaN and silently
+  // disable collapse; fall back to the documented floor instead.
+  const threshold =
+    typeof requestedThreshold === 'number' && Number.isFinite(requestedThreshold)
+      ? Math.max(DEFAULT_REPETITION_THRESHOLD, Math.min(10, Math.floor(requestedThreshold)))
+      : DEFAULT_REPETITION_THRESHOLD
 
   let working = text
   if (ruleEnabled(options, 'vocabulary') && vocabulary.replace.length > 0) {
@@ -98,25 +121,36 @@ export function postprocess(text: string, options: PostprocessOptions = {}): Pos
     'protect'
   )
   const codeMask = maskSpans(protectMask.masked, findCodeSpans(protectMask.masked), 'code')
+
+  // Remove stray spacing before punctuation while the runs are still visible;
+  // once masked, the spacing rule can no longer see their first mark.
+  let normalizeChanged = false
+  if (ruleEnabled(options, 'normalize')) {
+    const pre = removeSpacesBeforePunctuation(codeMask.masked)
+    normalizeChanged = pre !== codeMask.masked
+    working = pre
+  } else {
+    working = codeMask.masked
+  }
+
   // Punctuation runs are masked before NFKC so `……` is not expanded and the
   // first dot of `...` cannot become `。`; restore them before fillers so the
   // separator logic can still consume a run whole.
-  const punctuationMask = maskSpans(
-    codeMask.masked,
-    findPunctuationRunSpans(codeMask.masked),
-    'punctuation'
-  )
+  const punctuationMask = maskSpans(working, findPunctuationRunSpans(working), 'punctuation')
   working = punctuationMask.masked
 
   let removedLeading = false
 
   if (ruleEnabled(options, 'normalize')) {
     const next = normalizeText(working)
-    record(applied, 'normalize', working, next)
+    normalizeChanged ||= next !== working
     working = next
   }
+  if (normalizeChanged) applied.push('normalize')
 
   working = punctuationMask.restore(working)
+  const firstVisible = (value: string): string | undefined =>
+    firstVisibleCharacter(value, [codeMask, protectMask])
 
   if (ruleEnabled(options, 'self-correction')) {
     const result = applySelfCorrections(working)
@@ -126,7 +160,7 @@ export function postprocess(text: string, options: PostprocessOptions = {}): Pos
   }
 
   if (ruleEnabled(options, 'filler')) {
-    const result = removeFillers(working)
+    const result = removeFillers(working, firstVisible)
     record(applied, 'filler', working, result.text)
     removedLeading ||= result.removedLeading
     working = result.text

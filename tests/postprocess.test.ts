@@ -53,6 +53,12 @@ describe('postprocess: normalisation', () => {
     expect(clean('比如说 e.g. 这样，很好。')).toBe('比如说 e.g. 这样，很好。')
   })
 
+  it('removes stray spacing before a punctuation run', () => {
+    expect(
+      clean('hello ... there', { rules: { 'self-correction': false, filler: false } })
+    ).toBe('hello... there')
+  })
+
   it('reports normalisation as the applied rule', () => {
     expectCase(' 你好 ', '你好', ['normalize'])
   })
@@ -157,6 +163,12 @@ describe('postprocess: repetition collapse', () => {
     expect(clean('我我我走了。', { repetitionThreshold: 2 })).toBe('我走了。')
   })
 
+  it('ignores non-finite thresholds', () => {
+    expect(clean('我我走了。', { repetitionThreshold: NaN })).toBe('我我走了。')
+    expect(clean('我我我走了。', { repetitionThreshold: NaN })).toBe('我走了。')
+    expect(clean('我我走了。', { repetitionThreshold: Infinity })).toBe('我我走了。')
+  })
+
   it('honours the configurable threshold', () => {
     expect(clean('我我走了。', { repetitionThreshold: 3 })).toBe('我我走了。')
     expect(clean('我我我走了。', { repetitionThreshold: 3 })).toBe('我走了。')
@@ -173,6 +185,9 @@ describe('postprocess: punctuation runs', () => {
     ['他说……', '他说……'],
     ['他说...', '他说...'],
     ['他说…', '他说…'],
+    ['他说‥然后走了', '他说‥然后走了'],
+    ['他说︙然后走了', '他说︙然后走了'],
+    ['等一下︰', '等一下︰'],
     ['等一下……', '等一下……'],
     ['真的吗?!', '真的吗?!'],
     ['Wait...', 'Wait...'],
@@ -390,10 +405,22 @@ describe('postprocess: sentence-initial casing', () => {
     expect(clean(input)).toBe(expected)
   })
 
-  it('keeps the tail after a sentence-final filler with a protected term', () => {
+  it('keeps the tail and its boundary when it starts with a protected term', () => {
+    // The tail starts with the mask placeholder; the boundary must come from
+    // the original term, not from the placeholder character.
     expect(
-      clean('I went um. Then JustSpeak shipped.', { vocabulary: { protect: ['JustSpeak'] } })
-    ).toBe('I went. Then JustSpeak shipped.')
+      clean('We go um...JustSpeak shipped.', { vocabulary: { protect: ['JustSpeak'] } })
+    ).toBe('We go. JustSpeak shipped.')
+  })
+
+  it.each([
+    ['We go um...https://example.com/x', 'We go. https://example.com/x'],
+    ['We go um...v1.2.3', 'We go. v1.2.3'],
+    ['We go um...Αθήνα', 'We go. Αθήνα'],
+    ['We go um..."Hello"', 'We go. "Hello"'],
+    ['我们走 um。然后回家。', '我们走。然后回家。']
+  ])('separates a non-CJK tail but not a CJK tail in %j', (input, expected) => {
+    expect(clean(input)).toBe(expected)
   })
 
   it('can be disabled', () => {

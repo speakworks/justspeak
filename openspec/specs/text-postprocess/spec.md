@@ -27,7 +27,7 @@ Defines the deterministic transcript-cleaning stage that runs between the ASR re
 
 ### Requirement: Normalisation SHALL be conservative
 
-The stage SHALL apply Unicode NFKC, collapse repeated whitespace, trim, remove stray spacing before punctuation, and convert punctuation to the dominant script. It SHALL NOT edit code-like tokens, including backtick spans, URLs, emails, paths, versions, numbers with units, environment variables, CLI flags, code identifiers, and bare multi-word commands such as `pnpm test`, `npm run build`, and `git commit`. A punctuation run of two or more marks, and every ellipsis character, SHALL be treated as an atomic token: it SHALL NOT be width-converted, split, or otherwise edited, and SHALL survive normalisation exactly as spoken.
+The stage SHALL apply Unicode NFKC, collapse repeated whitespace, trim, remove stray spacing before punctuation, and convert punctuation to the dominant script. It SHALL NOT edit code-like tokens, including backtick spans, URLs, emails, paths, versions, numbers with units, environment variables, CLI flags, code identifiers, and bare multi-word commands such as `pnpm test`, `npm run build`, and `git commit`. A punctuation run of two or more marks, and every ellipsis/leader form (`…`, `‥`, `︙`, `︰`), SHALL be treated as an atomic token: it SHALL NOT be width-converted, split, or otherwise edited, and SHALL survive normalisation exactly as spoken. Stray whitespace before the first mark of a run SHALL be removed.
 
 #### Scenario: Full-width input
 
@@ -63,14 +63,25 @@ The stage SHALL apply Unicode NFKC, collapse repeated whitespace, trim, remove s
 - **THEN** the text is unchanged
 - **AND** no `。.` or other split run appears
 
+#### Scenario: Ellipsis and leader forms
+
+- **WHEN** the transcript is `他说‥然后走了`, `他说︙然后走了`, or `等一下︰`
+- **THEN** the text is unchanged
+- **AND** no `。.` or `。..` appears
+
 #### Scenario: Mixed punctuation run
 
 - **WHEN** the transcript is `真的吗?!`
 - **THEN** the run is unchanged and is not width-converted
 
+#### Scenario: Stray spacing before a run
+
+- **WHEN** the transcript is `hello ... there`
+- **THEN** the output is `hello... there`
+
 ### Requirement: Filler removal SHALL avoid real words
 
-The stage SHALL remove the standalone Chinese fillers `嗯`, `呃`, `啊`, `那个`, and `就是说`, and the English fillers `um`, `uh`, and `er`, when they are set off from surrounding words. It SHALL remove `like` and `you know` only when punctuation or the start/end of the text sets them off. It SHALL NOT delete a filler that is part of a real word or phrase. When a leading filler is removed, the stage SHALL remove the entire adjacent separator run (for example `...`, `?!`, or `……`). When a sentence-final filler is removed, the stage SHALL remove its adjacent separator run and SHALL keep at most the single mark that terminated the preceding sentence, or one mark when the filler followed a word.
+The stage SHALL remove the standalone Chinese fillers `嗯`, `呃`, `啊`, `那个`, and `就是说`, and the English fillers `um`, `uh`, and `er`, when they are set off from surrounding words. It SHALL remove `like` and `you know` only when punctuation or the start/end of the text sets them off. It SHALL NOT delete a filler that is part of a real word or phrase. When a leading filler is removed, the stage SHALL remove the entire adjacent separator run (for example `...`, `?!`, or `……`). When a sentence-final filler is removed, the stage SHALL remove its adjacent separator run, SHALL keep at most the single mark that terminated the preceding sentence or one mark when the filler followed a word, and SHALL retain all text after the consumed run rather than truncating the transcript. A separating space SHALL be inserted when the retained text begins a non-CJK word, digit, or opening quote/bracket, and SHALL NOT be inserted before CJK text or CJK punctuation.
 
 #### Scenario: Chinese filler
 
@@ -115,9 +126,27 @@ The stage SHALL remove the standalone Chinese fillers `嗯`, `呃`, `啊`, `那�
 - **THEN** the output is `We should go.` or `We go.`
 - **AND** at most one terminating mark remains
 
+#### Scenario: Tail after a sentence-final filler
+
+- **WHEN** the transcript is `I went um. Then home.` or `I went um. Then home. And more.`
+- **THEN** the output is `I went. Then home.` or `I went. Then home. And more.`
+- **AND** no following text is dropped
+
+#### Scenario: Protected tail
+
+- **WHEN** the transcript is `We go um...JustSpeak shipped.` and `JustSpeak` is protected
+- **THEN** the output is `We go. JustSpeak shipped.`
+- **AND** the boundary is decided from the protected term, not the placeholder
+
+#### Scenario: CJK tail
+
+- **WHEN** the transcript is `我们走 um。然后回家。`
+- **THEN** the output is `我们走。然后回家。`
+- **AND** no space is inserted before the CJK tail
+
 ### Requirement: Repetition collapse SHALL be bounded
 
-The stage SHALL collapse an immediately repeated Latin word at two occurrences (`the the` to `the`) and an immediately repeated Han character when the run reaches the configurable Han threshold. The Han threshold SHALL default to 3 and SHALL have a floor of 3: a configured value below 3 SHALL be ignored and the default SHALL apply. The stage SHALL preserve any two-character Chinese reduplication at the default threshold (`默默`, `冉冉`, `匆匆`, `津津`, `欣欣`, and other productive forms), laughter (`哈哈哈`), grammatical English doubles (`had had`, `that that`), and all punctuation runs; only filler or self-correction removal may consume a punctuation run. The curated keep list SHALL be retained for a future lower floor but is not reachable through configuration today.
+The stage SHALL collapse an immediately repeated Latin word at two occurrences (`the the` to `the`) and an immediately repeated Han character when the run reaches the configurable Han threshold. The Han threshold SHALL default to 3 and SHALL have a floor of 3: a configured value below 3 SHALL be ignored and the default SHALL apply, and a non-finite value SHALL be ignored and the default SHALL apply. The stage SHALL preserve any two-character Chinese reduplication at the default threshold (`默默`, `冉冉`, `匆匆`, `津津`, `欣欣`, and other productive forms), laughter (`哈哈哈`), grammatical English doubles (`had had`, `that that`), and all punctuation runs; only filler or self-correction removal may consume a punctuation run. The curated keep list SHALL be retained for a future lower floor but is not reachable through configuration today.
 
 #### Scenario: Stutter
 
@@ -144,6 +173,12 @@ The stage SHALL collapse an immediately repeated Latin word at two occurrences (
 
 - **WHEN** `repetitionThreshold` is 2
 - **THEN** it is raised to the floor of 3
+- **AND** `我我走了。` is unchanged and `我我我走了。` becomes `我走了。`
+
+#### Scenario: Non-finite threshold
+
+- **WHEN** `repetitionThreshold` is `NaN` or `Infinity`
+- **THEN** the default floor of 3 applies
 - **AND** `我我走了。` is unchanged and `我我我走了。` becomes `我走了。`
 
 #### Scenario: Punctuation runs survive repetition

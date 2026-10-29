@@ -13,8 +13,16 @@ import {
   joinTranscripts
 } from '../src/core/audio/segmented-provider'
 import { SessionController } from '../src/core/session/session-controller'
+import { FakeAsrProvider } from '../src/core/asr/fake-provider'
+import { runProviderContract, TEST_MODEL } from './provider-contract'
 import type { RecordingSummary, TranscriptEvent } from '../src/shared/ipc'
 import { samplesFor, signalPcm } from './audio-signal'
+
+runProviderContract({
+  name: 'segmented (vad)',
+  create: () => createTranscriptionProvider(new FakeAsrProvider({ delayMs: 0 }), 'vad'),
+  model: TEST_MODEL
+})
 
 const SPEECH_A = 0.1
 const SPEECH_B = 0.2

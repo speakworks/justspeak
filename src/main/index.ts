@@ -31,6 +31,7 @@ import { registerHotkeyWithFallback } from '../core/hotkey/registration'
 import type { HotkeySource } from '../core/hotkey/types'
 import { postprocess, type PostprocessOptions } from '../core/postprocess'
 import { SessionController } from '../core/session/session-controller'
+import { consumePendingNotice } from '../core/session/state-notice'
 import { isThemePreference } from '../core/theme/theme'
 import type {
   AppStatus,
@@ -140,12 +141,9 @@ function preloadPath(): string {
 }
 
 function sendState(next: AppStatus['state'], message?: string): void {
-  if (next === 'idle' || next === 'error') {
-    if (pendingSegmentFailure && next === 'idle') message = pendingSegmentFailure
-    // Any terminal state consumes the notice so it cannot leak into a later
-    // session; an error already carries a more urgent message of its own.
-    pendingSegmentFailure = undefined
-  }
+  const notice = consumePendingNotice(next, message, pendingSegmentFailure)
+  message = notice.message
+  pendingSegmentFailure = notice.pending
   console.log('[state]', next, message ?? '')
   mainWindow?.webContents.send('state', next, message)
 }

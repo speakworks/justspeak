@@ -243,6 +243,16 @@ export class SegmentedAsrProvider implements AsrProvider {
   ): Promise<ProviderResult<TranscriptionResult>> {
     const startedAt = this.now()
 
+    // ADR-0003 cancellation and max-audio are part of the frozen provider
+    // contract: a wrapper around another adapter must honour them too, before
+    // any segmentation work or inner provider call.
+    if (options.signal?.aborted) {
+      return {
+        ok: false,
+        error: { code: 'CANCELLED', message: '转写已取消。', retryable: false }
+      }
+    }
+
     if (
       !(input.pcm instanceof Int16Array) ||
       input.sampleRate !== 16000 ||
@@ -253,6 +263,19 @@ export class SegmentedAsrProvider implements AsrProvider {
         error: {
           code: 'INFERENCE_FAILED',
           message: 'Audio must be 16 kHz mono PCM16',
+          retryable: false
+        }
+      }
+    }
+
+    const declaredMs = Number.isFinite(input.durationMs) ? input.durationMs : 0
+    const actualMs = (input.pcm.length / input.sampleRate) * 1000
+    if (Math.max(declaredMs, actualMs) > this.capabilities.maxAudioMs) {
+      return {
+        ok: false,
+        error: {
+          code: 'AUDIO_TOO_LONG',
+          message: `音频超过 ${Math.round(this.capabilities.maxAudioMs / 1000)} 秒上限。`,
           retryable: false
         }
       }
@@ -294,10 +317,15 @@ export class SegmentedAsrProvider implements AsrProvider {
     const run = await transcribeSegments(this.provider, segmentation.segments, options)
 
     if (run.segments.length === 0 && run.error) {
+      // A run cancelled before any segment succeeded is a cancellation, not an
+      // inference failure; the error taxonomy drives the UI toast.
+      const cancelled =
+        run.failures.length > 0 &&
+        run.failures.every((failure) => failure.error.code === 'CANCELLED')
       return {
         ok: false,
         error: {
-          code: 'INFERENCE_FAILED',
+          code: cancelled ? 'CANCELLED' : 'INFERENCE_FAILED',
           message: run.error.message,
           retryable: false
         }

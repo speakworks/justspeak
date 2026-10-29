@@ -81,7 +81,7 @@ The stage SHALL apply Unicode NFKC, collapse repeated whitespace, trim, remove s
 
 ### Requirement: Filler removal SHALL avoid real words
 
-The stage SHALL remove the standalone Chinese fillers `嗯`, `呃`, `啊`, `那个`, and `就是说`, and the English fillers `um`, `uh`, and `er`, when they are set off from surrounding words. It SHALL remove `like` and `you know` only when punctuation or the start/end of the text sets them off. It SHALL NOT delete a filler that is part of a real word or phrase. When a leading filler is removed, the stage SHALL remove the entire adjacent separator run (for example `...`, `?!`, or `……`). When a sentence-final filler is removed, the stage SHALL remove its adjacent separator run, SHALL keep at most the single mark that terminated the preceding sentence or one mark when the filler followed a word, and SHALL retain all text after the consumed run rather than truncating the transcript. A separating space SHALL be inserted when the retained text begins a non-CJK word, digit, or opening quote/bracket, and SHALL NOT be inserted before CJK text or CJK punctuation.
+The stage SHALL remove the standalone Chinese fillers `嗯`, `呃`, `啊`, `那个`, and `就是说`, and the English fillers `um`, `uh`, and `er`, when they are set off from surrounding words. It SHALL remove `like` and `you know` only when punctuation or the start/end of the text sets them off. It SHALL NOT delete a filler that is part of a real word or phrase. When a leading filler is removed, the stage SHALL remove the entire adjacent separator run (for example `...`, `?!`, or `……`). When a sentence-final filler is removed, the stage SHALL remove its adjacent separator run, SHALL keep at most the single mark that terminated the preceding sentence or one mark when the filler followed a word, and SHALL retain all text after the consumed run rather than truncating the transcript. A separating space SHALL be inserted when the retained text begins a non-CJK word, digit, or opening quote/bracket, and SHALL NOT be inserted before CJK text or CJK punctuation, nor after CJK sentence punctuation (`。`, `！`, `？`, `…`, `‥`, `︙`, `︰`).
 
 #### Scenario: Chinese filler
 
@@ -143,6 +143,12 @@ The stage SHALL remove the standalone Chinese fillers `嗯`, `呃`, `啊`, `那�
 - **WHEN** the transcript is `我们走 um。然后回家。`
 - **THEN** the output is `我们走。然后回家。`
 - **AND** no space is inserted before the CJK tail
+
+#### Scenario: CJK sentence punctuation boundary
+
+- **WHEN** the transcript is `我们走 um。Then home.`
+- **THEN** the output is `我们走。Then home.`
+- **AND** no space is inserted after the CJK sentence mark
 
 ### Requirement: Repetition collapse SHALL be bounded
 
@@ -337,7 +343,7 @@ every rule would empty it.
 
 ### Requirement: Masking SHALL use disjoint layers and fail closed
 
-The protect, code, and punctuation-run masks SHALL use disjoint sentinel namespaces, and each restore SHALL match only the placeholders that its own mask call emitted, using a call-scoped namespace that is absent from the input. Vocabulary SHALL run only over text between protected and code-like spans, so a replacement SHALL NOT edit a protected token, a code-like token, or a mask placeholder. If any sentinel remains after restoration, the stage SHALL return the original input with an empty `applied` list rather than emit invisible characters.
+The protect, code, and punctuation-run masks SHALL use disjoint sentinel namespaces, and each restore SHALL match only the placeholders that its own mask call emitted, using a call-scoped namespace that is absent from the input. Every later span detector SHALL treat placeholders as opaque and SHALL NOT inspect or split their interiors, regardless of the nonce format. Vocabulary SHALL run only over text between protected and code-like spans, so a replacement SHALL NOT edit a protected token, a code-like token, or a mask placeholder. If any sentinel remains after restoration, the stage SHALL return the original input with an empty `applied` list rather than emit invisible characters.
 
 #### Scenario: Protected token beside a version
 
@@ -362,6 +368,25 @@ The protect, code, and punctuation-run masks SHALL use disjoint sentinel namespa
 - **WHEN** `cat` maps to `dog` and the transcript is `` `cat` and cat `` or `https://example.com/cat`
 - **THEN** the code-like occurrence is unchanged
 - **AND** only the editable occurrence changes
+
+#### Scenario: Placeholders are opaque to span detection
+
+- **WHEN** the transcript is `我们走 um……张三来了。` and `张三` is protected
+- **THEN** the output is `我们走…张三来了。`
+- **AND** no stray space appears before the protected term
+- **AND** the protect placeholder is restored intact
+
+#### Scenario: Protected token beside a punctuation run
+
+- **WHEN** the transcript is `他说……张三来了。` and `张三` is protected
+- **THEN** the output is `他说……张三来了。`
+- **AND** the run is not split by code detection
+
+#### Scenario: Excluded ranges are opaque
+
+- **WHEN** a code-like string is inside an excluded placeholder range
+- **THEN** code detection returns no span that intersects the range
+- **AND** removing the exclusion makes the detector report the interior again
 
 #### Scenario: Sentinel-shaped user text
 

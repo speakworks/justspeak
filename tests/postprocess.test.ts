@@ -7,7 +7,7 @@ import {
   type PostprocessRule,
   type RuleSwitches
 } from '../src/core/postprocess'
-import { MASK_SENTINELS, maskSpans } from '../src/core/postprocess/rules'
+import { MASK_SENTINELS, findCodeSpans, maskSpans } from '../src/core/postprocess/rules'
 
 function clean(text: string, options?: PostprocessOptions): string {
   return postprocess(text, options).text
@@ -205,6 +205,14 @@ describe('postprocess: punctuation runs', () => {
   it('still lets a filler consume an ellipsis run', () => {
     expect(clean('um... hello')).toBe('Hello')
     expect(clean('嗯……我们走吧。')).toBe('我们走吧。')
+  })
+
+  it('keeps placeholders opaque to code and punctuation detection', () => {
+    const protect = { vocabulary: { protect: ['张三'] } }
+    expect(clean('我们走 um……张三来了。', protect)).toBe('我们走…张三来了。')
+    expect(clean('我们走 um...张三来了。', protect)).toBe('我们走.张三来了。')
+    expect(clean('他说……张三来了。', protect)).toBe('他说……张三来了。')
+    expect(clean('We go um...张三 shipped.', protect)).toBe('We go.张三 shipped.')
   })
 })
 
@@ -423,6 +431,10 @@ describe('postprocess: sentence-initial casing', () => {
     expect(clean(input)).toBe(expected)
   })
 
+  it('does not insert a space after CJK sentence punctuation', () => {
+    expect(clean('我们走 um。Then home.')).toBe('我们走。Then home.')
+  })
+
   it('can be disabled', () => {
     expect(clean('you know, it is fine.', { rules: { casing: false } })).toBe('it is fine.')
   })
@@ -466,6 +478,12 @@ describe('postprocess: masking layers', () => {
       applied: ['vocabulary']
     })
     for (const sentinel of MASK_SENTINELS) expect(result.text).not.toContain(sentinel)
+  })
+
+  it('treats excluded ranges as opaque to code detection', () => {
+    const interior = 'v1.2.3'
+    expect(findCodeSpans(interior).length).toBeGreaterThan(0)
+    expect(findCodeSpans(interior, [{ start: 0, end: interior.length }])).toEqual([])
   })
 
   it('masks with provably disjoint namespaces', () => {

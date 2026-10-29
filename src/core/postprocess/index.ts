@@ -120,35 +120,44 @@ export function postprocess(text: string, options: PostprocessOptions = {}): Pos
     findProtectSpans(working, vocabulary.protect),
     'protect'
   )
-  const codeMask = maskSpans(protectMask.masked, findCodeSpans(protectMask.masked), 'code')
-
-  // Remove stray spacing before punctuation while the runs are still visible;
-  // once masked, the spacing rule can no longer see their first mark.
-  let normalizeChanged = false
-  if (ruleEnabled(options, 'normalize')) {
-    const pre = removeSpacesBeforePunctuation(codeMask.masked)
-    normalizeChanged = pre !== codeMask.masked
-    working = pre
-  } else {
-    working = codeMask.masked
-  }
+  const codeMask = maskSpans(
+    protectMask.masked,
+    findCodeSpans(protectMask.masked, protectMask.placeholderSpans),
+    'code',
+    protectMask.placeholderSpans
+  )
 
   // Punctuation runs are masked before NFKC so `……` is not expanded and the
-  // first dot of `...` cannot become `。`; restore them before fillers so the
-  // separator logic can still consume a run whole.
-  const punctuationMask = maskSpans(working, findPunctuationRunSpans(working), 'punctuation')
+  // first dot of `...` cannot become `。`. Code and protect placeholders are
+  // opaque to the detector and carried through the mask.
+  const punctuationMask = maskSpans(
+    codeMask.masked,
+    findPunctuationRunSpans(codeMask.masked, codeMask.placeholderSpans),
+    'punctuation',
+    codeMask.placeholderSpans
+  )
   working = punctuationMask.masked
 
   let removedLeading = false
+  let normalizeChanged = false
 
   if (ruleEnabled(options, 'normalize')) {
     const next = normalizeText(working)
+    normalizeChanged = next !== working
+    working = next
+  }
+
+  working = punctuationMask.restore(working)
+
+  // The runs are visible again. Remove stray spacing before their first mark
+  // now, so masking never has to shift placeholder positions.
+  if (ruleEnabled(options, 'normalize')) {
+    const next = removeSpacesBeforePunctuation(working)
     normalizeChanged ||= next !== working
     working = next
   }
   if (normalizeChanged) applied.push('normalize')
 
-  working = punctuationMask.restore(working)
   const firstVisible = (value: string): string | undefined =>
     firstVisibleCharacter(value, [codeMask, protectMask])
 

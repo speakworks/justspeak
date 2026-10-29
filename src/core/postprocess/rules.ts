@@ -42,6 +42,8 @@ export interface MaskedText {
   restore: (value: string) => string
   /** Resolve a placeholder at the start of `value` to its original text. */
   resolveLeading: (value: string) => string | undefined
+  /** Ranges of every placeholder present in `masked`, all layers included. */
+  placeholderSpans: readonly Span[]
 }
 
 /**
@@ -72,10 +74,20 @@ function maskNonce(text: string, markers: MaskMarkers, originals: readonly strin
  * or reorder the text around them. The layer chooses the namespace, and each
  * restore matches only that namespace and that call's nonce.
  */
-export function maskSpans(text: string, spans: readonly Span[], layer: MaskLayer): MaskedText {
+export function maskSpans(
+  text: string,
+  spans: readonly Span[],
+  layer: MaskLayer,
+  preserved: readonly Span[] = []
+): MaskedText {
   const merged = mergeSpans(spans)
   if (merged.length === 0) {
-    return { masked: text, restore: (value) => value, resolveLeading: () => undefined }
+    return {
+      masked: text,
+      restore: (value) => value,
+      resolveLeading: () => undefined,
+      placeholderSpans: preserved.map((span) => ({ ...span }))
+    }
   }
 
   const markers = MASK_MARKERS[layer]
@@ -84,13 +96,33 @@ export function maskSpans(text: string, spans: readonly Span[], layer: MaskLayer
 
   let masked = ''
   let cursor = 0
+  const ownPlaceholders: Span[] = []
+  const shifts: Array<{ end: number; delta: number }> = []
   for (let index = 0; index < merged.length; index += 1) {
     const span = merged[index] as Span
     masked += text.slice(cursor, span.start)
-    masked += `${markers.start}${nonce}.${index}${markers.end}`
+    const placeholder = `${markers.start}${nonce}.${index}${markers.end}`
+    ownPlaceholders.push({ start: masked.length, end: masked.length + placeholder.length })
+    masked += placeholder
+    shifts.push({ end: span.end, delta: placeholder.length - (span.end - span.start) })
     cursor = span.end
   }
   masked += text.slice(cursor)
+
+  // Shift earlier placeholders past the new spans; span detection never
+  // overlaps them, so lengths are preserved.
+  const adjust = (index: number): number => {
+    let shift = 0
+    for (const item of shifts) if (item.end <= index) shift += item.delta
+    return shift
+  }
+  const placeholderSpans = [
+    ...preserved.map((span) => ({
+      start: span.start + adjust(span.start),
+      end: span.end + adjust(span.end)
+    })),
+    ...ownPlaceholders
+  ].sort((a, b) => a.start - b.start)
 
   const pattern = new RegExp(`${markers.start}${nonce}\\.(\\d+)${markers.end}`, 'g')
   const leadingPattern = new RegExp(`^${markers.start}${nonce}\\.(\\d+)${markers.end}`)
@@ -101,7 +133,8 @@ export function maskSpans(text: string, spans: readonly Span[], layer: MaskLayer
     resolveLeading: (value) => {
       const match = leadingPattern.exec(value)
       return match ? originals[Number(match[1])] : undefined
-    }
+    },
+    placeholderSpans
   }
 }
 
@@ -140,12 +173,27 @@ const CODE_PATTERNS: readonly RegExp[] = [
   /\b[0-9a-f]{7,40}\b/gi
 ]
 
-export function findCodeSpans(text: string): Span[] {
+/** True when [start, end) intersects a sorted, merged span list. */
+function overlapsSpan(start: number, end: number, spans: readonly Span[]): boolean {
+  for (const span of spans) {
+    if (span.end <= start) continue
+    if (span.start >= end) return false
+    return true
+  }
+  return false
+}
+
+export function findCodeSpans(text: string, excluded: readonly Span[] = []): Span[] {
+  const blocked = mergeSpans(excluded)
   const spans: Span[] = []
   for (const pattern of CODE_PATTERNS) {
     for (const match of text.matchAll(pattern)) {
       if (match.index === undefined) continue
-      spans.push({ start: match.index, end: match.index + match[0].length })
+      const start = match.index
+      const end = start + match[0].length
+      // Placeholders are opaque: never inspect or split their interiors.
+      if (blocked.length > 0 && overlapsSpan(start, end, blocked)) continue
+      spans.push({ start, end })
     }
   }
   return spans
@@ -159,10 +207,18 @@ const PUNCTUATION_RUN_CHARS = new Set([
   '.', '…', '‥', '︙', '︰', '!', '?', ',', ';', ':', '。', '，', '！', '？', '；', '：', '、'
 ])
 
-export function findPunctuationRunSpans(text: string): Span[] {
+export function findPunctuationRunSpans(text: string, excluded: readonly Span[] = []): Span[] {
+  const blocked = mergeSpans(excluded)
   const spans: Span[] = []
   let index = 0
+  let block = 0
   while (index < text.length) {
+    while (block < blocked.length && (blocked[block] as Span).end <= index) block += 1
+    const current = blocked[block]
+    if (current && index >= current.start && index < current.end) {
+      index = current.end
+      continue
+    }
     if (!PUNCTUATION_RUN_CHARS.has(text[index] ?? '')) {
       index += 1
       continue
@@ -171,7 +227,9 @@ export function findPunctuationRunSpans(text: string): Span[] {
     while (index < text.length && PUNCTUATION_RUN_CHARS.has(text[index] ?? '')) index += 1
     const run = text.slice(start, index)
     const hasEllipsis = [...run].some((char) => ELLIPSIS_FORMS.has(char))
-    if (hasEllipsis || run.length >= 2) spans.push({ start, end: index })
+    if ((hasEllipsis || run.length >= 2) && !overlapsSpan(start, index, blocked)) {
+      spans.push({ start, end: index })
+    }
   }
   return spans
 }
@@ -508,6 +566,8 @@ function joinerBetween(text: string, leftIndex: number, rightIndex: number): str
 
 const CJK_TEXT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
 const CJK_OPENING = new Set(['「', '『', '《', '〈', '【', '（'])
+// A CJK sentence mark already provides the boundary; do not force a space.
+const CJK_SENTENCE_MARKS = new Set(['。', '！', '？', '…', '‥', '︙', '︰'])
 
 /**
  * Separate a tail that followed a removed separator run. The boundary is
@@ -517,9 +577,10 @@ const CJK_OPENING = new Set(['「', '『', '《', '〈', '【', '（'])
  */
 function separateTail(
   tail: string,
-  firstVisible?: (value: string) => string | undefined
+  firstVisible?: (value: string) => string | undefined,
+  afterCjkMark = false
 ): string {
-  if (tail.length === 0) return tail
+  if (tail.length === 0 || afterCjkMark) return tail
   const rawFirst = tail[0]
   if (rawFirst !== undefined && isSpace(rawFirst)) return tail
   const visible = firstVisible?.(tail) ?? rawFirst ?? ''
@@ -570,7 +631,14 @@ function removeFiller(
     while (start > 0 && isSpace(text[start - 1])) start -= 1
     const runEnd = separatorRunEnd(text, right)
     if (left >= 0 && SENTENCE_SEPARATORS.has(text[left] ?? '')) {
-      return text.slice(0, start) + separateTail(text.slice(runEnd), firstVisible)
+      return (
+        text.slice(0, start) +
+        separateTail(
+          text.slice(runEnd),
+          firstVisible,
+          CJK_SENTENCE_MARKS.has(text[left] ?? '')
+        )
+      )
     }
     // The filler followed a word: keep one mark to terminate the sentence and
     // the entire tail after the run. Dropping the tail here would lose the
@@ -578,7 +646,7 @@ function removeFiller(
     return (
       text.slice(0, start) +
       text.slice(right, right + 1) +
-      separateTail(text.slice(runEnd), firstVisible)
+      separateTail(text.slice(runEnd), firstVisible, CJK_SENTENCE_MARKS.has(text[right] ?? ''))
     )
   }
 

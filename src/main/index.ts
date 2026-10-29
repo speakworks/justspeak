@@ -11,8 +11,8 @@ import {
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { FakeAsrProvider } from '../core/asr/fake-provider'
-import { Qwen3AsrProvider } from '../core/asr/qwen3-provider'
+import { QWEN3_CAPABILITIES } from '../core/asr/qwen3-provider'
+import { SENSEVOICE_CAPABILITIES } from '../core/asr/sensevoice-provider'
 import type {
   AsrCapabilities,
   AsrModelDescriptor,
@@ -23,6 +23,7 @@ import type {
   TranscribeOptions,
   TranscriptionResult
 } from '../core/asr/types'
+import type { ModelCatalogEntry } from '../core/asr/model-catalog'
 import { DEFAULT_ACCELERATOR, parseAccelerator } from '../core/hotkey/accelerator'
 import { registerHotkeyWithFallback } from '../core/hotkey/registration'
 import type { HotkeySource } from '../core/hotkey/types'
@@ -31,17 +32,26 @@ import { SessionController } from '../core/session/session-controller'
 import { isThemePreference } from '../core/theme/theme'
 import type {
   AppStatus,
+  AsrProviderSelection,
   HotkeySetResult,
   ModelInfo,
+  ProviderOption,
   ResolvedTheme,
+  SelectableAsrProviderId,
   ThemePreference,
   TranscriptEvent
 } from '../shared/ipc'
-import { MODEL_CATALOG, PRIMARY_MODEL, PRIMARY_MODEL_DESCRIPTOR } from './asr/catalog'
-import { TranscribeCliRunner } from './asr/cli-runner'
+import { MODEL_CATALOG } from './asr/catalog'
 import { ModelManager } from './asr/model-manager'
-import { parseAsrMode } from './asr/mode'
-import { resolveAsrPaths } from './asr/paths'
+import {
+  DEFAULT_ASR_MODE,
+  isSelectableAsrMode,
+  resolveAsrMode,
+  type AsrMode
+} from './asr/mode'
+import { ProviderPreferenceStore } from './asr/provider-preference'
+import { buildProvider } from './asr/providers'
+import { downloadFailureHint } from './asr/download-hint'
 import { ElectronGlobalShortcutSource } from './hotkey-source'
 import { pasteText } from './injection'
 import { isTrustedSender } from './ipc-sender'
@@ -52,18 +62,16 @@ import { VocabularyStore } from './vocabulary-store'
 const DARK_BACKGROUND = '#0b0f14'
 const LIGHT_BACKGROUND = '#f6f5f2'
 
-const MODEL_INFO: ModelInfo = {
-  id: PRIMARY_MODEL.id,
-  name: PRIMARY_MODEL.name,
-  license: PRIMARY_MODEL.license,
-  sourceUrl: PRIMARY_MODEL.sourceUrl,
-  sizeBytes: PRIMARY_MODEL.sizeBytes,
-  quantization: PRIMARY_MODEL.quantization
+const PROVIDER_OPTIONS: Record<SelectableAsrProviderId, ProviderOption> = {
+  qwen3: { id: 'qwen3', label: 'Qwen3-ASR 0.6B', capabilities: QWEN3_CAPABILITIES },
+  sensevoice: { id: 'sensevoice', label: 'SenseVoice Small', capabilities: SENSEVOICE_CAPABILITIES }
 }
 
 let mainWindow: BrowserWindow | null = null
 let rendererReady = false
 let session: SessionController | null = null
+let sessionMode: AsrMode = DEFAULT_ASR_MODE
+let activeProvider: AsrProvider | null = null
 let providerError: string | undefined
 let initializing = false
 let pcmBuffer = new PcmBuffer()
@@ -74,6 +82,9 @@ let hotkeySource: HotkeySource | undefined
 let activeHotkey = DEFAULT_ACCELERATOR
 let hotkeyNotice: string | undefined
 let postprocessOptions: PostprocessOptions = {}
+let providerPreference: ProviderPreferenceStore
+/** Raw persisted value; validation happens in `resolveAsrMode`. */
+let preferredProvider: string | undefined
 
 class UnavailableAsrProvider implements AsrProvider {
   readonly id = 'unavailable'
@@ -180,122 +191,213 @@ function failSession(message: string): void {
   session?.fail(message)
 }
 
-async function initializeFake(): Promise<void> {
-  const provider = new FakeAsrProvider({ delayMs: 350 })
-  session = makeSession(provider, true)
-  activeModelInfo = undefined
-  providerError = undefined
-  initializing = false
+function modelInfoFor(entry: ModelCatalogEntry, provider: AsrProvider): ModelInfo {
+  return {
+    id: entry.id,
+    name: entry.name,
+    license: entry.license,
+    sourceUrl: entry.sourceUrl,
+    sizeBytes: entry.sizeBytes,
+    quantization: entry.quantization,
+    // The UI renders what the provider declares, never a provider-id lookup.
+    capabilities: provider.capabilities
+  }
+}
+
+function asrSelection(): AsrProviderSelection | undefined {
+  if (sessionMode === 'fake') return undefined
+  return { id: sessionMode, options: Object.values(PROVIDER_OPTIONS) }
+}
+
+function currentStatus(): AppStatus {
+  return {
+    state: session?.state ?? 'idle',
+    message: session?.lastMessage,
+    modelInfo: activeModelInfo,
+    asr: asrSelection(),
+    theme: themePreference,
+    hotkey: activeHotkey,
+    hotkeyMessage: hotkeyNotice
+  }
+}
+
+function pipelineBusy(): boolean {
+  return (
+    session?.state === 'recording' ||
+    session?.state === 'transcribing' ||
+    session?.state === 'pasting'
+  )
+}
+
+async function disposeActiveProvider(): Promise<void> {
+  const provider = activeProvider
+  activeProvider = null
+  if (provider) {
+    try {
+      await provider.dispose()
+    } catch (error) {
+      console.warn('[asr] provider dispose failed', error)
+    }
+  }
 }
 
 async function initializeProvider(): Promise<void> {
   if (initializing) return
   initializing = true
   providerError = undefined
+  activeModelInfo = undefined
 
-  const mode = parseAsrMode(process.env.JUSTSPEAK_ASR)
-  if (!mode.ok) {
+  const selection = resolveAsrMode({
+    env: process.env.JUSTSPEAK_ASR,
+    preference: preferredProvider
+  })
+  if (!selection.ok) {
+    await disposeActiveProvider()
     session = makeSession(new UnavailableAsrProvider(), false)
-    activeModelInfo = undefined
     initializing = false
-    failSession(mode.message)
-    return
-  }
-  if (mode.mode === 'fake') {
-    await initializeFake()
+    failSession(selection.message)
     return
   }
 
-  const paths = resolveAsrPaths(app.getAppPath(), MODEL_CATALOG)
-  const runner = new TranscribeCliRunner({
-    cliPath: paths.cliPath,
-    modelPath: paths.modelPath
+  const built = buildProvider({
+    mode: selection.mode,
+    appRoot: app.getAppPath(),
+    catalog: MODEL_CATALOG
   })
-  const provider = new Qwen3AsrProvider({
-    model: PRIMARY_MODEL_DESCRIPTOR,
-    runner
-  })
-  session = makeSession(provider, false)
-  activeModelInfo = MODEL_INFO
+  if (!built.ok) {
+    await disposeActiveProvider()
+    session = makeSession(new UnavailableAsrProvider(), false)
+    initializing = false
+    failSession(built.message)
+    return
+  }
+
+  sessionMode = built.mode
+  await disposeActiveProvider()
+
+  if (built.mode === 'fake') {
+    activeProvider = built.provider
+    session = makeSession(built.provider, true)
+    initializing = false
+    sendState('idle', 'FAKE ASR（测试模式）')
+    return
+  }
+
+  const { mode, model, descriptor, paths, provider } = built
 
   if (!existsSync(paths.cliPath)) {
+    session = makeSession(new UnavailableAsrProvider(), false)
     initializing = false
     failSession(
-      `Qwen3 运行时缺失：${paths.cliPath}。请运行 pnpm setup:asr（运行时来源：${MODEL_CATALOG.runtimes[0]?.sourceUrl}）。`
+      `${model.name} 运行时缺失：${paths.cliPath}。` +
+        `请运行 pnpm setup:asr（运行时来源：${MODEL_CATALOG.runtimes[0]?.sourceUrl}）。`
     )
     return
   }
 
   if (!existsSync(paths.modelPath)) {
-    sendState('idle', '首次使用：正在下载 Qwen3-ASR 0.6B（约 850 MB）…')
+    sendState(
+      'idle',
+      `首次使用：正在下载 ${model.name}（约 ${Math.round(model.sizeBytes / 1e6)} MB）…`
+    )
     let lastPercent = 0
     try {
       const fetchImpl = ((input: string | URL | Request, init?: RequestInit) =>
         net.fetch(input as string, init)) as typeof fetch
       const manager = new ModelManager({ fetch: fetchImpl })
-      const file = PRIMARY_MODEL.files[0]
+      const file = model.files[0]
       if (!file) throw new Error('model catalog has no file')
       await manager.download(file, paths.modelPath, {
         onProgress: ({ bytes, totalBytes }) => {
           const percent = Math.floor((bytes / totalBytes) * 100)
           if (percent >= lastPercent + 5) {
             lastPercent = percent
-            sendState('idle', `首次使用：正在下载 ${PRIMARY_MODEL.name}（${percent}%）…`)
+            sendState('idle', `首次使用：正在下载 ${model.name}（${percent}%）…`)
           }
         }
       })
     } catch (error) {
+      session = makeSession(new UnavailableAsrProvider(), false)
       initializing = false
       failSession(
         `模型下载失败：${error instanceof Error ? error.message : String(error)}。` +
-          `来源：${PRIMARY_MODEL.sourceUrl}；许可证：${PRIMARY_MODEL.license}。` +
-          '可运行 pnpm setup:asr 手动准备模型。'
+          `来源：${model.sourceUrl}；许可证：${model.license}。` +
+          downloadFailureHint(mode, model.name, paths.modelPath)
       )
       return
     }
   }
 
-  const file = PRIMARY_MODEL.files[0]
+  const file = model.files[0]
   if (!file) {
+    session = makeSession(new UnavailableAsrProvider(), false)
     initializing = false
     failSession('模型目录条目缺失，请运行 pnpm setup:asr。')
     return
   }
-  console.log('[model] verifying SHA-256 before use…')
+  console.log(`[model] verifying ${model.id} SHA-256 before use…`)
   let verification: Awaited<ReturnType<ModelManager['verify']>>
   try {
     verification = await new ModelManager().verify(paths.modelPath, file)
   } catch (error) {
     // A stat/read failure must not leave `initializing` stuck at true: the hotkey
     // would keep answering "正在准备语音识别" with no error and no retry path.
+    session = makeSession(new UnavailableAsrProvider(), false)
     initializing = false
     failSession(
       `模型校验失败：${error instanceof Error ? error.message : String(error)}。` +
-        `请运行 pnpm setup:asr 重新下载；来源：${PRIMARY_MODEL.sourceUrl}；许可证：${PRIMARY_MODEL.license}。`
+        `请重新下载；来源：${model.sourceUrl}；许可证：${model.license}。`
     )
     return
   }
   if (!verification.ok) {
+    session = makeSession(new UnavailableAsrProvider(), false)
     initializing = false
     failSession(
       `模型校验失败（期望 ${file.sha256}，实际 ${verification.sha256}）。` +
-        `请运行 pnpm setup:asr 重新下载；来源：${PRIMARY_MODEL.sourceUrl}；许可证：${PRIMARY_MODEL.license}。`
+        `请重新下载；来源：${model.sourceUrl}；许可证：${model.license}。`
     )
     return
   }
   console.log('[model] verified', verification.sha256)
 
   try {
-    await provider.prepare(PRIMARY_MODEL_DESCRIPTOR)
+    await provider.prepare(descriptor)
+    activeProvider = provider
+    activeModelInfo = modelInfoFor(model, provider)
+    session = makeSession(provider, false)
     initializing = false
-    sendState('idle', `模型就绪：${PRIMARY_MODEL.name} · ${PRIMARY_MODEL.license}`)
+    sendState('idle', `模型就绪：${model.name} · ${model.license}`)
   } catch (error) {
+    session = makeSession(new UnavailableAsrProvider(), false)
     initializing = false
     failSession(
-      `Qwen3 模型加载失败：${error instanceof Error ? error.message : String(error)}。` +
-        `来源：${PRIMARY_MODEL.sourceUrl}；许可证：${PRIMARY_MODEL.license}。`
+      `${model.name} 模型加载失败：${error instanceof Error ? error.message : String(error)}。` +
+        `来源：${model.sourceUrl}；许可证：${model.license}。`
     )
   }
+}
+
+async function switchAsrProvider(value: unknown): Promise<AppStatus> {
+  if (!isSelectableAsrMode(value)) {
+    sendState(session?.state ?? 'idle', `不支持的 ASR 提供方：${String(value)}。`)
+    return currentStatus()
+  }
+  if (initializing) return currentStatus()
+  if (pipelineBusy()) {
+    sendState(session?.state ?? 'idle', '请先停止当前录音再切换识别模型。')
+    return currentStatus()
+  }
+  if (sessionMode === value) return currentStatus()
+
+  try {
+    await providerPreference.save(value)
+  } catch (error) {
+    console.warn('[asr] failed to persist provider preference', error)
+  }
+  preferredProvider = value
+  await initializeProvider()
+  return currentStatus()
 }
 
 function toggleRecording(): void {
@@ -412,6 +514,8 @@ app.whenReady().then(async () => {
   themeStore = new ThemeStore(app.getPath('userData'))
   const preferences = await themeStore.loadPreferences()
   themePreference = preferences.theme
+  providerPreference = new ProviderPreferenceStore(app.getPath('userData'))
+  preferredProvider = await providerPreference.load()
   applyTheme()
   // Loaded once at startup; the settings UI that writes it is a later card.
   postprocessOptions = await new VocabularyStore(app.getPath('userData')).load()
@@ -447,14 +551,14 @@ app.whenReady().then(async () => {
     mainWindow?.webContents.send('recording:stop')
     session?.handleCaptureFailed(result.error.message)
   })
-  ipcMain.handle('state:get', (): AppStatus => ({
-    state: session?.state ?? 'idle',
-    message: session?.lastMessage,
-    modelInfo: activeModelInfo,
-    theme: themePreference,
-    hotkey: activeHotkey,
-    hotkeyMessage: hotkeyNotice
-  }))
+  ipcMain.handle('state:get', (): AppStatus => currentStatus())
+  ipcMain.handle('asr:set-provider', async (event, payload: unknown): Promise<AppStatus> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      console.warn('[asr] rejected untrusted sender')
+      return currentStatus()
+    }
+    return switchAsrProvider(payload)
+  })
   ipcMain.handle('theme:set', async (event, payload: unknown): Promise<ThemePreference> => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
       console.warn('[theme] rejected untrusted sender')

@@ -28,6 +28,34 @@
         "maxAudioMs": 5220000,
         "quantizations": ["Q8_0"]
       }
+    },
+    {
+      "id": "sensevoice-small-q8",
+      "name": "SenseVoice Small (Q8_0)",
+      "version": "small-q8-2026-10",
+      "runtime": "transcribe.cpp-0.4.1",
+      "files": [
+        {
+          "path": "sensevoice-small/SenseVoiceSmall-Q8_0.gguf",
+          "url": "https://huggingface.co/handy-computer/SenseVoiceSmall-gguf/resolve/ff8f085a8fa2e5ccae0e849ef19ebc6dc18e608b/SenseVoiceSmall-Q8_0.gguf",
+          "sha256": "6c759ee4c9748c9b3f7a5a60ca74f0f7e685fb9d45d1378fce7cfd62f59adf29",
+          "sizeBytes": 252684608
+        }
+      ],
+      "sizeBytes": 252684608,
+      "license": "FunASR-Model-License-1.1",
+      "sourceUrl": "https://huggingface.co/handy-computer/SenseVoiceSmall-gguf",
+      "quantization": "Q8_0",
+      "capabilities": {
+        "languages": ["zh", "yue", "en", "ja", "ko"],
+        "streaming": false,
+        "punctuation": true,
+        "itn": true,
+        "timestamps": false,
+        "vad": false,
+        "maxAudioMs": 30000,
+        "quantizations": ["Q8_0"]
+      }
     }
   ],
   "runtimes": [

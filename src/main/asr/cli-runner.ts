@@ -40,6 +40,10 @@ export interface CliRunnerDeps {
 export interface TranscribeCliRunnerConfig {
   cliPath: string
   modelPath: string
+  /** Catalog model id reported by health; the CLI itself is model-agnostic. */
+  modelId?: string
+  /** Human label used only in diagnostics, e.g. "SenseVoice Small". */
+  label?: string
   defaultTimeoutMs?: number
   deps?: Partial<CliRunnerDeps>
 }
@@ -96,6 +100,7 @@ function mapFailure(
   stderr: string,
   stdout: string,
   exitCode: number | null,
+  label: string,
   cliPath?: string,
   modelPath?: string
 ): ProviderResult<never> {
@@ -112,7 +117,7 @@ function mapFailure(
       error: {
         code: 'MODEL_MISSING',
         message:
-          `Qwen3 model or runtime file is missing; run pnpm setup:asr.` +
+          `${label} model or runtime file is missing; the app downloads it on first use.` +
           ` Runtime: ${cliPath ?? 'unknown'}; model: ${modelPath ?? 'unknown'}.` +
           detail,
         // ADR-0003: MODEL_MISSING is a repair case, not a retry case. Retrying
@@ -126,7 +131,7 @@ function mapFailure(
       ok: false,
       error: {
         code: 'MODEL_LOAD_FAILED',
-        message: `Qwen3 model failed to load; verify the SHA-256 and runtime build.${detail}`,
+        message: `${label} model failed to load; verify the SHA-256 and runtime build.${detail}`,
         retryable: false
       }
     }
@@ -145,12 +150,16 @@ function mapFailure(
 export class TranscribeCliRunner implements Qwen3Runner {
   private readonly cliPath: string
   private readonly modelPath: string
+  private readonly modelId: string | undefined
+  private readonly label: string
   private readonly defaultTimeoutMs: number
   private readonly deps: CliRunnerDeps
 
   constructor(config: TranscribeCliRunnerConfig) {
     this.cliPath = config.cliPath
     this.modelPath = config.modelPath
+    this.modelId = config.modelId
+    this.label = config.label ?? 'ASR'
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS
     this.deps = {
       spawn: (command, args) => nodeSpawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] }),
@@ -238,7 +247,7 @@ export class TranscribeCliRunner implements Qwen3Runner {
           return
         }
         if (code !== 0) {
-          settle(mapFailure(stderr, stdout, code, this.cliPath, this.modelPath))
+          settle(mapFailure(stderr, stdout, code, this.label, this.cliPath, this.modelPath))
           return
         }
         const parsed = parseCliStdout(stdout)
@@ -262,11 +271,11 @@ export class TranscribeCliRunner implements Qwen3Runner {
     try {
       await this.deps.access(this.cliPath, constants.X_OK)
       await this.deps.access(this.modelPath, constants.R_OK)
-      return { status: 'ready', modelId: 'qwen3-asr-0.6b-q8' }
+      return { status: 'ready', modelId: this.modelId }
     } catch (error) {
       return {
         status: 'error',
-        modelId: 'qwen3-asr-0.6b-q8',
+        modelId: this.modelId,
         message: error instanceof Error ? error.message : String(error)
       }
     }

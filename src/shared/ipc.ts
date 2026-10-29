@@ -1,3 +1,5 @@
+import type { AsrCapabilities } from '../core/asr/types'
+
 export type AppState = 'idle' | 'recording' | 'transcribing' | 'pasting' | 'error'
 
 export type RecordingCommand = 'start' | 'stop'
@@ -9,6 +11,22 @@ export interface RecordingSummary {
   rms: number
 }
 
+/** Providers a user may select in the app. Fake is test-only. */
+export const SELECTABLE_ASR_PROVIDER_IDS = ['qwen3', 'sensevoice'] as const
+export type SelectableAsrProviderId = (typeof SELECTABLE_ASR_PROVIDER_IDS)[number]
+
+/** Capabilities come from the provider, not from a provider-id lookup. */
+export interface ProviderOption {
+  id: SelectableAsrProviderId
+  label: string
+  capabilities: AsrCapabilities
+}
+
+export interface AsrProviderSelection {
+  id: SelectableAsrProviderId
+  options: ProviderOption[]
+}
+
 export interface ModelInfo {
   id: string
   name: string
@@ -16,12 +34,14 @@ export interface ModelInfo {
   sourceUrl: string
   sizeBytes: number
   quantization: string
+  capabilities: AsrCapabilities
 }
 
 export interface AppStatus {
   state: AppState
   message?: string
   modelInfo?: ModelInfo
+  asr?: AsrProviderSelection
   theme?: ThemePreference
   /** The accelerator currently registered with the OS; `''` means none. */
   hotkey?: string
@@ -73,6 +93,7 @@ export interface JustSpeakApi {
   sendPcmBatch: (batch: PcmBatch) => void
   setTheme: (theme: ThemePreference) => Promise<ThemePreference>
   setHotkey: (accelerator: string) => Promise<HotkeySetResult>
+  setAsrProvider: (provider: SelectableAsrProviderId) => Promise<AppStatus>
   onState: (listener: (state: AppState, message?: string) => void) => () => void
   onTranscript: (listener: (event: TranscriptEvent) => void) => () => void
   onRecordingCommand: (listener: (command: RecordingCommand) => void) => () => void

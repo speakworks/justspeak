@@ -30,18 +30,19 @@ See [docs/ROADMAP.md](docs/ROADMAP.md).
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 
-## Development (M1: Qwen3-ASR)
+## Development (M1: local ASR)
 
 M1 runs a real local transcript path: the renderer sends 16 kHz mono PCM to main,
 main writes a temporary WAV, and the pinned `transcribe.cpp` CLI transcribes it with
-Qwen3-ASR 0.6B Q8_0. The fake provider remains available for tests and the demo.
+one of two catalog-backed providers, Qwen3-ASR 0.6B Q8_0 (default) or SenseVoice
+Small Q8_0. The fake provider remains available for tests and the demo.
 
 Requirements: macOS arm64, Node 24, pnpm, and Xcode Command Line Tools plus CMake for
 the pinned runtime build.
 
 ```bash
 pnpm install
-pnpm setup:asr   # build transcribe.cpp v0.4.1 + download/verify the 850 MB model
+pnpm setup:asr   # build transcribe.cpp v0.4.1 + download/verify the 850 MB Qwen3 model
 pnpm dev         # HMR; or `pnpm start` for the built app
 pnpm test        # Vitest contract/IPC/capture/injection/lifecycle suite (no model)
 pnpm bench:asr   # provider-driven benchmark; writes bench/reports/<date>-qwen3-asr.md
@@ -49,12 +50,17 @@ pnpm bench:asr   # provider-driven benchmark; writes bench/reports/<date>-qwen3-
 
 - Hotkey: `Command+Shift+Space` (toggle recording; press again to stop).
 - Grant Microphone and Accessibility permissions on first run.
-- Default provider is Qwen3 (`JUSTSPEAK_ASR=qwen3`); use `JUSTSPEAK_ASR=fake pnpm dev`
-  for the deterministic fake flow. An unknown value is an error, and a missing model is
-  never silently replaced by fake or cloud.
+- Default provider is Qwen3 (`JUSTSPEAK_ASR=qwen3`); `JUSTSPEAK_ASR=sensevoice` selects
+  SenseVoice, whose weights download on first run rather than in `pnpm setup:asr`. Use
+  `JUSTSPEAK_ASR=fake pnpm dev` for the deterministic fake flow. An unknown value is an
+  error, and a missing model is never silently replaced by fake or cloud.
+- The in-app provider picker persists to `asr-preference.json` in the app's user-data
+  directory; `JUSTSPEAK_ASR` overrides the stored preference for that run.
 - Model weights and the built runtime live in gitignored `models/`; nothing is committed.
-  The UI shows the model name, license (Apache-2.0), and source URL.
-- Override paths with `JUSTSPEAK_TRANSCRIBE_CLI` and `JUSTSPEAK_QWEN3_MODEL`.
+  The UI shows the model name, its license (Apache-2.0 for Qwen3, FunASR-Model-License-1.1
+  for SenseVoice), and the source URL.
+- Override paths with `JUSTSPEAK_TRANSCRIBE_CLI`, `JUSTSPEAK_QWEN3_MODEL`, and
+  `JUSTSPEAK_SENSEVOICE_MODEL`.
 - Verification: `pnpm typecheck`, `pnpm test`, `pnpm build`, and
   `openspec validate --specs --strict`. The M1 change `qwen3-asr-integration` is already
   archived, so validate the synced specs instead of the (closed) change.

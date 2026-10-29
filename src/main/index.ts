@@ -39,10 +39,14 @@ import type {
   HotkeySetResult,
   ModelInfo,
   ProviderOption,
+  PreferencesSetResult,
+  PreferencesView,
+  ProviderSummary,
   ResolvedTheme,
   SelectableAsrProviderId,
   ThemePreference,
-  TranscriptEvent
+  TranscriptEvent,
+  VocabularySummary
 } from '../shared/ipc'
 import { MODEL_CATALOG } from './asr/catalog'
 import { ModelManager } from './asr/model-manager'
@@ -64,7 +68,7 @@ import { pasteText } from './injection'
 import { isTrustedSender } from './ipc-sender'
 import { PcmBuffer } from './pcm-buffer'
 import { ThemeStore } from './theme-store'
-import { VocabularyStore } from './vocabulary-store'
+import { VocabularyStore, type VocabularyLoadResult } from './vocabulary-store'
 
 const DARK_BACKGROUND = '#0b0f14'
 const LIGHT_BACKGROUND = '#f6f5f2'
@@ -85,6 +89,7 @@ let pcmBuffer = new PcmBuffer()
 let activeModelInfo: ModelInfo | undefined
 let themePreference: ThemePreference = 'system'
 let themeStore: ThemeStore
+let vocabularyStore: VocabularyStore
 let hotkeySource: HotkeySource | undefined
 let activeHotkey = DEFAULT_ACCELERATOR
 let hotkeyNotice: string | undefined
@@ -176,8 +181,56 @@ function effectiveTheme(): ResolvedTheme {
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
 }
 
-function broadcastTheme(theme: ThemePreference): void {
-  mainWindow?.webContents.send('theme', theme)
+/** Reported in the panel when no provider is live; the picker lives in the header. */
+const PROVIDER_SELECTION_REASON = 'ASR 尚未就绪，暂时无法切换模型。'
+
+function describeProvider(): ProviderSummary {
+  const option =
+    sessionMode in PROVIDER_OPTIONS
+      ? PROVIDER_OPTIONS[sessionMode as SelectableAsrProviderId]
+      : undefined
+  return {
+    id: sessionMode,
+    label: option?.label ?? (sessionMode === 'fake' ? 'FAKE ASR（测试模式）' : 'ASR 不可用'),
+    selectable: false,
+    reason: option ? '在窗口顶部的模型下拉中切换。' : PROVIDER_SELECTION_REASON
+  }
+}
+
+function summarizeVocabulary(result: VocabularyLoadResult): VocabularySummary {
+  return {
+    path: vocabularyStore.file,
+    state: result.state,
+    replaceCount: result.options.vocabulary?.replace?.length ?? 0,
+    protectCount: result.options.vocabulary?.protect?.length ?? 0,
+    ...(result.message === undefined ? {} : { message: result.message })
+  }
+}
+
+/**
+ * The one read path for the settings panel. Theme comes from disk (so a
+ * hand-edited file is honoured); the hotkey is the accelerator actually live;
+ * the vocabulary file is re-read so this call doubles as "reload".
+ */
+async function readPreferencesView(): Promise<PreferencesView> {
+  const stored = await themeStore.loadPreferences()
+  if (stored.theme !== themePreference) {
+    themePreference = stored.theme
+    applyTheme()
+  }
+  const vocabulary = await vocabularyStore.loadDetailed()
+  postprocessOptions = vocabulary.options
+  return {
+    theme: themePreference,
+    hotkey: activeHotkey,
+    hotkeyMessage: hotkeyNotice,
+    vocabulary: summarizeVocabulary(vocabulary),
+    provider: describeProvider()
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function getAudio(): AudioInput {
@@ -219,6 +272,7 @@ function failSession(message: string): void {
   session?.fail(message)
 }
 
+
 function modelInfoFor(entry: ModelCatalogEntry, provider: AsrProvider): ModelInfo {
   return {
     id: entry.id,
@@ -242,10 +296,7 @@ function currentStatus(): AppStatus {
     state: session?.state ?? 'idle',
     message: session?.lastMessage,
     modelInfo: activeModelInfo,
-    asr: asrSelection(),
-    theme: themePreference,
-    hotkey: activeHotkey,
-    hotkeyMessage: hotkeyNotice
+    asr: asrSelection()
   }
 }
 
@@ -276,6 +327,7 @@ async function initializeProvider(): Promise<void> {
   activeModelInfo = undefined
   pendingSegmentFailure = undefined
 
+
   const selection = resolveAsrMode({
     env: process.env.JUSTSPEAK_ASR,
     preference: preferredProvider
@@ -287,6 +339,7 @@ async function initializeProvider(): Promise<void> {
     failSession(selection.message)
     return
   }
+
 
   // Experimental segmentation knobs fail closed: an invalid value must not
   // silently fall back to the single-shot path, or the user would believe
@@ -554,15 +607,49 @@ function createWindow(): void {
   }
 }
 
+/** Register a requested accelerator and report what is actually live. */
+async function applyHotkeyPreference(payload: unknown): Promise<HotkeySetResult> {
+  const requested = typeof payload === 'string' ? payload : ''
+  const rejected = (message: string): HotkeySetResult => ({
+    accelerator: activeHotkey,
+    requested,
+    ok: false,
+    fallbackUsed: false,
+    message
+  })
+  const parsed = parseAccelerator(payload)
+  if (!parsed.ok) return rejected(parsed.error.message)
+  if (!hotkeySource) return rejected('快捷键服务尚未就绪。')
+  // Re-registering unregisters the current accelerator, which would swallow
+  // the stop press mid-dictation; only a quiet session may rebind.
+  const currentState = session?.state ?? 'idle'
+  if (currentState !== 'idle' && currentState !== 'error') {
+    return rejected('录音或识别过程中不能更改快捷键。')
+  }
+
+  const outcome = await registerHotkeyWithFallback(hotkeySource, parsed.value.accelerator)
+  activeHotkey = outcome.accelerator
+  hotkeyNotice = outcome.message
+  if (outcome.message) console.warn('[hotkey]', outcome.message)
+  return {
+    accelerator: activeHotkey,
+    requested: parsed.value.accelerator,
+    ok: outcome.ok,
+    fallbackUsed: outcome.fallbackUsed,
+    message: outcome.message
+  }
+}
+
 app.whenReady().then(async () => {
   themeStore = new ThemeStore(app.getPath('userData'))
+  vocabularyStore = new VocabularyStore(app.getPath('userData'))
   const preferences = await themeStore.loadPreferences()
   themePreference = preferences.theme
   providerPreference = new ProviderPreferenceStore(app.getPath('userData'))
   preferredProvider = await providerPreference.load()
   applyTheme()
-  // Loaded once at startup; the settings UI that writes it is a later card.
-  postprocessOptions = await new VocabularyStore(app.getPath('userData')).load()
+  // Loaded once at startup; the panel's reload path refreshes this too.
+  postprocessOptions = (await vocabularyStore.loadDetailed()).options
   nativeTheme.on('updated', () => {
     // Only `system` follows the OS; pinned choices ignore the OS change.
     if (themePreference === 'system') applyTheme()
@@ -603,64 +690,84 @@ app.whenReady().then(async () => {
     }
     return switchAsrProvider(payload)
   })
-  ipcMain.handle('theme:set', async (event, payload: unknown): Promise<ThemePreference> => {
+  ipcMain.handle('preferences:get', async (event): Promise<PreferencesView> => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
-      console.warn('[theme] rejected untrusted sender')
-      return themePreference
+      console.warn('[preferences] rejected untrusted sender')
+      throw new Error('未授权的设置请求。')
     }
-    if (!isThemePreference(payload)) return themePreference
-    themePreference = payload
-    applyTheme()
-    broadcastTheme(themePreference)
-    try {
-      await themeStore.save(payload)
-    } catch (error) {
-      console.warn('[theme] failed to persist preference', error)
-    }
-    return themePreference
+    return readPreferencesView()
   })
-  ipcMain.handle('hotkey:set', async (event, payload: unknown): Promise<HotkeySetResult> => {
-    const requested = typeof payload === 'string' ? payload : ''
-    const rejected = (message: string): HotkeySetResult => ({
-      accelerator: activeHotkey,
-      requested,
-      ok: false,
-      fallbackUsed: false,
-      message
-    })
-    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
-      console.warn('[hotkey] rejected untrusted sender')
-      return rejected('未授权的请求。')
-    }
-    const parsed = parseAccelerator(payload)
-    if (!parsed.ok) return rejected(parsed.error.message)
-    if (!hotkeySource) return rejected('快捷键服务尚未就绪。')
-    // Re-registering unregisters the current accelerator, which would swallow
-    // the stop press mid-dictation; only a quiet session may rebind.
-    const currentState = session?.state ?? 'idle'
-    if (currentState !== 'idle' && currentState !== 'error') {
-      return rejected('录音或识别过程中不能更改快捷键。')
-    }
-
-    const outcome = await registerHotkeyWithFallback(hotkeySource, parsed.value.accelerator)
-    activeHotkey = outcome.accelerator
-    hotkeyNotice = outcome.message
-    if (outcome.message) console.warn('[hotkey]', outcome.message)
-    if (outcome.ok) {
-      try {
-        await themeStore.saveHotkey(outcome.accelerator)
-      } catch (error) {
-        console.warn('[hotkey] failed to persist preference', error)
+  ipcMain.handle(
+    'preferences:set',
+    async (event, payload: unknown): Promise<PreferencesSetResult> => {
+      if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+        console.warn('[preferences] rejected untrusted sender')
+        throw new Error('未授权的设置请求。')
       }
+      if (!isPlainObject(payload)) {
+        return {
+          ok: false,
+          message: '设置必须是一个对象。',
+          preferences: await readPreferencesView()
+        }
+      }
+      const unknownKeys = Object.keys(payload).filter(
+        (key) => key !== 'theme' && key !== 'hotkey'
+      )
+      if (unknownKeys.length > 0) {
+        return {
+          ok: false,
+          message: `未知的设置项：${unknownKeys.join('、')}。`,
+          preferences: await readPreferencesView()
+        }
+      }
+
+      let ok = true
+      let message: string | undefined
+      let hotkeyResult: HotkeySetResult | undefined
+      const update: { theme?: ThemePreference; hotkey?: string } = {}
+
+      if ('theme' in payload) {
+        if (isThemePreference(payload.theme)) {
+          update.theme = payload.theme
+        } else {
+          ok = false
+          message = '外观值无效，只接受 system、light 或 dark。'
+        }
+      }
+      if ('hotkey' in payload) {
+        hotkeyResult = await applyHotkeyPreference(payload.hotkey)
+        if (hotkeyResult.ok) {
+          update.hotkey = hotkeyResult.accelerator
+        } else {
+          ok = false
+          message ??= hotkeyResult.message
+        }
+      }
+
+      if (update.theme !== undefined || update.hotkey !== undefined) {
+        try {
+          const merged = await themeStore.update(update)
+          if (!merged.ok) {
+            ok = false
+            message ??= merged.rejected[0]?.reason ?? '设置值无效。'
+          } else if (update.theme !== undefined) {
+            // Persist before painting so disk and the window cannot disagree.
+            themePreference = update.theme
+            applyTheme()
+          }
+        } catch (error) {
+          ok = false
+          message ??= `保存设置失败：${error instanceof Error ? error.message : String(error)}`
+        }
+      }
+
+      const view = await readPreferencesView()
+      // One push path for the renderer's single copy, including partial applies.
+      mainWindow?.webContents.send('preferences:changed', view)
+      return { ok, preferences: view, hotkey: hotkeyResult, message }
     }
-    return {
-      accelerator: activeHotkey,
-      requested: parsed.value.accelerator,
-      ok: outcome.ok,
-      fallbackUsed: outcome.fallbackUsed,
-      message: outcome.message
-    }
-  })
+  )
 
   createWindow()
   void initializeProvider()

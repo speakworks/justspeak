@@ -5,8 +5,9 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_ACCELERATOR } from '../src/core/hotkey/accelerator'
 import { parseVocabularyConfig, postprocess } from '../src/core/postprocess'
+import { mergePreferences } from '../src/core/preferences/merge'
 import { ThemeStore, type ThemeStoreDeps } from '../src/main/theme-store'
-import { VOCABULARY_FILE, VocabularyStore } from '../src/main/vocabulary-store'
+import { VOCABULARY_FILE, VocabularyStore, type VocabularyStoreDeps } from '../src/main/vocabulary-store'
 
 const directories: string[] = []
 
@@ -125,6 +126,36 @@ describe('preferences store', () => {
     })
   })
 
+  it('writes nothing when the update rejects a value', async () => {
+    const dir = makeDir()
+    const store = new ThemeStore(dir)
+    await store.save('dark')
+    const before = await readFile(preferencesFile(dir), 'utf8')
+    const result = await store.update({ theme: 'sepia', hotkey: 'Space' })
+    expect(result.ok).toBe(false)
+    expect(await readFile(preferencesFile(dir), 'utf8')).toBe(before)
+    await expect(store.loadPreferences()).resolves.toEqual({
+      theme: 'dark',
+      hotkey: DEFAULT_ACCELERATOR
+    })
+  })
+
+  it('merges an update over unknown keys written by another feature', async () => {
+    const dir = makeDir()
+    await writeFile(
+      preferencesFile(dir),
+      JSON.stringify({ theme: 'light', future: { keep: true } }),
+      'utf8'
+    )
+    const store = new ThemeStore(dir)
+    await expect(store.update({ hotkey: 'alt+shift+j' })).resolves.toMatchObject({ ok: true })
+    expect(JSON.parse(await readFile(preferencesFile(dir), 'utf8'))).toEqual({
+      theme: 'light',
+      future: { keep: true },
+      hotkey: 'Alt+Shift+J'
+    })
+  })
+
   it('serialises concurrent saves so neither key is lost', async () => {
     const dir = makeDir()
     const slowDeps: ThemeStoreDeps = {
@@ -188,6 +219,78 @@ describe('preferences store', () => {
       theme: 'system',
       hotkey: DEFAULT_ACCELERATOR
     })
+  })
+})
+
+describe('preference merge', () => {
+  it('keeps unknown existing keys when an accepted patch is merged', () => {
+    const result = mergePreferences(
+      { theme: 'light', hotkey: 'Command+K', future: { keep: true }, count: 3 },
+      { hotkey: 'alt+shift+j' }
+    )
+    expect(result.ok).toBe(true)
+    expect(result.accepted).toEqual({ hotkey: 'Alt+Shift+J' })
+    expect(result.record).toEqual({
+      theme: 'light',
+      hotkey: 'Alt+Shift+J',
+      future: { keep: true },
+      count: 3
+    })
+  })
+
+  it('accepts a theme-only patch and leaves the hotkey untouched', () => {
+    const result = mergePreferences({ theme: 'dark', hotkey: 'Command+K' }, { theme: 'light' })
+    expect(result.ok).toBe(true)
+    expect(result.record).toEqual({ theme: 'light', hotkey: 'Command+K' })
+  })
+
+  it('rejects an invalid theme without changing any key', () => {
+    const result = mergePreferences({ theme: 'dark', hotkey: 'Command+K' }, { theme: 'sepia' })
+    expect(result.ok).toBe(false)
+    expect(result.rejected).toEqual([{ key: 'theme', reason: expect.stringContaining('外观值无效') }])
+    expect(result.accepted).toEqual({})
+    expect(result.record).toEqual({ theme: 'dark', hotkey: 'Command+K' })
+  })
+
+  it('rejects an invalid hotkey without changing any key', () => {
+    for (const hotkey of ['Space', 'Command+NoSuchKey', '', 7, null]) {
+      const result = mergePreferences({ theme: 'dark', hotkey: 'Command+K' }, { hotkey })
+      expect(result.ok).toBe(false)
+      expect(result.accepted).toEqual({})
+      expect(result.record).toEqual({ theme: 'dark', hotkey: 'Command+K' })
+      expect(result.rejected[0]?.key).toBe('hotkey')
+    }
+  })
+
+  it('rejects unknown patch keys instead of persisting them', () => {
+    const result = mergePreferences({ theme: 'dark' }, { theme: 'light', provider: 'qwen3' })
+    expect(result.ok).toBe(false)
+    expect(result.rejected).toEqual([
+      { key: 'provider', reason: expect.stringContaining('未知的设置项') }
+    ])
+    // A rejected patch is atomic: the valid half is not applied either.
+    expect(result.record).toEqual({ theme: 'dark' })
+  })
+
+  it('is atomic when one valid and one invalid value arrive together', () => {
+    const result = mergePreferences(
+      { theme: 'dark', hotkey: 'Command+K' },
+      { theme: 'light', hotkey: 'A' }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.accepted).toEqual({})
+    expect(result.record).toEqual({ theme: 'dark', hotkey: 'Command+K' })
+  })
+
+  it('treats a non-object patch or non-object file as empty', () => {
+    for (const patch of [null, 'x', 3, ['theme']]) {
+      const result = mergePreferences({ theme: 'dark' }, patch)
+      expect(result.ok).toBe(false)
+      expect(result.record).toEqual({ theme: 'dark' })
+    }
+    const fromArrayFile = mergePreferences(['theme'], { theme: 'light' })
+    expect(fromArrayFile.ok).toBe(true)
+    expect(fromArrayFile.record).toEqual({ theme: 'light' })
   })
 })
 
@@ -309,5 +412,65 @@ describe('vocabulary store', () => {
     )
     // The disabled rule is honoured from the same file.
     expect(postprocess('我我我', options).text).toBe('我我我')
+  })
+
+  it('reports a missing file as the default state', async () => {
+    const store = new VocabularyStore(makeDir())
+    await expect(store.loadDetailed()).resolves.toEqual({ options: {}, state: 'default' })
+    expect(store.file.endsWith(VOCABULARY_FILE)).toBe(true)
+  })
+
+  it('reports a loaded file so the panel can count its entries', async () => {
+    const dir = makeDir()
+    await writeFile(
+      path.join(dir, VOCABULARY_FILE),
+      JSON.stringify({
+        replace: [{ from: '库贝内特斯', to: 'Kubernetes' }],
+        protect: ['JustSpeak', 'FD2008']
+      }),
+      'utf8'
+    )
+    const result = await new VocabularyStore(dir).loadDetailed()
+    expect(result.state).toBe('loaded')
+    expect(result.message).toBeUndefined()
+    expect(result.options.vocabulary?.replace).toHaveLength(1)
+    expect(result.options.vocabulary?.protect).toHaveLength(2)
+  })
+
+  it('reports unreadable JSON with a reason instead of pretending it is empty', async () => {
+    const dir = makeDir()
+    await writeFile(path.join(dir, VOCABULARY_FILE), '{ not json', 'utf8')
+    const result = await new VocabularyStore(dir).loadDetailed()
+    expect(result.state).toBe('unreadable')
+    expect(result.options).toEqual({})
+    expect(result.message).toContain('不是有效的 JSON')
+  })
+
+  it('reports a non-object payload as unreadable', async () => {
+    const dir = makeDir()
+    await writeFile(path.join(dir, VOCABULARY_FILE), '"hello"', 'utf8')
+    const result = await new VocabularyStore(dir).loadDetailed()
+    expect(result.state).toBe('unreadable')
+    expect(result.message).toContain('JSON 对象')
+  })
+
+  it('reports an I/O failure as unreadable', async () => {
+    const failure = Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    const deps: VocabularyStoreDeps = {
+      readFile: async () => {
+        throw failure
+      },
+      writeFile,
+      mkdir
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const result = await new VocabularyStore(makeDir(), deps).loadDetailed()
+      expect(result.state).toBe('unreadable')
+      expect(result.message).toContain('无法读取')
+      expect(warn).toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

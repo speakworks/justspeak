@@ -42,14 +42,9 @@ export interface AppStatus {
   message?: string
   modelInfo?: ModelInfo
   asr?: AsrProviderSelection
-  theme?: ThemePreference
-  /** The accelerator currently registered with the OS; `''` means none. */
-  hotkey?: string
-  /** Non-empty when the stored binding was refused and a fallback was used. */
-  hotkeyMessage?: string
 }
 
-/** Result of a `hotkey:set` round trip; `accelerator` is what is actually live. */
+/** Result of a preference hotkey round trip; `accelerator` is what is live. */
 export interface HotkeySetResult {
   accelerator: string
   requested: string
@@ -63,6 +58,59 @@ export type ThemePreference = 'system' | 'light' | 'dark'
 
 /** What the renderer should paint after resolving `system` against the OS. */
 export type ResolvedTheme = 'light' | 'dark'
+
+/**
+ * The vocabulary file is separate from `preferences.json`, but its summary
+ * travels on the same preferences surface so the panel never reads disk itself.
+ */
+export interface VocabularySummary {
+  /** Absolute path of `userData/vocabulary.json`. */
+  path: string
+  /** `default`: no file yet; `loaded`: parsed; `unreadable`: present but bad. */
+  state: 'default' | 'loaded' | 'unreadable'
+  replaceCount: number
+  protectCount: number
+  /** Why the file could not be used; only set when `state` is `unreadable`. */
+  message?: string
+}
+
+/**
+ * Provider selection is not implemented yet (it needs the second-provider
+ * work). The row is still reported truthfully instead of being hidden.
+ */
+export interface ProviderSummary {
+  id: string
+  label: string
+  /** Read-only until a second provider ships. */
+  selectable: false
+  /** What is missing before this setting can be changed. */
+  reason: string
+}
+
+/** Everything the settings panel renders, read from one place in main. */
+export interface PreferencesView {
+  theme: ThemePreference
+  /** The accelerator currently registered with the OS; `''` means none. */
+  hotkey: string
+  /** Non-empty when the stored binding was refused and a fallback was used. */
+  hotkeyMessage?: string
+  vocabulary: VocabularySummary
+  provider: ProviderSummary
+}
+
+/** Only these keys can be written; anything else is rejected, not stored. */
+export interface PreferencesPatch {
+  theme?: ThemePreference
+  hotkey?: string
+}
+
+export interface PreferencesSetResult {
+  ok: boolean
+  preferences: PreferencesView
+  /** Present when the patch carried a hotkey, mirroring the OS outcome. */
+  hotkey?: HotkeySetResult
+  message?: string
+}
 
 /**
  * One worklet batch. `samples` is 16 kHz mono PCM16; main rejects anything
@@ -91,11 +139,14 @@ export interface JustSpeakApi {
   sendCaptureStopped: (summary: RecordingSummary) => void
   sendCaptureFailed: (message: string) => void
   sendPcmBatch: (batch: PcmBatch) => void
-  setTheme: (theme: ThemePreference) => Promise<ThemePreference>
-  setHotkey: (accelerator: string) => Promise<HotkeySetResult>
   setAsrProvider: (provider: SelectableAsrProviderId) => Promise<AppStatus>
+  /** Reads theme/hotkey/vocabulary from main; main re-reads disk each call. */
+  getPreferences: () => Promise<PreferencesView>
+  /** Writes one or more preferences through the single preferences surface. */
+  setPreferences: (patch: PreferencesPatch) => Promise<PreferencesSetResult>
   onState: (listener: (state: AppState, message?: string) => void) => () => void
   onTranscript: (listener: (event: TranscriptEvent) => void) => () => void
   onRecordingCommand: (listener: (command: RecordingCommand) => void) => () => void
-  onThemeChanged: (listener: (theme: ThemePreference) => void) => () => void
+  /** Fires after main accepts a preference write or re-reads it. */
+  onPreferencesChanged: (listener: (preferences: PreferencesView) => void) => () => void
 }

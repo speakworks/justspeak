@@ -32,16 +32,18 @@ The following decisions are frozen for this design:
 - v0.1 does **not** require live partial transcripts. The default ASR mode is
   final-only local processing.
 - The Swift helper remains responsible for OS-level work: global hotkey/event tap,
-  focused-application context, text injection, permission status, and device metadata.
+  focused-application context, permission status, and device metadata. Text injection
+  ships in v0.1 as the main-process clipboard + `Cmd+V` path (ADR-0003); direct
+  Accessibility insertion is a later upgrade.
 - No paid services are required. Cloud ASR remains an explicit opt-in adapter.
 - The exact VAD model and chunk size are validated in the audio spike, not fixed here.
 
-**Conflict with the accepted architecture.** ARCHITECTURE.md Option C rejected renderer
-capture for v0.1 and assigned `AVAudioEngine` capture to the Swift helper; ADR-0002 open
-question 2 deferred the choice to a latency spike. The frozen card for this document
-overrides that default: renderer Web Audio is the capture path, with the Swift helper
-supplying device/permission support. This document records the deviation and the
-follow-up needed to amend ARCHITECTURE.md. The helper capture path remains the
+**Agreement with the accepted architecture.** ARCHITECTURE.md Option C originally
+rejected renderer capture for v0.1 and assigned `AVAudioEngine` capture to the Swift
+helper; the frozen card for this document overrode that default. ARCHITECTURE.md and
+ADR-0003 have since been amended to record the shipped renderer Web Audio capture path,
+with the Swift helper supplying device/permission support, and ADR-0003 item 8 tracks the
+open 16 kHz exception. The helper capture path remains the
 comparator and the documented fallback if the renderer path misses the gates in
 [Validation gates](#validation-gates-audio-spike).
 
@@ -357,7 +359,7 @@ flowchart LR
   subgraph Helper["Swift helper"]
     HK["Hotkey / event tap"]
     Dev["Permission + device metadata"]
-    Inj["Text injection"]
+    Inj["Text injection (later; v0.1 uses main clipboard + Cmd+V)"]
   end
 
   subgraph Worker["Worker / utility process"]
@@ -593,20 +595,22 @@ Concretely:
 This design changes a load-bearing rule in ARCHITECTURE.md: the renderer now receives
 raw audio, and microphone permission is granted to the renderer's origin rather than
 being exclusively owned by the Swift helper. That is a deliberate, frozen product
-decision, not an oversight. It requires a follow-up docs card to amend ARCHITECTURE.md
-and ADR-0002 open question 2. Until then, treat this document as the capture-specific
-override and keep these mitigations:
+decision, not an oversight. ARCHITECTURE.md now records this path, and ADR-0003 item 8
+tracks the open 16 kHz exception; ADR-0002 open question 2 (the helper `AVAudioEngine`
+comparison) remains open. Keep these mitigations:
 
-- The preload bridge exposes only `startCapture`, `stopCapture`, `cancelCapture`, and an
-  audio-frame channel; no generic IPC, no Node, no file or network access.
+- The preload bridge exposes only `sendCaptureStarted`, `sendCaptureStopped`,
+  `sendCaptureFailed`, and `sendPcmBatch`, plus the `recording:start`/`recording:stop`
+  commands; no generic IPC, no Node, no file or network access.
 - Audio frames are transferred as `ArrayBuffer`s, not copied, and are never persisted
   or logged by the renderer.
 - The renderer remains sandboxed with a strict CSP and no remote content. Microphone
   permission is granted only to the app's own origin, never to a navigation target.
-- The core remains the owner of VAD, resampling, ring buffer, chunking, ASR adapters,
-  and post-processing; capture is a shell port, not core logic.
-- The helper remains the owner of the hotkey, focused-app context, injection,
-  permission diagnostics, and device metadata.
+- The core remains the owner of VAD, ring buffer, chunking, ASR adapters, and
+  post-processing; capture is a shell port, not core logic. The renderer delivers
+  16 kHz frames, so the core does not resample (ADR-0003 item 8).
+- The helper remains the owner of the hotkey, focused-app context, permission
+  diagnostics, and device metadata (not text injection in v0.1).
 
 If a future security review rejects renderer audio access, the fallback is Architecture
 2 (helper `AVAudioEngine` capture) with the same core pipeline. The reversal cost is the
@@ -652,7 +656,7 @@ comparable.
 | ASR inference (10 s utterance, local) | p50 ≤ 1.2 s, p95 ≤ 2.5 s | ASR start → ASR result timestamp | Qwen3-ASR 0.6B Q8_0 class (SenseVoice lite fallback); measure on base Apple Silicon |
 | Post-processing (rule-based) | ≤ 150 ms | ASR result → post-processed text | Optional LLM polish is separate: ≤ 800 ms and opt-in |
 | **Stop → final transcript** | p50 ≤ 1.5 s, p95 ≤ 3 s | Stop timestamp → post-processed text | Architecture target; includes VAD flush, ASR, post-processing |
-| Final text → injection acknowledged | ≤ 100 ms | Injection command → helper ack | Accessibility insert; clipboard fallback may add time |
+| Final text → injection acknowledged | ≤ 100 ms | Injection command → paste ack | v0.1 clipboard + `Cmd+V` via `osascript`; Accessibility insert is later |
 | **Stop → text at cursor** | p50 ≤ 1.6 s, p95 ≤ 3.1 s | Stop timestamp → injection ack | Derived from the two rows above |
 | Cancel → microphone released | ≤ 100 ms | Cancel timestamp → track stopped | Must also release on renderer error |
 | Cloud streaming (optional, future) | Stop → final ≤ 2.0 s p95 | Stop → provider final | Typeless observed 1.4–1.9 s for ≤13 s utterances (E3); network-dependent |

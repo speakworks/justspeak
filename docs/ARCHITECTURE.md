@@ -58,7 +58,7 @@ flowchart LR
   end
 
   subgraph ASR["ASR runtime"]
-    Local["Local sidecar (whisper.cpp / sherpa-onnx)"]
+    Local["Local child process (transcribe-cli)"]
     Cloud["Cloud provider (opt-in, HTTPS/WSS)"]
   end
 
@@ -155,7 +155,7 @@ The boundary rules are the load-bearing part:
 | **Electron main** | Node.js + TypeScript | App lifecycle, windows/tray/menu, session state machine, core host, helper client, ASR provider selection, IPC validation, settings, history persistence, auto-update, clipboard/paste injection (v0.1) | Audio DSP internals, UI rendering, direct OS injection |
 | **Preload** | Isolated world, TypeScript | Narrow typed API over `contextBridge`, event subscriptions, request/response wrappers | Business logic, Node module exposure, helper access |
 | **Renderer** | Chromium, sandboxed, React 19 | Settings UI, history view, recording overlay, permission onboarding, error display, microphone capture (Web Audio + AudioWorklet) | Node APIs, file writes, helper access, provider keys, transcript post-processing |
-| **`src/core`** | TypeScript, framework-neutral | Audio frame types, resampling/ring buffer, VAD/endpointing/chunking, ASR provider interfaces and adapters, post-processing, model catalog/manager, transcription settings schema, result/error types | Electron/React/DOM imports, OS APIs, window or IPC knowledge |
+| **`src/core`** | TypeScript, framework-neutral | Audio frame types, ring buffer, VAD/endpointing/chunking, ASR provider interfaces and adapters, post-processing, model catalog/manager, transcription settings schema, result/error types | Electron/React/DOM imports, OS APIs, window or IPC knowledge |
 | **Swift helper** | Native macOS process (v0.1 helper not yet shipped) | Global hotkey/event tap, focused-app/input context, permission status, Keychain access; native text injection and `AVAudioEngine` capture are later/fallback paths | Product policy, network calls, transcript storage, UI |
 | **ASR runtime** | Local child process (`transcribe-cli`) or remote service | Speech-to-text inference; v0.1 returns one final transcript | UI, injection, settings |
 | **Storage** | Main process, local files | Settings, opt-in history, model metadata | Audio retention by default, plaintext secrets |
@@ -190,8 +190,9 @@ The core is the reusable product logic described by ADR-0001. It is written as p
 TypeScript with injected ports, so it can run in the main process today and in a utility
 process or a different shell later. It exposes:
 
-- Audio pipeline: frame normalization, resampling to the ASR rate, ring buffer, VAD,
-  endpointing, and chunking.
+- Audio pipeline: frame normalization, ring buffer, VAD, endpointing, and chunking. The
+  shipped v0.1 renderer delivers 16 kHz PCM and the core does not resample; owning
+  resampling at the boundary is open in ADR-0003 (item 8).
 - ASR provider interface: capability declaration (v0.1 providers declare `streaming:
   false`), final result, cancellation, and a typed error taxonomy.
 - Provider adapters: local sidecar and cloud HTTP/WebSocket implementations behind the
@@ -499,8 +500,8 @@ architecture shape.
    Decide from measured main-thread contention, not speculation.
 2. **Audio capture fallback:** the renderer `getUserMedia` path is shipped; the latency and
    quality spike, and the helper `AVAudioEngine` fallback comparison, remain open.
-3. **Local ASR runtime:** whisper.cpp sidecar versus sherpa-onnx versus another engine;
-   separate card, with quality and latency measurements.
+3. **Local ASR runtime:** resolved for v0.1 to the pinned `transcribe.cpp` v0.4.1 CLI;
+   whisper.cpp and sherpa-onnx remain fallback comparators for a later spike.
 4. **Partials in v0.2:** v0.1 is final-only (`streaming: false`); which provider adds
    partial hypotheses, and what the UX should show while waiting, remains open.
 5. **Injection strategy:** how often Accessibility insert works across target apps versus

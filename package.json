@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "e2e": "pnpm build && playwright test",
     "setup:asr": "node scripts/setup-asr.mjs",
     "bench:asr": "tsx scripts/bench-asr.ts",
     "notices": "node scripts/notices.mjs",
@@ -25,6 +26,7 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@swc/core": "^1.0.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",

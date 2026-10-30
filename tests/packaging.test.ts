@@ -86,11 +86,15 @@ describe('license texts travel with the app', () => {
         `no expected text registered for "${component}" in THIRD_PARTY_NOTICES.md`
       ).toBeDefined()
     }
-    expect(COMPONENT_TEXTS.react.length).toBeGreaterThan(0)
+    for (const registered of Object.keys(COMPONENT_TEXTS)) {
+      expect(components, `${registered} is registered but no longer listed`).toContain(registered)
+    }
   })
 
-  it('carries the registered text for every component, one file per holder', () => {
-    // Removing any single one of these must fail: the holder differs per file.
+  it('carries the registered text for every component', () => {
+    // Binding a component to its own filename is what makes removal fail; the
+    // three Meta MIT texts are byte-identical, so a family match would let any
+    // one of them stand in for the others.
     for (const [component, files] of Object.entries(COMPONENT_TEXTS)) {
       for (const file of files) {
         expect(shipped, `${component} is missing ${file}`).toContain(file)
@@ -102,6 +106,15 @@ describe('license texts travel with the app', () => {
     for (const source of ELECTRON_TEXTS) {
       expect(existsSync(path.join(ROOT, source)), `${source} is absent`).toBe(true)
     }
+  })
+
+  it('ships the project license, which the notices file links to', () => {
+    expect(shipped).toContain('MIT-JustSpeak.txt')
+    expect(readFileSync(path.join(ROOT, 'licenses', 'MIT-JustSpeak.txt'), 'utf8')).toBe(
+      readFileSync(path.join(ROOT, 'LICENSE'), 'utf8')
+    )
+    // `[LICENSE](LICENSE)` in the notices file resolves next to it in the bundle.
+    expect(config).toContain('from: LICENSE')
   })
 
   it('ships the notices and the license directory in the packaged app', () => {

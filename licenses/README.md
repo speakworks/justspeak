@@ -20,8 +20,8 @@ only duplicate what the Electron distribution already contains.
 | `MIT-transcribe.cpp.txt` | MIT | `transcribe.cpp` ASR runtime (pinned v0.4.1) |
 | `Apache-2.0.txt` | Apache-2.0 | Qwen3-ASR 0.6B weights, and any Apache-2.0 code |
 | `FunASR-Model-License-1.1.txt` | FunASR-Model-License-1.1 | SenseVoice Small weights |
-| `NOTICE-Qwen3-ASR-0.6B-gguf.txt` | Apache-2.0 §4(d) | Qwen3-ASR GGUF conversion: what the conversion changed |
-| `NOTICE-SenseVoiceSmall-gguf.txt` | Apache-2.0 §4(d) | SenseVoice GGUF conversion: what the conversion changed |
+| `NOTICE-Qwen3-ASR-0.6B-gguf.txt` | Apache-2.0 §4(d) | Qwen3-ASR GGUF conversion: reproduces the conversion repo's NOTICE (§4(b) source of the change statement) |
+| `NOTICE-SenseVoiceSmall-gguf.txt` | Apache-2.0 §4(d) | SenseVoice GGUF conversion: reproduces the conversion repo's NOTICE (§4(b) source of the change statement) |
 | `Electron-LICENSE.txt` | MIT | Electron (copied at build time) |
 | `Electron-LICENSES.chromium.html` | Chromium's component licenses | Chromium and Node.js inside Electron (copied at build time) |
 
@@ -39,9 +39,9 @@ What the two conversion repositories actually carry, checked on 2026-10-31:
   License v1.1 and a `NOTICE` of the same shape.
 
 So the conversions do not introduce different terms; the texts above are the ones
-that govern them. Still open with counsel, and tracked in `docs/LICENSING.md`:
-whether the maintainers' informal clarification covers conversions at all, and
-the exact attribution wording FunASR §2.2 requires.
+that govern them. Still open, and tracked in `docs/LICENSING.md` for review before
+any commercial release: whether the maintainers' informal clarification covers
+conversions at all, and the exact attribution wording FunASR §2.2 requires.
 
 ## Keeping this in sync
 

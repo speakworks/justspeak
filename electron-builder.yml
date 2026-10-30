@@ -35,6 +35,10 @@ extraResources:
   # what THIRD_PARTY_NOTICES.md promises (see licenses/README.md).
   - from: THIRD_PARTY_NOTICES.md
     to: THIRD_PARTY_NOTICES.md
+  # The notices file links `[LICENSE](LICENSE)`; without this the link is dead
+  # inside the bundle, which carries no root LICENSE otherwise.
+  - from: LICENSE
+    to: LICENSE
   - from: licenses
     to: licenses
   # Electron's own texts travel with its distribution; copy them from there

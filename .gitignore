@@ -43,3 +43,8 @@ target/
 
 # Local ASR models and runtime (never commit weights)
 models/
+
+# Real speech samples and their local-only results (personal voice data)
+bench/real/
+bench/results/*-real.json
+bench/reports/*-real.md

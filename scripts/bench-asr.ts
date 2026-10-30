@@ -5,9 +5,10 @@
  * fixture, so the measured stop→final includes PCM validation, WAV encoding,
  * temp-file write, CLI spawn, model load, inference, and parsing.
  *
- * Run: pnpm bench:asr [--runs 3]
+ * Run: pnpm bench:asr [--runs 3]        synthetic smoke benchmark
+ *      pnpm bench:asr --real            real recordings from bench/real/
  * Output: bench/results/<date>-<commit>.json + bench/reports/<date>-qwen3-asr.md
- * The JSON is content-free (no transcript or audio); only metrics and hashes.
+ * The synthetic JSON is content-free (no transcript or audio); only metrics and hashes.
  */
 import { spawnSync } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
@@ -21,10 +22,9 @@ import {
   parseModelCatalog,
   toModelDescriptor
 } from '../src/core/asr/model-catalog'
-import { readWavInfo } from '../src/core/asr/wav'
-import type { AudioInput } from '../src/core/asr/types'
 import { TranscribeCliRunner } from '../src/main/asr/cli-runner'
 import { sha256File } from '../src/main/asr/model-manager'
+import { decodeWavFile, runRealBench } from './bench-real'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -82,19 +82,6 @@ function characterErrorRate(reference: string, hypothesis: string): number {
   return editDistance(ref, hyp) / ref.length
 }
 
-async function decodeWav(file: string): Promise<AudioInput> {
-  const bytes = await readFile(file)
-  const info = readWavInfo(bytes)
-  if (info.sampleRate !== 16000 || info.channels !== 1 || info.bitsPerSample !== 16) {
-    throw new Error('fixture must be 16 kHz mono PCM16')
-  }
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const samples = info.dataBytes / 2
-  const pcm = new Int16Array(samples)
-  for (let i = 0; i < samples; i += 1) pcm[i] = view.getInt16(info.dataOffset + i * 2, true)
-  return { pcm, sampleRate: 16000, channels: 1, durationMs: info.durationMs }
-}
-
 interface CliProfile {
   rssBytes: number | null
   pureInferenceMs: number | null
@@ -145,7 +132,7 @@ async function main(): Promise<void> {
   if (!existsSync(cliPath)) throw new Error(`runtime missing: ${cliPath}; run pnpm setup:asr`)
   if (!existsSync(modelPath)) throw new Error(`model missing: ${modelPath}; run pnpm setup:asr`)
 
-  const audio = await decodeWav(fixturePath)
+  const audio = await decodeWavFile(fixturePath)
   const modelSha = await sha256File(modelPath)
   if (modelSha !== model.files[0].sha256) {
     throw new Error(`model SHA-256 mismatch: ${modelSha} != ${model.files[0].sha256}`)
@@ -326,4 +313,8 @@ ${runRows}
   console.log(`[bench] ${history.length} result file(s) recorded`)
 }
 
-await main()
+if (args.includes('--real')) {
+  await runRealBench()
+} else {
+  await main()
+}

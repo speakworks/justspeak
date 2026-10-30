@@ -3,6 +3,7 @@
   "version": "0.1.0-demo.0",
   "private": true,
   "description": "Local-first voice dictation for macOS",
+  "author": "FD2008",
   "type": "module",
   "main": "./out/main/index.js",
   "packageManager": "pnpm@9.6.0",

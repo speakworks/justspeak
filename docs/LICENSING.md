@@ -273,7 +273,9 @@ Provenance requirements already specified by the project:
 - [x] `LICENSE` is the MIT text with the project copyright line (E2).
 - [x] `README.md` links the project license (E2).
 - [x] Create `THIRD_PARTY_NOTICES.md` at the repository root (`pnpm notices`).
-- [ ] Add license texts (or a `licenses/` directory) for every shipped runtime and model.
+- [x] Add license texts (or a `licenses/` directory) for every shipped runtime and model —
+      `licenses/` carries one file per component plus the canonical Apache-2.0 and FunASR texts,
+      and `tests/packaging.test.ts` fails when an identifier in the notices file has no text.
 - [ ] Add the third-party notices link to README and the app About window.
 - [ ] Add a license scan and SBOM generation to the release process
       (`docs/PACKAGING-RELEASE.md` already calls for an SBOM).

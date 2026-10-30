@@ -53,8 +53,8 @@ Pinned local ASR runtime used by the first-run model path.
 | transcribe.cpp | 0.4.1 | MIT | https://github.com/handy-computer/transcribe.cpp | Pinned runtime (tag v0.4.1, commit 4d7c1ccefd39e5a9ea36cca5f8fefc6dcc14b99b). |
 ## License texts
 
-This file records license identifiers and sources. A distribution must also carry the
-full license text for each listed component (or a `licenses/` directory with one file per
-distinct license), including the Apache-2.0 `NOTICE` content when upstream provides it.
-For Electron, preserve the `LICENSE` and `LICENSES.chromium.html` files that ship with
-the Electron distribution.
+This file records license identifiers and sources; an identifier alone is not a license
+grant. The full text each identifier points at ships beside this file in `licenses/`
+(one file per component, plus the canonical Apache-2.0 text), together with Electron's
+`LICENSE` and `LICENSES.chromium.html` copied from the Electron distribution. The
+packaged app carries both this file and `licenses/` under `Contents/Resources/`.

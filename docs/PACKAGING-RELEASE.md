@@ -425,6 +425,7 @@ targets described below.
 | Model weights | **Not bundled.** The installer contains no `.gguf` files. Only the small `resources/models.json` catalog is copied to the app's resources directory; the ~850 MB Qwen3-ASR weights are downloaded on first run after consent, exactly as designed in "Model Distribution Design". |
 | Network at build time | The build uses the Electron installation in `node_modules` (`electronDist`) and does not rebuild native modules (`npmRebuild: false`), so packaging does not fetch a runtime. |
 | Notices | `pnpm notices` regenerates [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) from the production dependency tree and `resources/models.json`. The script is deterministic: sorting and the absence of timestamps make a second run byte-identical. |
+| License texts | **Shipped.** `extraResources` copies `THIRD_PARTY_NOTICES.md` and `licenses/` into `Contents/Resources/`, together with Electron's `LICENSE` and `LICENSES.chromium.html`. An identifier in the notices file is not a license grant; the text it points at travels with the app. See [`licenses/README.md`](../licenses/README.md). |
 
 Before a public release, supply signing credentials, add the hardened-runtime and
 entitlements configuration described in the next section, and verify the signed build on

@@ -30,6 +30,19 @@ asar: true
 extraResources:
   - from: resources/models.json
     to: resources/models.json
+  # An identifier in the notices file is not a license grant: ship the texts the
+  # identifiers point at, next to the notices, so a distributed copy carries
+  # what THIRD_PARTY_NOTICES.md promises (see licenses/README.md).
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
+  - from: licenses
+    to: licenses
+  # Electron's own texts travel with its distribution; copy them from there
+  # instead of committing 5 MB of generated HTML.
+  - from: node_modules/electron/dist/LICENSE
+    to: licenses/Electron-LICENSE.txt
+  - from: node_modules/electron/dist/LICENSES.chromium.html
+    to: licenses/Electron-LICENSES.chromium.html
 
 artifactName: ${productName}-${version}-${arch}.${ext}
 

@@ -290,11 +290,11 @@ ${summary}
 
 ${sections.join('\n')}## License texts
 
-This file records license identifiers and sources. A distribution must also carry the
-full license text for each listed component (or a \`licenses/\` directory with one file per
-distinct license), including the Apache-2.0 \`NOTICE\` content when upstream provides it.
-For Electron, preserve the \`LICENSE\` and \`LICENSES.chromium.html\` files that ship with
-the Electron distribution.
+This file records license identifiers and sources; an identifier alone is not a license
+grant. The full text each identifier points at ships beside this file in \`licenses/\`
+(one file per component, plus the canonical Apache-2.0 text), together with Electron's
+\`LICENSE\` and \`LICENSES.chromium.html\` copied from the Electron distribution. The
+packaged app carries both this file and \`licenses/\` under \`Contents/Resources/\`.
 `
 }
 

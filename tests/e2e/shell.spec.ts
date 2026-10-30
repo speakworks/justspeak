@@ -114,11 +114,53 @@ async function restoreClipboard(app: ElectronApplication): Promise<void> {
     ).__justspeakE2EClipboard
     if (!saved) return
     if (saved.items.length > 0) {
-      await clipboard.write(saved.items.map((data) => new ClipboardItem(data as never)))
+      try {
+        await clipboard.write(saved.items.map((data) => new ClipboardItem(data as never)))
+      } catch {
+        // Rebuilding a rich item can fail (an unsupported type, say). The text
+        // half is better than leaving the transcript behind.
+        if (saved.text) await clipboard.writeText(saved.text)
+        else clipboard.clear()
+      }
     } else {
       clipboard.clear()
     }
   })
+}
+
+type PasteShim = ReturnType<typeof makePasteShim>
+
+/**
+ * One scenario against one fresh app, with teardown that cannot be skipped:
+ * the shim directory and the Electron process are released even when the
+ * scenario throws before either handle reached the caller — which is exactly
+ * what happens when `launch()` itself rejects.
+ */
+async function withApp(
+  scenario: (context: { app: ElectronApplication; page: Page; shim: PasteShim }) => Promise<void>,
+  pasteMode: 'ok' | 'fail' = 'ok'
+): Promise<void> {
+  const shim = makePasteShim()
+  shim.setMode(pasteMode)
+  let app: ElectronApplication | undefined
+  try {
+    const launched = await launch({ PATH: `${shim.dir}:${process.env.PATH ?? ''}` })
+    app = launched.app
+    await snapshotClipboard(app)
+    await scenario({ app: launched.app, page: launched.page, shim })
+  } finally {
+    if (app) {
+      // The paste step may have left the transcript on the real clipboard;
+      // hand the developer their own contents back before the app goes away.
+      try {
+        await restoreClipboard(app)
+      } catch (error) {
+        console.log('RESTORE_FAILED', error)
+      }
+      await app.close()
+    }
+    rmSync(shim.dir, { recursive: true, force: true })
+  }
 }
 
 /**
@@ -144,13 +186,10 @@ test.describe('JustSpeak shell', () => {
   test.describe.configure({ mode: 'serial' })
 
   test('launches the fake provider, dictates, and returns to idle', async () => {
-    const shim = makePasteShim()
-    const { app, page } = await launch({ PATH: `${shim.dir}:${process.env.PATH ?? ''}` })
-    try {
+    await withApp(async ({ app, page, shim }) => {
       // 1. Launch: sandboxed preload is live, fake mode is idle, placeholder shown.
       await expect(page.locator('.status')).toHaveText('就绪')
       await hideWindow(app)
-      await snapshotClipboard(app)
       const clipboardBefore = await app.evaluate(({ clipboard }) => clipboard.readText())
       await expect(page.locator('.transcript-text')).toHaveText('还没有文本。按快捷键说一句话。')
       const hasApi = await page.evaluate(
@@ -195,20 +234,13 @@ test.describe('JustSpeak shell', () => {
       // 5. A successful paste put the developer's clipboard back (spec:
       //    dictation-session "Successful paste restores the previous clipboard").
       expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(clipboardBefore)
-    } finally {
-      await app.close()
-      rmSync(shim.dir, { recursive: true, force: true })
-    }
+    })
   })
 
   test('keeps the transcript visible when the paste step fails', async () => {
-    const shim = makePasteShim()
-    shim.setMode('fail')
-    const { app, page } = await launch({ PATH: `${shim.dir}:${process.env.PATH ?? ''}` })
-    try {
+    await withApp(async ({ app, page, shim }) => {
       await expect(page.locator('.status')).toHaveText('就绪')
       await hideWindow(app)
-      await snapshotClipboard(app)
       await page.evaluate(() =>
         (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording()
       )
@@ -225,16 +257,6 @@ test.describe('JustSpeak shell', () => {
       // The failed paste deliberately keeps the text on the clipboard so the
       // user can press Cmd+V by hand (spec: dictation-session).
       expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(FAKE_TRANSCRIPT)
-    } finally {
-      // That transcript is still sitting on the real clipboard; give the
-      // developer their previous contents back before the app goes away.
-      try {
-        await restoreClipboard(app)
-      } catch (error) {
-        console.log('RESTORE_FAILED', error)
-      }
-      await app.close()
-      rmSync(shim.dir, { recursive: true, force: true })
-    }
+    }, 'fail')
   })
 })

@@ -120,7 +120,7 @@ export function planPreferenceSet(patch: unknown): PreferenceSetPlan {
   return { ok: true, update: result.accepted }
 }
 
-/** True when a merge result actually changes one of the two stored values. */
+/** True when the merge accepted at least one of the two writable values. */
 export function hasAcceptedChange(result: MergeResult): boolean {
   return result.accepted.theme !== undefined || result.accepted.hotkey !== undefined
 }

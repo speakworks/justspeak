@@ -74,10 +74,6 @@ export interface VocabularySummary {
   message?: string
 }
 
-/**
- * Provider selection is not implemented yet (it needs the second-provider
- * work). The row is still reported truthfully instead of being hidden.
- */
 export interface ProviderSummary {
   id: string
   label: string

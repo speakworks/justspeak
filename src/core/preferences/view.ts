@@ -91,6 +91,51 @@ export function describeVocabulary(vocabulary: VocabularySummary): SettingState 
   }
 }
 
+/** Why a provider row cannot be changed right now, in the user's words. */
+export const PROVIDER_NOT_READY_REASON = 'ASR 尚未就绪，暂时无法切换模型。'
+export const PROVIDER_FAKE_REASON = '测试模式下不选择模型。'
+export const PROVIDER_HEADER_HINT = '在窗口顶部的模型下拉中切换。'
+
+export interface ProviderLiveState {
+  /** The mode main is running, or trying to run. */
+  mode: string
+  /** True only when an adapter is actually constructed and the session is usable. */
+  live: boolean
+  /** Label of `mode`, when that mode is a real selectable provider. */
+  label?: string
+}
+
+/**
+ * The provider row's truth, derived from liveness rather than from the mode id.
+ * A mode id survives every failure path — a missing model, a bad
+ * `JUSTSPEAK_ASR`, an invalid segmentation config — so keying off it alone
+ * would promise a switch that the running app cannot deliver.
+ */
+export function summarizeProvider(state: ProviderLiveState): ProviderSummary {
+  if (state.mode === 'fake') {
+    return {
+      id: 'fake',
+      label: state.label ?? 'FAKE ASR（测试模式）',
+      selectable: false,
+      reason: PROVIDER_FAKE_REASON
+    }
+  }
+  if (!state.live || state.label === undefined) {
+    return {
+      id: state.mode,
+      label: state.label ?? 'ASR 不可用',
+      selectable: false,
+      reason: PROVIDER_NOT_READY_REASON
+    }
+  }
+  return {
+    id: state.mode,
+    label: state.label,
+    selectable: true,
+    reason: PROVIDER_HEADER_HINT
+  }
+}
+
 export function describeProvider(provider: ProviderSummary): SettingState {
   const reason = provider.reason.trim() || '暂不支持更改。'
   if (!provider.selectable) {

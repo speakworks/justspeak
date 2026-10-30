@@ -1,7 +1,7 @@
 # settings-surface Specification
 
 ## Purpose
-Defines the single settings surface: one preferences IPC path backed by `userData/preferences.json`, a panel reachable from the main window, honest default/override/unavailable labels, inline validation, a window that never gains a page scrollbar, and a read-only provider row until provider selection exists.
+Defines the single settings surface: one preferences IPC path backed by `userData/preferences.json`, a panel reachable from the main window, honest default/override/unavailable labels, inline validation, a window that never gains a page scrollbar, and a read-only provider row that points at the header picker.
 
 ## Requirements
 

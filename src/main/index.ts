@@ -33,6 +33,7 @@ import { postprocess, type PostprocessOptions } from '../core/postprocess'
 import { SessionController } from '../core/session/session-controller'
 import { consumePendingNotice } from '../core/session/state-notice'
 import { planPreferenceSet } from '../core/preferences/merge'
+import { summarizeProvider } from '../core/preferences/view'
 import type {
   AppStatus,
   AsrProviderSelection,
@@ -181,20 +182,21 @@ function effectiveTheme(): ResolvedTheme {
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
 }
 
-/** Reported in the panel when no provider is live; the picker lives in the header. */
-const PROVIDER_SELECTION_REASON = 'ASR 尚未就绪，暂时无法切换模型。'
-
+/**
+ * The panel's provider row, derived from what is actually running. `sessionMode`
+ * keeps its value through every failure path (missing model, bad env, invalid
+ * segmentation), so liveness is what decides whether a switch is on offer.
+ */
 function describeProvider(): ProviderSummary {
   const option =
     sessionMode in PROVIDER_OPTIONS
       ? PROVIDER_OPTIONS[sessionMode as SelectableAsrProviderId]
       : undefined
-  return {
-    id: sessionMode,
-    label: option?.label ?? (sessionMode === 'fake' ? 'FAKE ASR（测试模式）' : 'ASR 不可用'),
-    selectable: option !== undefined,
-    reason: option ? '在窗口顶部的模型下拉中切换。' : PROVIDER_SELECTION_REASON
-  }
+  return summarizeProvider({
+    mode: sessionMode,
+    live: activeProvider !== null && providerError === undefined && !initializing,
+    label: option?.label
+  })
 }
 
 function summarizeVocabulary(result: VocabularyLoadResult): VocabularySummary {
@@ -227,10 +229,6 @@ async function readPreferencesView(): Promise<PreferencesView> {
     vocabulary: summarizeVocabulary(vocabulary),
     provider: describeProvider()
   }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function getAudio(): AudioInput {
@@ -474,6 +472,27 @@ async function initializeProvider(): Promise<void> {
   }
 }
 
+/** Push the panel's single copy after a state that changes what it shows. */
+async function postPreferences(): Promise<void> {
+  mainWindow?.webContents.send('preferences:changed', await readPreferencesView())
+}
+
+/**
+ * `initializeProvider` flips `initializing` back to false on every exit, which
+ * changes whether the provider row may offer a switch. The panel keeps one
+ * renderer copy, so that copy has to be told; otherwise it stays on whatever
+ * it read mid-initialization and reports the provider as unavailable for good.
+ */
+async function runProviderInitialization(): Promise<void> {
+  try {
+    await initializeProvider()
+  } finally {
+    await postPreferences().catch((error: unknown) => {
+      console.warn('[preferences] broadcast after initialisation failed', error)
+    })
+  }
+}
+
 async function switchAsrProvider(value: unknown): Promise<AppStatus> {
   if (!isSelectableAsrMode(value)) {
     sendState(session?.state ?? 'idle', `不支持的 ASR 提供方：${String(value)}。`)
@@ -492,7 +511,7 @@ async function switchAsrProvider(value: unknown): Promise<AppStatus> {
     console.warn('[asr] failed to persist provider preference', error)
   }
   preferredProvider = value
-  await initializeProvider()
+  await runProviderInitialization()
   return currentStatus()
 }
 
@@ -503,7 +522,7 @@ function toggleRecording(): void {
   }
   if (providerError) {
     // Re-run initialization so a repaired install can recover without a restart.
-    void initializeProvider()
+    void runProviderInitialization()
     return
   }
   if (initializing) {
@@ -704,13 +723,6 @@ app.whenReady().then(async () => {
         console.warn('[preferences] rejected untrusted sender')
         throw new Error('未授权的设置请求。')
       }
-      if (!isPlainObject(payload)) {
-        return {
-          ok: false,
-          message: '设置必须是一个对象。',
-          preferences: await readPreferencesView()
-        }
-      }
       // Decide the whole patch before any side effect: `planPreferenceSet`
       // rejects every key as soon as one value is invalid, so a mixed patch can
       // never register a shortcut or persist a half-applied file (spec:
@@ -758,7 +770,7 @@ app.whenReady().then(async () => {
   )
 
   createWindow()
-  void initializeProvider()
+  void runProviderInitialization()
 
   hotkeySource = new ElectronGlobalShortcutSource(globalShortcut)
   hotkeySource.onPress(() => {

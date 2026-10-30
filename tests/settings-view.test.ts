@@ -4,6 +4,10 @@ import {
   buildSettingsRows,
   describeHotkey,
   describeProvider,
+  summarizeProvider,
+  PROVIDER_HEADER_HINT,
+  PROVIDER_NOT_READY_REASON,
+  PROVIDER_FAKE_REASON,
   describeTheme,
   describeVocabulary,
   validateHotkeyDraft
@@ -164,5 +168,40 @@ describe('hotkey draft validation', () => {
       accelerator: 'Command+Shift+K',
       dirty: true
     })
+  })
+})
+
+describe('provider liveness', () => {
+  it('offers the header picker only while a provider is actually live', () => {
+    expect(summarizeProvider({ mode: 'qwen3', live: true, label: 'Qwen3-ASR 0.6B' })).toEqual({
+      id: 'qwen3',
+      label: 'Qwen3-ASR 0.6B',
+      selectable: true,
+      reason: PROVIDER_HEADER_HINT
+    })
+  })
+
+  it('reports not-ready rather than promising a switch the app cannot make', () => {
+    // The mode id survives a missing model, a bad JUSTSPEAK_ASR, or an invalid
+    // segmentation config, so liveness — not the id — decides the row.
+    const state = describeProvider(
+      summarizeProvider({ mode: 'qwen3', live: false, label: 'Qwen3-ASR 0.6B' })
+    )
+    expect(state.status).toBe('unavailable')
+    expect(state.detail).toContain(PROVIDER_NOT_READY_REASON)
+    expect(summarizeProvider({ mode: 'qwen3', live: false, label: 'Qwen3-ASR 0.6B' })).toMatchObject({
+      selectable: false
+    })
+  })
+
+  it('treats an unknown mode as unavailable and fake as not switchable', () => {
+    expect(summarizeProvider({ mode: 'unavailable', live: false })).toMatchObject({
+      id: 'unavailable',
+      selectable: false,
+      reason: PROVIDER_NOT_READY_REASON
+    })
+    const fake = describeProvider(summarizeProvider({ mode: 'fake', live: true }))
+    expect(fake.detail).toContain(PROVIDER_FAKE_REASON)
+    expect(fake.status).toBe('unavailable')
   })
 })

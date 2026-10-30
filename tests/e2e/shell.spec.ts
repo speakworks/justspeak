@@ -67,9 +67,58 @@ async function launch(
       ...env
     }
   })
-  const page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
-  return { app, page }
+  // A launch that dies after the process exists (no window yet, a bad preload)
+  // must not leave an Electron app behind for the caller's `finally` — it has
+  // not received the handle yet.
+  try {
+    const page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    return { app, page }
+  } catch (error) {
+    await app.close().catch(() => {})
+    throw error
+  }
+}
+
+/**
+ * The app writes the transcript to the real macOS clipboard. When the paste
+ * succeeds `pasteTranscript` puts the previous contents back, but a failed
+ * paste deliberately leaves the transcript there, so the failure test would
+ * otherwise replace whatever the developer had copied. Snapshot inside the
+ * main process (ClipboardItems do not survive the CDP bridge) and restore
+ * before the app closes.
+ */
+async function snapshotClipboard(app: ElectronApplication): Promise<void> {
+  await app.evaluate(async ({ clipboard }) => {
+    // Electron refuses to write items that came out of `read()`, so the data
+    // has to be materialised now and rebuilt on restore.
+    const items: Array<Record<string, unknown>> = []
+    for (const item of await clipboard.read()) {
+      const data: Record<string, unknown> = {}
+      for (const type of item.types) data[type] = await item.getType(type)
+      items.push(data)
+    }
+    const store = globalThis as unknown as {
+      __justspeakE2EClipboard?: { items: Array<Record<string, unknown>>; text: string }
+    }
+    store.__justspeakE2EClipboard = { items, text: await clipboard.readText() }
+  })
+}
+
+async function restoreClipboard(app: ElectronApplication): Promise<void> {
+  await app.evaluate(async ({ clipboard, ClipboardItem }) => {
+    const saved = (
+      globalThis as unknown as {
+        __justspeakE2EClipboard?: { items: Array<Record<string, unknown>>; text: string }
+      }
+    ).__justspeakE2EClipboard
+    if (!saved) return
+    if (saved.items.length > 0) {
+      await clipboard.write(saved.items.map((data) => new ClipboardItem(data as never)))
+    } else {
+      clipboard.clear()
+    }
+  })
 }
 
 /**
@@ -101,6 +150,8 @@ test.describe('JustSpeak shell', () => {
       // 1. Launch: sandboxed preload is live, fake mode is idle, placeholder shown.
       await expect(page.locator('.status')).toHaveText('就绪')
       await hideWindow(app)
+      await snapshotClipboard(app)
+      const clipboardBefore = await app.evaluate(({ clipboard }) => clipboard.readText())
       await expect(page.locator('.transcript-text')).toHaveText('还没有文本。按快捷键说一句话。')
       const hasApi = await page.evaluate(
         () => typeof (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording
@@ -122,8 +173,10 @@ test.describe('JustSpeak shell', () => {
       )
       await expect(page.locator('.transcript-text')).toHaveText(FAKE_TRANSCRIPT)
       await expect(page.locator('.tag')).toHaveText('FAKE ASR')
-      // The recording summary came from the renderer's real capture controller:
-      // a non-zero duration proves PCM traversed the worklet IPC path.
+      // The recording summary came from the renderer's real capture controller.
+      // Its duration is wall-clock, so it does not by itself prove PCM flowed;
+      // the transcript assertion above is what depends on real samples (the
+      // fake provider returns an empty string for empty input).
       await expect(page.locator('.meta')).toContainText(/录音 [1-9][\d.]*s/)
 
       await expect(page.locator('.status')).toHaveText('就绪')
@@ -138,6 +191,10 @@ test.describe('JustSpeak shell', () => {
         (globalThis as unknown as JustSpeakWindow).justspeak.getState()
       )) as AppStatus
       expect(status.state).toBe('idle')
+
+      // 5. A successful paste put the developer's clipboard back (spec:
+      //    dictation-session "Successful paste restores the previous clipboard").
+      expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(clipboardBefore)
     } finally {
       await app.close()
       rmSync(shim.dir, { recursive: true, force: true })
@@ -151,6 +208,7 @@ test.describe('JustSpeak shell', () => {
     try {
       await expect(page.locator('.status')).toHaveText('就绪')
       await hideWindow(app)
+      await snapshotClipboard(app)
       await page.evaluate(() =>
         (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording()
       )
@@ -164,7 +222,17 @@ test.describe('JustSpeak shell', () => {
       await expect(page.locator('.status')).toHaveText('出错了')
       await expect(page.locator('.message')).toContainText('粘贴失败')
       expect(readFileSync(shim.calls, 'utf8')).toContain('System Events')
+      // The failed paste deliberately keeps the text on the clipboard so the
+      // user can press Cmd+V by hand (spec: dictation-session).
+      expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(FAKE_TRANSCRIPT)
     } finally {
+      // That transcript is still sitting on the real clipboard; give the
+      // developer their previous contents back before the app goes away.
+      try {
+        await restoreClipboard(app)
+      } catch (error) {
+        console.log('RESTORE_FAILED', error)
+      }
       await app.close()
       rmSync(shim.dir, { recursive: true, force: true })
     }

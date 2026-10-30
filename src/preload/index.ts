@@ -2,12 +2,13 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AppState,
   AppStatus,
-  HotkeySetResult,
   JustSpeakApi,
   PcmBatch,
+  PreferencesPatch,
+  PreferencesSetResult,
+  PreferencesView,
   RecordingCommand,
   RecordingSummary,
-  ThemePreference,
   TranscriptEvent
 } from '../shared/ipc'
 
@@ -19,16 +20,16 @@ const api: JustSpeakApi = {
   sendCaptureStopped: (summary: RecordingSummary) => ipcRenderer.send('capture:stopped', summary),
   sendCaptureFailed: (message: string) => ipcRenderer.send('capture:failed', message),
   sendPcmBatch: (batch: PcmBatch) => ipcRenderer.send('capture:pcm', batch),
-  setTheme: (theme) => ipcRenderer.invoke('theme:set', theme) as Promise<ThemePreference>,
-  setHotkey: (accelerator) =>
-    ipcRenderer.invoke('hotkey:set', accelerator) as Promise<HotkeySetResult>,
   setAsrProvider: (provider) => ipcRenderer.invoke('asr:set-provider', provider) as Promise<AppStatus>,
-  onThemeChanged: (listener) => {
-    const handler = (_event: Electron.IpcRendererEvent, theme: ThemePreference) => {
-      listener(theme)
+  getPreferences: () => ipcRenderer.invoke('preferences:get') as Promise<PreferencesView>,
+  setPreferences: (patch: PreferencesPatch) =>
+    ipcRenderer.invoke('preferences:set', patch) as Promise<PreferencesSetResult>,
+  onPreferencesChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, preferences: PreferencesView) => {
+      listener(preferences)
     }
-    ipcRenderer.on('theme', handler)
-    return () => ipcRenderer.removeListener('theme', handler)
+    ipcRenderer.on('preferences:changed', handler)
+    return () => ipcRenderer.removeListener('preferences:changed', handler)
   },
   onState: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, next: AppState, message?: string) => {

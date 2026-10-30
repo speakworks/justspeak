@@ -6,26 +6,25 @@ import {
   type WorkletNodePort
 } from '../../core/capture/capture-controller'
 import { describeCapabilities } from '../../core/asr/capabilities'
+import { DEFAULT_ACCELERATOR } from '../../core/hotkey/accelerator'
 import {
-  acceleratorDisplayParts,
-  DEFAULT_ACCELERATOR,
-  parseAccelerator
-} from '../../core/hotkey/accelerator'
-import {
-  THEME_LABEL,
-  nextThemePreference,
-  resolveTheme
-} from '../../core/theme/theme'
+  buildSettingsRows,
+  validateHotkeyDraft,
+  type SettingsRows
+} from '../../core/preferences/view'
+import { THEME_LABEL, resolveTheme } from '../../core/theme/theme'
 import type {
   AppState,
   AsrProviderSelection,
   ModelInfo,
+  PreferencesView,
   RecordingSummary,
   ResolvedTheme,
   SelectableAsrProviderId,
   ThemePreference,
   TranscriptEvent
 } from '../../shared/ipc'
+import { SettingsPanel } from './SettingsPanel'
 
 const WORKLET_CODE = `
 class PcmCollector extends AudioWorkletProcessor {
@@ -109,6 +108,8 @@ function createCaptureController(onLevel: (level: number) => void): CaptureContr
   })
 }
 
+type View = 'dictation' | 'settings'
+
 export function App(): React.JSX.Element {
   const [state, setState] = useState<AppState>('idle')
   const [message, setMessage] = useState<string | undefined>()
@@ -116,8 +117,10 @@ export function App(): React.JSX.Element {
   const [transcript, setTranscript] = useState<TranscriptEvent | null>(null)
   const [modelInfo, setModelInfo] = useState<ModelInfo | undefined>()
   const [asr, setAsr] = useState<AsrProviderSelection | undefined>()
-  const [theme, setTheme] = useState<ThemePreference>('system')
-  const [hotkey, setHotkey] = useState(DEFAULT_ACCELERATOR)
+  /** The one renderer copy of persisted settings, replaced by main on every read. */
+  const [preferences, setPreferences] = useState<PreferencesView | null>(null)
+  const [preferencesError, setPreferencesError] = useState<string | undefined>()
+  const [view, setView] = useState<View>('dictation')
   const [hotkeyDraft, setHotkeyDraft] = useState(DEFAULT_ACCELERATOR)
   const [hotkeyFeedback, setHotkeyFeedback] = useState<string | undefined>()
   const [hotkeyError, setHotkeyError] = useState(false)
@@ -140,6 +143,8 @@ export function App(): React.JSX.Element {
     window.justspeak.sendCaptureFailed(detail)
   }, [])
 
+  const theme = preferences?.theme ?? 'system'
+
   // Resolve `system` against the OS appearance and publish the concrete value,
   // so the CSS never has to guess and a pinned choice wins over the OS.
   useEffect(() => {
@@ -156,6 +161,8 @@ export function App(): React.JSX.Element {
     return () => query.removeEventListener('change', onChange)
   }, [])
 
+  // Switching the ASR provider rebuilds the session in main, so the whole
+  // status snapshot comes back and replaces what this renderer shows.
   const changeProvider = useCallback((next: SelectableAsrProviderId): void => {
     void window.justspeak
       .setAsrProvider(next)
@@ -170,38 +177,88 @@ export function App(): React.JSX.Element {
       })
   }, [])
 
-  const cycleTheme = useCallback((): void => {
-    const next = nextThemePreference(theme)
-    setTheme(next)
-    void window.justspeak.setTheme(next).catch((error: unknown) => {
-      setMessage(error instanceof Error ? error.message : String(error))
+  // Adopt the live accelerator as the draft only when main reports a new one,
+  // so typing in the panel is never overwritten by an unrelated refresh.
+  const lastHotkey = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (!preferences) return
+    if (lastHotkey.current === preferences.hotkey) return
+    lastHotkey.current = preferences.hotkey
+    setHotkeyDraft(preferences.hotkey || DEFAULT_ACCELERATOR)
+  }, [preferences])
+
+  useEffect(() => {
+    const unsubPreferences = window.justspeak.onPreferencesChanged((next) => {
+      setPreferences(next)
+      setPreferencesError(undefined)
+      if (next.hotkeyMessage) {
+        setHotkeyFeedback(next.hotkeyMessage)
+        setHotkeyError(true)
+      }
     })
-  }, [theme])
+    window.justspeak
+      .getPreferences()
+      .then((next) => {
+        setPreferences(next)
+        setPreferencesError(undefined)
+      })
+      .catch((error: unknown) => {
+        setPreferencesError(error instanceof Error ? error.message : String(error))
+      })
+    return unsubPreferences
+  }, [])
+
+  const applyThemePreference = useCallback((next: ThemePreference): void => {
+    setPreferencesError(undefined)
+    void window.justspeak
+      .setPreferences({ theme: next })
+      .then((outcome) => {
+        setPreferences(outcome.preferences)
+        if (!outcome.ok) setPreferencesError(outcome.message ?? '外观设置失败。')
+      })
+      .catch((error: unknown) => {
+        setPreferencesError(error instanceof Error ? error.message : String(error))
+      })
+  }, [])
+
+  const reloadPreferences = useCallback((): void => {
+    setPreferencesError(undefined)
+    void window.justspeak
+      .getPreferences()
+      .then((next) => {
+        setPreferences(next)
+        setPreferencesError(undefined)
+      })
+      .catch((error: unknown) => {
+        setPreferencesError(error instanceof Error ? error.message : String(error))
+      })
+  }, [])
+
+  const hotkeyDraftState = validateHotkeyDraft(hotkeyDraft, preferences?.hotkey ?? '')
 
   const applyHotkey = useCallback((): void => {
-    const parsed = parseAccelerator(hotkeyDraft)
-    if (!parsed.ok) {
-      setHotkeyFeedback(parsed.error.message)
+    const parsed = validateHotkeyDraft(hotkeyDraft, preferences?.hotkey ?? '')
+    if (!parsed.ok || !parsed.accelerator) {
+      setHotkeyFeedback(parsed.message)
       setHotkeyError(true)
       return
     }
     setHotkeyBusy(true)
     void window.justspeak
-      .setHotkey(parsed.value.accelerator)
-      .then((result) => {
-        // `accelerator` is what the OS accepted, which may be the default after
-        // a refused binding; the message names what failed.
-        setHotkey(result.accelerator)
-        if (result.ok) setHotkeyDraft(result.accelerator)
-        setHotkeyError(!result.ok)
-        setHotkeyFeedback(result.message)
+      .setPreferences({ hotkey: parsed.accelerator })
+      .then((outcome) => {
+        // `preferences.hotkey` is what the OS accepted, which may be the
+        // default after a refused binding; the message names what failed.
+        setPreferences(outcome.preferences)
+        setHotkeyError(!outcome.ok)
+        setHotkeyFeedback(outcome.message)
       })
       .catch((error: unknown) => {
         setHotkeyError(true)
         setHotkeyFeedback(error instanceof Error ? error.message : String(error))
       })
       .finally(() => setHotkeyBusy(false))
-  }, [hotkeyDraft])
+  }, [hotkeyDraft, preferences?.hotkey])
 
   useEffect(() => {
     const controller = controllerRef.current
@@ -224,7 +281,6 @@ export function App(): React.JSX.Element {
         void controller.stop().catch(reportFailure)
       }
     })
-    const unsubTheme = window.justspeak.onThemeChanged((next) => setTheme(next))
 
     window.justspeak.sendRendererReady()
 
@@ -234,15 +290,6 @@ export function App(): React.JSX.Element {
         if (disposed) return
         setModelInfo(status.modelInfo)
         setAsr(status.asr)
-        if (status.theme) setTheme(status.theme)
-        if (typeof status.hotkey === 'string') {
-          setHotkey(status.hotkey)
-          if (status.hotkey) setHotkeyDraft(status.hotkey)
-        }
-        if (status.hotkeyMessage) {
-          setHotkeyFeedback(status.hotkeyMessage)
-          setHotkeyError(true)
-        }
         if (sawStateEvent) return
         setState(status.state)
         setMessage(status.message)
@@ -259,18 +306,16 @@ export function App(): React.JSX.Element {
       unsubState()
       unsubTranscript()
       unsubCommand()
-      unsubTheme()
       void controller.dispose()
     }
   }, [reportFailure])
 
   const isBusy = state === 'transcribing' || state === 'pasting'
-  const parsedDraft = parseAccelerator(hotkeyDraft)
-  const hotkeyDirty = parsedDraft.ok && parsedDraft.value.accelerator !== hotkey
-  const liveError = parsedDraft.ok ? undefined : parsedDraft.error.message
+  const liveError = hotkeyDraftState.ok ? undefined : hotkeyDraftState.message
   const hotkeyMessage = hotkeyFeedback ?? liveError
   const hotkeyMessageIsError = hotkeyError || liveError !== undefined
-  const hotkeyDisplay = hotkey ? acceleratorDisplayParts(hotkey) : []
+  const rows: SettingsRows | null = preferences ? buildSettingsRows(preferences) : null
+  const settingsOpen = view === 'settings'
 
   return (
     <main className="app">
@@ -297,114 +342,94 @@ export function App(): React.JSX.Element {
               ))}
             </select>
           ) : null}
+          <span className="appearance-indicator" title="当前外观">
+            {preferences ? `外观：${THEME_LABEL[theme]}` : '外观：读取中'}
+          </span>
           <button
             type="button"
-            className="theme-toggle"
-            onClick={cycleTheme}
-            title={`当前：${THEME_LABEL[theme]}；点击切换`}
-            aria-label={`外观：${THEME_LABEL[theme]}，点击切换`}
+            className="header-button"
+            aria-expanded={settingsOpen}
+            aria-controls="settings-panel"
+            onClick={() => setView(settingsOpen ? 'dictation' : 'settings')}
           >
-            {theme === 'system' ? '外观：跟随系统' : `外观：${THEME_LABEL[theme]}`}
+            {settingsOpen ? '返回' : '设置'}
           </button>
           <span className={`status ${state}`}>{STATE_LABEL[state]}</span>
         </div>
       </header>
 
-      <section className="card">
-        <button
-          className={state === 'recording' ? 'record stop' : 'record'}
-          disabled={isBusy}
-          onClick={() => window.justspeak.toggleRecording()}
-        >
-          {state === 'recording' ? '停止并粘贴' : '开始录音'}
-        </button>
+      {settingsOpen ? (
+        <SettingsPanel
+          preferences={preferences}
+          rows={rows}
+          error={preferencesError}
+          hotkeyDraft={hotkeyDraft}
+          hotkeyMessage={hotkeyMessage}
+          hotkeyMessageIsError={hotkeyMessageIsError}
+          hotkeyBusy={hotkeyBusy}
+          canApplyHotkey={hotkeyDraftState.ok && hotkeyDraftState.dirty}
+          onHotkeyDraft={(value) => {
+            setHotkeyDraft(value)
+            setHotkeyFeedback(undefined)
+            setHotkeyError(false)
+          }}
+          onApplyHotkey={applyHotkey}
+          onTheme={applyThemePreference}
+          onReload={reloadPreferences}
+          onClose={() => setView('dictation')}
+        />
+      ) : (
+        <section className="card">
+          <button
+            className={state === 'recording' ? 'record stop' : 'record'}
+            disabled={isBusy}
+            onClick={() => window.justspeak.toggleRecording()}
+          >
+            {state === 'recording' ? '停止并粘贴' : '开始录音'}
+          </button>
 
-        <div className="hotkey">
-          <div className="hint hotkey-row" title="需要麦克风与辅助功能权限">
-            <label className="hotkey-label" htmlFor="hotkey-input">
-              快捷键
-            </label>
-            <input
-              id="hotkey-input"
-              className={liveError ? 'hotkey-input invalid' : 'hotkey-input'}
-              value={hotkeyDraft}
-              onChange={(event) => {
-                setHotkeyDraft(event.target.value)
-                setHotkeyFeedback(undefined)
-                setHotkeyError(false)
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') applyHotkey()
-              }}
-              aria-invalid={liveError ? true : undefined}
-              aria-describedby={hotkeyMessage ? 'hotkey-message' : 'hotkey-status'}
-              spellCheck={false}
-              autoComplete="off"
-            />
-            <button
-              type="button"
-              className="hotkey-apply"
-              onClick={applyHotkey}
-              disabled={hotkeyBusy || !parsedDraft.ok || !hotkeyDirty}
-            >
-              应用
-            </button>
-            <span id="hotkey-status" className="hotkey-status">
-              当前
-              {hotkeyDisplay.length > 0 ? (
-                hotkeyDisplay.map((part, index) => <kbd key={`${part}-${index}`}>{part}</kbd>)
-              ) : (
-                <span className="hotkey-missing">未注册</span>
-              )}
-            </span>
-          </div>
-          {hotkeyMessage ? (
+          {modelInfo ? (
+            // The URL is long enough to wrap onto a second row and waste height;
+            // show it on hover instead. Not a link: the main process denies new
+            // windows, so a clickable element here would be a dead affordance.
+            // The source URL stays on hover. The capability summary comes from
+            // the provider's declared flags, not from the selected id.
             <p
-              id="hotkey-message"
-              className={hotkeyMessageIsError ? 'hotkey-message error' : 'hotkey-message'}
+              className="hint model-meta"
+              title={`${modelInfo.sourceUrl} · ${modelInfo.quantization}`}
             >
-              {hotkeyMessage}
+              模型：{modelInfo.name} · {modelInfo.license} ·{' '}
+              {describeCapabilities(modelInfo.capabilities)}
             </p>
           ) : null}
-        </div>
 
-        {modelInfo ? (
-          // The source URL is long enough to wrap onto a second row and waste
-          // height, so it stays on hover. The capability summary comes from the
-          // provider's declared flags, not from the selected provider id.
-          <p
-            className="hint model-meta"
-            title={`${modelInfo.sourceUrl} · ${modelInfo.quantization}`}
-          >
-            模型：{modelInfo.name} · {modelInfo.license} ·{' '}
-            {describeCapabilities(modelInfo.capabilities)}
+          <div className="level" aria-hidden="true">
+            <span style={{ width: `${Math.min(100, level * 800)}%` }} />
+          </div>
+
+          {message ? <p className="message">{message}</p> : null}
+        </section>
+      )}
+
+      {settingsOpen ? null : (
+        <section className="card transcript">
+          <div className="transcript-head">
+            <span>识别结果</span>
+            {transcript ? (
+              <span className="tag">{transcript.fake ? 'FAKE ASR' : 'LOCAL ASR'}</span>
+            ) : null}
+          </div>
+          <p className={transcript ? 'transcript-text' : 'transcript-text empty'}>
+            {transcript?.text ?? '还没有文本。按快捷键说一句话。'}
           </p>
-        ) : null}
-
-        <div className="level" aria-hidden="true">
-          <span style={{ width: `${Math.min(100, level * 800)}%` }} />
-        </div>
-
-        {message ? <p className="message">{message}</p> : null}
-      </section>
-
-      <section className="card transcript">
-        <div className="transcript-head">
-          <span>识别结果</span>
           {transcript ? (
-            <span className="tag">{transcript.fake ? 'FAKE ASR' : 'LOCAL ASR'}</span>
+            <p className="meta">
+              {`录音 ${Math.round(transcript.durationMs / 100) / 10}s · 识别 ${transcript.latencyMs}ms`}
+              {transcript.applied?.length ? ` · 清理 ${transcript.applied.length} 项` : ''}
+            </p>
           ) : null}
-        </div>
-        <p className={transcript ? 'transcript-text' : 'transcript-text empty'}>
-          {transcript?.text ?? '还没有文本。按快捷键说一句话。'}
-        </p>
-        {transcript ? (
-          <p className="meta">
-            {`录音 ${Math.round(transcript.durationMs / 100) / 10}s · 识别 ${transcript.latencyMs}ms`}
-            {transcript.applied?.length ? ` · 清理 ${transcript.applied.length} 项` : ''}
-          </p>
-        ) : null}
-      </section>
+        </section>
+      )}
     </main>
   )
 }

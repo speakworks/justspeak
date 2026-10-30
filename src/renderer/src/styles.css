@@ -124,19 +124,27 @@ h1 {
   gap: 8px;
 }
 
-.theme-toggle {
+/* Compact appearance read-out; the control itself lives in the panel. */
+.appearance-indicator {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.header-button {
+  flex: none;
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 5px 12px;
-  color: var(--muted);
+  color: var(--text);
   background: var(--status-bg);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 
-.theme-toggle:hover {
-  color: var(--text);
+.header-button:hover {
   border-color: var(--accent-line);
 }
 
@@ -157,7 +165,7 @@ h1 {
   cursor: default;
 }
 
-.theme-toggle:focus-visible,
+.header-button:focus-visible,
 .provider-select:focus-visible,
 .record:focus-visible {
   outline: 2px solid var(--blue);
@@ -238,25 +246,7 @@ h1 {
   text-align: center;
 }
 
-/* Hotkey editor: one compact row, so the measured window height does not grow. */
-.hotkey {
-  margin: 12px 0 10px;
-}
-
-.hint.hotkey-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 20px;
-  margin: 0;
-  text-align: left;
-}
-
-.hotkey-label {
-  flex: none;
-}
-
+/* Hotkey controls: shared by the settings panel rows. */
 .hotkey-input {
   flex: 1 1 160px;
   min-width: 110px;
@@ -429,6 +419,183 @@ kbd {
   margin: 10px 0 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+/* Settings panel: replaces the dictation cards so the page height never grows.
+   `max-height` plus its own scroll is a safety net for smaller displays; the
+   720×640 window does not need it. */
+.card.settings {
+  margin-bottom: 0;
+  padding: 18px 22px 16px;
+  max-height: calc(100vh - 154px);
+  overflow-y: auto;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.settings-head h2 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+
+.settings-close {
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: var(--status-bg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-close:hover {
+  color: var(--text);
+  border-color: var(--accent-line);
+}
+
+.settings-close:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.settings-row {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.settings-body > .settings-row:first-child {
+  margin-top: 6px;
+  border-top: 0;
+  padding-top: 0;
+}
+
+.settings-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-status {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-status.override {
+  color: var(--blue);
+  border-color: var(--blue-line);
+  background: var(--blue-soft);
+}
+
+.settings-status.unavailable {
+  color: var(--amber);
+  border-color: var(--amber-line);
+  background: var(--amber-soft);
+}
+
+.settings-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.settings-detail {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.settings-detail.error {
+  color: var(--red);
+}
+
+.theme-option {
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: var(--panel-solid);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.theme-option:hover {
+  color: var(--text);
+  border-color: var(--accent-line);
+}
+
+.theme-option.selected {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--blue-soft);
+}
+
+.theme-option:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.settings-hotkey {
+  flex: 1 1 200px;
+  max-width: 320px;
+}
+
+.settings-path {
+  flex: 1 1 260px;
+  min-width: 0;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.settings-select {
+  height: 26px;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 8px;
+  color: var(--muted);
+  background: var(--panel-solid);
+  font: inherit;
+  font-size: 12px;
+}
+
+.settings-select:disabled {
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+
+.settings-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -192,7 +192,7 @@ function describeProvider(): ProviderSummary {
   return {
     id: sessionMode,
     label: option?.label ?? (sessionMode === 'fake' ? 'FAKE ASR（测试模式）' : 'ASR 不可用'),
-    selectable: false,
+    selectable: option !== undefined,
     reason: option ? '在窗口顶部的模型下拉中切换。' : PROVIDER_SELECTION_REASON
   }
 }

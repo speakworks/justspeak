@@ -81,8 +81,8 @@ export interface VocabularySummary {
 export interface ProviderSummary {
   id: string
   label: string
-  /** Read-only until a second provider ships. */
-  selectable: false
+  /** Whether the user can switch provider right now (the picker lives in the header). */
+  selectable: boolean
   /** What is missing before this setting can be changed. */
   reason: string
 }

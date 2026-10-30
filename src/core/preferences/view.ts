@@ -103,7 +103,7 @@ export function describeProvider(provider: ProviderSummary): SettingState {
   return {
     status: 'default',
     statusLabel: STATUS_LABEL.default,
-    detail: `当前：${provider.label}。`
+    detail: `当前：${provider.label}。${reason}`
   }
 }
 

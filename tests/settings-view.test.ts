@@ -114,6 +114,17 @@ describe('provider state', () => {
     expect(state.detail).toContain('Qwen3-ASR 0.6B（本地）')
     expect(state.detail).toContain('选择模型需要先合并第二 provider 的支持。')
   })
+
+  it('does not call a switchable provider unavailable, and says where to switch it', () => {
+    const state = describeProvider({
+      ...PREFERENCES.provider,
+      selectable: true,
+      reason: '在窗口顶部的模型下拉中切换。'
+    })
+    expect(state.status).toBe('default')
+    expect(state.statusLabel).toBe('默认')
+    expect(state.detail).toContain('在窗口顶部的模型下拉中切换。')
+  })
 })
 
 describe('settings rows', () => {

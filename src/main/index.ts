@@ -32,7 +32,7 @@ import type { HotkeySource } from '../core/hotkey/types'
 import { postprocess, type PostprocessOptions } from '../core/postprocess'
 import { SessionController } from '../core/session/session-controller'
 import { consumePendingNotice } from '../core/session/state-notice'
-import { isThemePreference } from '../core/theme/theme'
+import { planPreferenceSet } from '../core/preferences/merge'
 import type {
   AppStatus,
   AsrProviderSelection,
@@ -711,59 +711,47 @@ app.whenReady().then(async () => {
           preferences: await readPreferencesView()
         }
       }
-      const unknownKeys = Object.keys(payload).filter(
-        (key) => key !== 'theme' && key !== 'hotkey'
-      )
-      if (unknownKeys.length > 0) {
-        return {
-          ok: false,
-          message: `未知的设置项：${unknownKeys.join('、')}。`,
-          preferences: await readPreferencesView()
-        }
-      }
-
-      let ok = true
-      let message: string | undefined
+      // Decide the whole patch before any side effect: `planPreferenceSet`
+      // rejects every key as soon as one value is invalid, so a mixed patch can
+      // never register a shortcut or persist a half-applied file (spec:
+      // settings-surface, "reject a patch ... without writing any part of it").
+      const plan = planPreferenceSet(payload)
+      let ok = plan.ok
+      let message = plan.message
       let hotkeyResult: HotkeySetResult | undefined
-      const update: { theme?: ThemePreference; hotkey?: string } = {}
 
-      if ('theme' in payload) {
-        if (isThemePreference(payload.theme)) {
-          update.theme = payload.theme
-        } else {
+      if (ok && plan.update.hotkey !== undefined) {
+        hotkeyResult = await applyHotkeyPreference(plan.update.hotkey)
+        if (!hotkeyResult.ok) {
           ok = false
-          message = '外观值无效，只接受 system、light 或 dark。'
-        }
-      }
-      if ('hotkey' in payload) {
-        hotkeyResult = await applyHotkeyPreference(payload.hotkey)
-        if (hotkeyResult.ok) {
-          update.hotkey = hotkeyResult.accelerator
-        } else {
-          ok = false
-          message ??= hotkeyResult.message
+          message = hotkeyResult.message
         }
       }
 
-      if (update.theme !== undefined || update.hotkey !== undefined) {
-        try {
-          const merged = await themeStore.update(update)
-          if (!merged.ok) {
+      if (ok) {
+        const update: { theme?: ThemePreference; hotkey?: string } = {}
+        if (plan.update.theme !== undefined) update.theme = plan.update.theme
+        if (hotkeyResult?.ok) update.hotkey = hotkeyResult.accelerator
+        if (Object.keys(update).length > 0) {
+          try {
+            const merged = await themeStore.update(update)
+            if (!merged.ok) {
+              ok = false
+              message = merged.rejected[0]?.reason ?? '设置值无效。'
+            } else if (update.theme !== undefined) {
+              // Persist before painting so disk and the window cannot disagree.
+              themePreference = update.theme
+              applyTheme()
+            }
+          } catch (error) {
             ok = false
-            message ??= merged.rejected[0]?.reason ?? '设置值无效。'
-          } else if (update.theme !== undefined) {
-            // Persist before painting so disk and the window cannot disagree.
-            themePreference = update.theme
-            applyTheme()
+            message = `保存设置失败：${error instanceof Error ? error.message : String(error)}`
           }
-        } catch (error) {
-          ok = false
-          message ??= `保存设置失败：${error instanceof Error ? error.message : String(error)}`
         }
       }
 
       const view = await readPreferencesView()
-      // One push path for the renderer's single copy, including partial applies.
+      // One push path for the renderer's single copy.
       mainWindow?.webContents.send('preferences:changed', view)
       return { ok, preferences: view, hotkey: hotkeyResult, message }
     }

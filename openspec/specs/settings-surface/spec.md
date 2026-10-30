@@ -57,7 +57,7 @@ The main window SHALL provide a control that opens one settings panel. The panel
 
 ### Requirement: Every setting SHALL report default, override, or unavailable
 
-Each row SHALL show exactly one of `default`, `override`, or `unavailable`, and an unavailable row SHALL state what is missing rather than presenting an enabled control that silently fails. Theme SHALL be default when it follows the system, a hotkey SHALL be default when it equals the built-in accelerator, a vocabulary SHALL be default when no file exists, loaded when parsed, and unavailable with the parse or read reason when the file cannot be used, and the provider row SHALL always be unavailable with the reason that model selection requires the second-provider support.
+Each row SHALL show exactly one of `default`, `override`, or `unavailable`, and an unavailable row SHALL state what is missing rather than presenting an enabled control that silently fails. Theme SHALL be default when it follows the system, a hotkey SHALL be default when it equals the built-in accelerator, a vocabulary SHALL be default when no file exists, loaded when parsed, and unavailable with the parse or read reason when the file cannot be used, and the provider row SHALL report the live provider: `default` with a pointer to the header picker when the provider can be switched, or `unavailable` with the reason when no provider is live.
 
 #### Scenario: Default state
 
@@ -69,12 +69,19 @@ Each row SHALL show exactly one of `default`, `override`, or `unavailable`, and 
 - **WHEN** the user pinned an appearance, bound a different accelerator, or a vocabulary file was loaded
 - **THEN** the row is labelled overridden and names the current value
 
-#### Scenario: Unavailable provider
+#### Scenario: Provider row points at the header picker
 
-- **WHEN** the panel renders the provider row
-- **THEN** the row shows the live provider label
-- **AND** its control is disabled
-- **AND** it states that choosing a model needs the second-provider support
+- **WHEN** the panel renders the provider row and a provider is live
+- **THEN** the row is labelled default
+- **AND** it shows the live provider label
+- **AND** its control is disabled because the model is switched from the window header
+- **AND** it states that the model is switched from the header picker
+
+#### Scenario: No provider is live
+
+- **WHEN** no provider is live
+- **THEN** the provider row is labelled unavailable
+- **AND** it states that ASR is not ready and no model can be switched
 
 ### Requirement: Validation SHALL report inline
 

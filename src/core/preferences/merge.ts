@@ -96,6 +96,30 @@ export function mergePreferences(existing: unknown, patch: unknown): MergeResult
   return { record: { ...base, ...accepted }, accepted, rejected, ok: true }
 }
 
+export interface PreferenceSetPlan {
+  ok: boolean
+  message?: string
+  /** Empty unless `ok`: a rejected patch may not apply any part of itself. */
+  update: PreferenceUpdate
+}
+
+/**
+ * The decision `preferences:set` must make before it touches the OS or disk.
+ * Kept pure so the "nothing is applied when anything is rejected" rule is
+ * testable without an IPC channel.
+ */
+export function planPreferenceSet(patch: unknown): PreferenceSetPlan {
+  const result = mergePreferences({}, patch)
+  if (!result.ok) {
+    return {
+      ok: false,
+      message: result.rejected[0]?.reason ?? '设置值无效。',
+      update: {}
+    }
+  }
+  return { ok: true, update: result.accepted }
+}
+
 /** True when a merge result actually changes one of the two stored values. */
 export function hasAcceptedChange(result: MergeResult): boolean {
   return result.accepted.theme !== undefined || result.accepted.hotkey !== undefined

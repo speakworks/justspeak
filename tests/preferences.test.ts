@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_ACCELERATOR } from '../src/core/hotkey/accelerator'
 import { parseVocabularyConfig, postprocess } from '../src/core/postprocess'
-import { mergePreferences } from '../src/core/preferences/merge'
+import { mergePreferences, planPreferenceSet } from '../src/core/preferences/merge'
 import { ThemeStore, type ThemeStoreDeps } from '../src/main/theme-store'
 import { VOCABULARY_FILE, VocabularyStore, type VocabularyStoreDeps } from '../src/main/vocabulary-store'
 
@@ -472,5 +472,33 @@ describe('vocabulary store', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+})
+
+describe('preferences:set plan', () => {
+  it('applies nothing when one value in a mixed patch is invalid', () => {
+    expect(planPreferenceSet({ theme: 'sepia', hotkey: 'alt+shift+j' })).toEqual({
+      ok: false,
+      message: expect.stringContaining('外观值无效'),
+      update: {}
+    })
+    expect(planPreferenceSet({ theme: 'dark', hotkey: 'Space' })).toMatchObject({
+      ok: false,
+      update: {}
+    })
+  })
+
+  it('applies the whole patch when every value is valid, with the canonical hotkey', () => {
+    expect(planPreferenceSet({ theme: 'dark', hotkey: 'alt+shift+j' })).toEqual({
+      ok: true,
+      update: { theme: 'dark', hotkey: 'Alt+Shift+J' }
+    })
+  })
+
+  it('rejects an unknown key even when the known values are valid', () => {
+    expect(planPreferenceSet({ theme: 'dark', volume: 3 })).toMatchObject({
+      ok: false,
+      update: {}
+    })
   })
 })

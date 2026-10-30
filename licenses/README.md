@@ -20,6 +20,8 @@ only duplicate what the Electron distribution already contains.
 | `MIT-transcribe.cpp.txt` | MIT | `transcribe.cpp` ASR runtime (pinned v0.4.1) |
 | `Apache-2.0.txt` | Apache-2.0 | Qwen3-ASR 0.6B weights, and any Apache-2.0 code |
 | `FunASR-Model-License-1.1.txt` | FunASR-Model-License-1.1 | SenseVoice Small weights |
+| `NOTICE-Qwen3-ASR-0.6B-gguf.txt` | Apache-2.0 §4(d) | Qwen3-ASR GGUF conversion: what the conversion changed |
+| `NOTICE-SenseVoiceSmall-gguf.txt` | Apache-2.0 §4(d) | SenseVoice GGUF conversion: what the conversion changed |
 | `Electron-LICENSE.txt` | MIT | Electron (copied at build time) |
 | `Electron-LICENSES.chromium.html` | Chromium's component licenses | Chromium and Node.js inside Electron (copied at build time) |
 
@@ -27,14 +29,24 @@ only duplicate what the Electron distribution already contains.
 
 Neither model's weights are bundled. `resources/models.json` pins each artifact's
 URL, revision, and SHA-256; the app downloads them on first run into the user's
-data directory. The FunASR Model License v1.1 (§2.2) requires attributing the
-source and author and retaining the model names — that is what the notices file
-and the in-app model line do — but whether a *conversion* published by a third
-party carries the same terms is still open with counsel. See
-`docs/LICENSING.md` for the review questions and their status.
+data directory.
+
+What the two conversion repositories actually carry, checked on 2026-10-31:
+
+- `Qwen3-ASR-0.6B-gguf` ships a `LICENSE` byte-identical to Apache-2.0 and a
+  `NOTICE` naming the upstream commit and what the conversion changed.
+- `SenseVoiceSmall-gguf` ships a `LICENSE` byte-identical to the FunASR Model
+  License v1.1 and a `NOTICE` of the same shape.
+
+So the conversions do not introduce different terms; the texts above are the ones
+that govern them. Still open with counsel, and tracked in `docs/LICENSING.md`:
+whether the maintainers' informal clarification covers conversions at all, and
+the exact attribution wording FunASR §2.2 requires.
 
 ## Keeping this in sync
 
-`tests/packaging.test.ts` fails when `THIRD_PARTY_NOTICES.md` names a license
-identifier that has no text here, and when the builder configuration stops
-shipping either the notices file or this directory.
+`tests/packaging.test.ts` maps each component in `THIRD_PARTY_NOTICES.md` to the
+exact file above and fails if one is missing — matching on a license *family*
+would let `MIT-JustSpeak.txt` stand in for every third-party MIT holder. It also
+fails when the builder configuration stops shipping the notices file, this
+directory, or the two Electron texts.

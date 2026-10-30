@@ -292,9 +292,11 @@ ${sections.join('\n')}## License texts
 
 This file records license identifiers and sources; an identifier alone is not a license
 grant. The full text each identifier points at ships beside this file in \`licenses/\`
-(one file per component, plus the canonical Apache-2.0 text), together with Electron's
-\`LICENSE\` and \`LICENSES.chromium.html\` copied from the Electron distribution. The
-packaged app carries both this file and \`licenses/\` under \`Contents/Resources/\`.
+(one file per component, plus the canonical Apache-2.0 text), together with the upstream
+\`NOTICE\` files for the two model conversions — which state what the conversion changed,
+as Apache-2.0 section 4(d) expects — and Electron's \`LICENSE\` and
+\`LICENSES.chromium.html\` copied from the Electron distribution. The packaged app carries
+both this file and \`licenses/\` under \`Contents/Resources/\`.
 `
 }
 

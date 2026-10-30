@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -48,30 +48,65 @@ describe('license texts travel with the app', () => {
   const shipped = readdirSync(path.join(ROOT, 'licenses'))
   const config = readFileSync(path.join(ROOT, 'electron-builder.yml'), 'utf8')
 
-  /** Every distinct identifier in the notices summary table. */
-  const identifiers = [
-    ...notices.slice(0, notices.indexOf('## Application dependencies')).matchAll(/^\| ([^|]+?) \| [^|]+ \| \d+ \|$/gm)
-  ]
-    .map((match) => match[1].trim())
-    .filter((identifier) => identifier !== 'License')
+  /**
+   * Component -> the text that satisfies it. Deliberately explicit: matching on
+   * a license *family* lets the project's own MIT text stand in for every
+   * third-party MIT holder, which is exactly the drift this guard exists to
+   * catch.
+   */
+  const COMPONENT_TEXTS: Record<string, readonly string[]> = {
+    react: ['MIT-react.txt'],
+    'react-dom': ['MIT-react-dom.txt'],
+    scheduler: ['MIT-scheduler.txt'],
+    'transcribe.cpp': ['MIT-transcribe.cpp.txt'],
+    'Qwen3-ASR 0.6B (Q8_0)': ['Apache-2.0.txt', 'NOTICE-Qwen3-ASR-0.6B-gguf.txt'],
+    'SenseVoice Small (Q8_0)': [
+      'FunASR-Model-License-1.1.txt',
+      'NOTICE-SenseVoiceSmall-gguf.txt'
+    ]
+  }
 
-  it('finds licence identifiers to check', () => {
-    expect(identifiers.length).toBeGreaterThan(0)
+  /** Electron's texts are copied from its distribution at build time. */
+  const ELECTRON_TEXTS = [
+    'node_modules/electron/dist/LICENSE',
+    'node_modules/electron/dist/LICENSES.chromium.html'
+  ]
+
+  /** First column of every row in the notices component tables. */
+  const components = [...notices.matchAll(/^\| ([^|]+?) \| [^|]+ \| [^|]+ \| [^|]+ \|/gm)]
+    .map((match) => match[1].trim())
+    .filter((name) => name !== 'Name' && name !== 'License' && !/^-+$/.test(name))
+
+  it('maps every component the notices file lists to a text', () => {
+    expect(components.length).toBeGreaterThan(5)
+    for (const component of components) {
+      if (component === 'electron') continue
+      expect(
+        COMPONENT_TEXTS[component],
+        `no expected text registered for "${component}" in THIRD_PARTY_NOTICES.md`
+      ).toBeDefined()
+    }
+    expect(COMPONENT_TEXTS.react.length).toBeGreaterThan(0)
   })
 
-  it('carries a text file for every identifier the notices file names', () => {
-    for (const identifier of identifiers) {
-      const hasText = shipped.some(
-        (file) => file.toLowerCase().startsWith(identifier.toLowerCase()) && file.endsWith('.txt')
-      )
-      expect(hasText, `no text for "${identifier}" in licenses/`).toBe(true)
+  it('carries the registered text for every component, one file per holder', () => {
+    // Removing any single one of these must fail: the holder differs per file.
+    for (const [component, files] of Object.entries(COMPONENT_TEXTS)) {
+      for (const file of files) {
+        expect(shipped, `${component} is missing ${file}`).toContain(file)
+      }
+    }
+  })
+
+  it('has the Electron texts on disk where the builder copies them from', () => {
+    for (const source of ELECTRON_TEXTS) {
+      expect(existsSync(path.join(ROOT, source)), `${source} is absent`).toBe(true)
     }
   })
 
   it('ships the notices and the license directory in the packaged app', () => {
     expect(config).toContain('from: THIRD_PARTY_NOTICES.md')
     expect(config).toContain('from: licenses')
-    expect(config).toContain('node_modules/electron/dist/LICENSE')
-    expect(config).toContain('node_modules/electron/dist/LICENSES.chromium.html')
+    for (const source of ELECTRON_TEXTS) expect(config).toContain(source)
   })
 })

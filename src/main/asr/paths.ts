@@ -27,21 +27,47 @@ function modelPathOverride(
   return env.JUSTSPEAK_SENSEVOICE_MODEL
 }
 
+/**
+ * Where the runtime and weights live.
+ *
+ * In a packaged app `appRoot` is the path *inside* `app.asar` — read-only, and
+ * not a directory at all — so neither the shipped bundle nor a first-run
+ * download can use it. Packaged builds therefore read and write under the
+ * user's data directory; a dev checkout keeps everything in the gitignored
+ * `models/` next to the source, which is what `pnpm setup:asr` prepares.
+ */
+export function resolveModelsDir(input: {
+  appRoot: string
+  userDataDir: string
+  packaged: boolean
+}): string {
+  return input.packaged
+    ? path.join(input.userDataDir, 'models')
+    : path.join(input.appRoot, 'models')
+}
+
 export function resolveAsrPaths(
   appRoot: string,
   catalog: ModelCatalog,
   env: NodeJS.ProcessEnv = process.env,
-  provider: SelectableAsrProviderId = 'qwen3'
+  provider: SelectableAsrProviderId = 'qwen3',
+  explicitModelsDir?: string
 ): AsrPaths {
   const model = findModel(catalog, MODEL_ID_BY_PROVIDER[provider])
   const runtime = findRuntime(catalog, PRIMARY_RUNTIME_ID)
-  const modelsDir = path.join(appRoot, 'models')
+  const modelsDir = explicitModelsDir ?? path.join(appRoot, 'models')
+
+  // `buildDir` is appRoot-relative ("models/runtime/transcribe.cpp"); the
+  // runtime lives under the models directory, so a relocated models dir moves
+  // the runtime with it.
+  const MODELS_PREFIX = `models${path.sep}`
+  const runtimeDir = runtime.buildDir.startsWith(MODELS_PREFIX)
+    ? path.join(modelsDir, runtime.buildDir.slice(MODELS_PREFIX.length))
+    : path.join(appRoot, runtime.buildDir)
 
   return {
     modelsDir,
-    cliPath:
-      env.JUSTSPEAK_TRANSCRIBE_CLI ??
-      path.join(appRoot, runtime.buildDir, runtime.binary),
+    cliPath: env.JUSTSPEAK_TRANSCRIBE_CLI ?? path.join(runtimeDir, runtime.binary),
     modelPath:
       modelPathOverride(provider, env) ??
       path.join(modelsDir, model.files[0]?.path ?? model.id),

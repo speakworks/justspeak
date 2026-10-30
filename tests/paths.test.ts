@@ -2,7 +2,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import rawCatalog from '../resources/models.json'
 import { parseModelCatalog } from '../src/core/asr/model-catalog'
-import { resolveAsrPaths } from '../src/main/asr/paths'
+import { resolveAsrPaths, resolveModelsDir } from '../src/main/asr/paths'
 
 const catalog = parseModelCatalog(rawCatalog)
 
@@ -27,5 +27,34 @@ describe('ASR path resolution', () => {
     } as NodeJS.ProcessEnv)
     expect(paths.cliPath).toBe('/custom/transcribe-cli')
     expect(paths.modelPath).toBe('/custom/model.gguf')
+  })
+})
+
+describe('models directory', () => {
+  it('keeps a dev checkout inside the repository', () => {
+    expect(
+      resolveModelsDir({ appRoot: '/repo', userDataDir: '/data', packaged: false })
+    ).toBe(path.join('/repo', 'models'))
+  })
+
+  it('uses userData when packaged, because appRoot is inside the read-only asar', () => {
+    expect(
+      resolveModelsDir({
+        appRoot: '/Applications/JustSpeak.app/Contents/Resources/app.asar',
+        userDataDir: '/Users/me/Library/Application Support/JustSpeak',
+        packaged: true
+      })
+    ).toBe(path.join('/Users/me/Library/Application Support/JustSpeak', 'models'))
+  })
+
+  it('lets the caller override where resolveAsrPaths looks', () => {
+    const paths = resolveAsrPaths('/app', catalog, {}, 'qwen3', '/data/models')
+    expect(paths.modelsDir).toBe('/data/models')
+    expect(paths.modelPath).toBe(
+      path.join('/data/models/qwen3-asr-0.6b/Qwen3-ASR-0.6B-Q8_0.gguf')
+    )
+    expect(paths.cliPath).toBe(
+      path.join('/data/models/runtime/transcribe.cpp/build/bin/transcribe-cli')
+    )
   })
 })

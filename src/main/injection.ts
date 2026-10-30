@@ -43,7 +43,14 @@ const ports: PastePorts = {
     await execFileAsync(
       'osascript',
       ['-e', 'tell application "System Events" to keystroke "v" using command down'],
-      { timeout: 3000 }
+      // Safety net only. A 3s cap was demonstrably too tight: on a loaded
+      // machine Electron's spawn of `osascript` sometimes exceeds it, Node
+      // kills the child before it runs, and paste.ts then reports the
+      // accessibility-permission message — a misleading error for what is
+      // actually a slow launch (measured 3.0s vs 20-40ms normally). A genuine
+      // permission problem returns from System Events in well under a second,
+      // so a generous cap costs nothing in that case.
+      { timeout: 10_000 }
     )
   },
   delay,

@@ -105,9 +105,9 @@ that makes each item checkable.
   packaged, so a DMG install could neither find the model nor write a download.
 - **Now:** `resolveModelsDir` uses `userData/models` when packaged and the
   repository's `models/` in a dev checkout. Verified on the installed app.
-- **Status:** committed on branch `fix/packaged-models-dir` (`8757ae8`), not
-  merged. (Owner observation, not verifiable from this commit: the build
-  installed for the trial was made from that branch and does reach 「模型就绪」.)
+- **Status:** fixed in PR #16 (branch `fix/packaged-models-dir`). (Owner
+  observation, not verifiable from the repository: the build installed for the
+  trial was made from that branch and does reach 「模型就绪」.)
 
 ---
 

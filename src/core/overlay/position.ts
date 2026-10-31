@@ -21,9 +21,15 @@ export interface IndicatorBounds {
   height: number
 }
 
-/** Window size in logical points; the pill inside is smaller. */
-export const INDICATOR_WIDTH = 256
-export const INDICATOR_HEIGHT = 56
+/**
+ * Window size in logical points — deliberately tight around the pill.
+ *
+ * A transparent Electron window still receives mouse events over its invisible
+ * area, so a window much larger than the pill would leave a dead zone that
+ * swallows clicks meant for whatever is behind it.
+ */
+export const INDICATOR_WIDTH = 132
+export const INDICATOR_HEIGHT = 38
 
 /** Gap above the work-area bottom edge, matching what Handy uses on macOS. */
 export const INDICATOR_BOTTOM_INSET = 15

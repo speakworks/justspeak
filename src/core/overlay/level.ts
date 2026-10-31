@@ -42,7 +42,7 @@ export function createLevelThrottle(intervalMs: number = LEVEL_INTERVAL_MS): Lev
 }
 
 /** One cell per bar; thin and close together so the cluster reads as a voice print. */
-export const PILL_BARS = 21
+export const PILL_BARS = 17
 
 /** Resting scale: 18 px cell * 0.11 ≈ 2 px, so silence looks like a dashed line. */
 export const PILL_BAR_REST_SCALE = 0.11

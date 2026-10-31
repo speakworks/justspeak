@@ -257,8 +257,8 @@ function getAudio(): AudioInput {
 }
 
 function makeSession(provider: AsrProvider, fake: boolean): SessionController {
-  // The default mode returns the inner provider untouched, so this wiring has
-  // no effect on the one-shot path.
+  // `single` returns the inner provider untouched; `auto` passes through for any
+  // utterance inside the provider limit and only wraps long ones.
   const selected = createTranscriptionProvider(provider, segmentationMode, {
     segmenter: segmenterOptions,
     onPartialFailure: (error) => {

@@ -9,8 +9,8 @@ export type SegmentationModeResult =
   | { ok: false; message: string }
 
 /**
- * Segmentation is opt-in. Unset, empty, `off`, and `single` all keep the
- * existing one-shot path; `vad` enables the segmented provider. Anything else
+ * Segmentation defaults to `auto`. Unset and empty mean `auto`; `off` and
+ * `single` force the historical one-shot path; `vad` enables the segmented provider. Anything else
  * fails closed instead of being coerced, matching the ASR provider selector.
  */
 export function parseSegmentationMode(value: string | undefined): SegmentationModeResult {

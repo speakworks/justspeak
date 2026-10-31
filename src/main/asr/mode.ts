@@ -53,7 +53,7 @@ export function parseAsrPreference(value: string): AsrModeResult {
   if (parsed.ok && parsed.mode === 'fake') {
     return {
       ok: false,
-      message: `ASR 偏好不支持 fake（仅测试环境变量可启用）。可用值：qwen3（默认）或 sensevoice。`
+      message: `ASR 偏好不支持 fake（仅测试环境变量可启用）。可用值：sensevoice（默认）或 qwen3。`
     }
   }
   return parsed
@@ -66,7 +66,7 @@ export interface AsrSelectionInput {
 
 /**
  * An explicit environment variable wins over the persisted preference; an
- * unset preference falls back to qwen3. Unknown values fail visibly.
+ * unset preference falls back to the default provider. Unknown values fail visibly.
  */
 export function resolveAsrMode(input: AsrSelectionInput): AsrModeResult {
   const env = input.env?.trim()

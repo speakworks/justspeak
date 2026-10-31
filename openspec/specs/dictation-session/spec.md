@@ -152,7 +152,7 @@ After a successful provider result and before emitting the transcript and pastin
 - **WHEN** the provider returns a typed error after the bounded retry policy
 - **THEN** the stage does not run, no transcript is emitted, and nothing is pasted
 
-### Requirement: Segmented dictation SHALL be an opt-in variant with visible partial failures
+### Requirement: Segmented dictation SHALL default to `auto` and keep partial failures visible
 
 The session SHALL keep the single-shot provider path for any utterance that fits the selected provider's limit, and SHALL segment only utterances beyond it. Segmentation SHALL additionally be forceable on or off through explicit configuration, SHALL preserve the existing state machine, paste policy, provider contract, and 120-second audio bound, and SHALL make a partially failed segmented result visible to the user while still delivering the successful text.
 

@@ -379,16 +379,20 @@ describe('auto segmentation mode', () => {
     expect(calls).toHaveLength(1)
   })
 
-  it('routes an utterance beyond the limit to the segmenter instead', async () => {
+  it('transcribes speech longer than the provider limit by splitting it', async () => {
     const { provider, calls } = makeProvider(30_000)
     const selected = createTranscriptionProvider(provider, 'auto')
-    // 40 seconds of silence: beyond the ceiling, so the segmented path runs and
-    // finds no speech — which proves the provider was never called directly.
+    // 40 seconds of loud, continuous speech: one region the 30-second provider
+    // cannot take in a single call. The adapter must split it, not reject it.
+    const pcm = new Int16Array(640_000).fill(8000)
     const result = await selected.transcribe(
-      { pcm: new Int16Array(640_000), sampleRate: 16000, channels: 1, durationMs: 40_000 },
+      { pcm, sampleRate: 16000, channels: 1, durationMs: 40_000 },
       {}
     )
-    expect(result.ok).toBe(false)
-    expect(calls).toHaveLength(0)
+    expect(result.ok).toBe(true)
+    expect(calls.length).toBeGreaterThanOrEqual(2)
+    for (const call of calls) {
+      expect(call.pcm.length).toBeLessThanOrEqual(30_000 * 16)
+    }
   })
 })

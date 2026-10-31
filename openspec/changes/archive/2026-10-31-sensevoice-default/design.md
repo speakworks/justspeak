@@ -26,5 +26,5 @@ common path.
 | Risk | Mitigation |
 |---|---|
 | `auto` hides a segmentation failure behind a path the user did not choose | Partial failures still surface through the existing `onPartialFailure` notice and the typed `SEGMENT_FAILED` error |
-| SenseVoice's 30 s ceiling becomes the default ceiling for long speech | `auto` covers up to the segmenter's 120 s session bound; beyond that the typed error names the limit |
+| SenseVoice's 30 s ceiling becomes the default ceiling for long speech | The segmented adapter advertises the 120 s session bound and splits any region longer than the provider's own limit into consecutive chunks, so each provider call stays inside 30 s. Beyond 120 s the typed error names the limit |
 | Existing users silently switch engines | The persisted provider preference wins over the default, so anyone who already chose Qwen3 keeps it |

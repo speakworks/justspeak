@@ -7,7 +7,7 @@ The app SHALL default to `sensevoice`, SHALL read the selected provider from a p
 #### Scenario: Selection precedence
 
 - **WHEN** the app resolves a provider
-- **THEN** a non-empty `JUSTSPEAK_ASR` wins, otherwise the persisted preference applies, otherwise `qwen3` is used
+- **THEN** a non-empty `JUSTSPEAK_ASR` wins, otherwise the persisted preference applies, otherwise `sensevoice` is used
 
 #### Scenario: Missing qwen3 runtime at startup
 

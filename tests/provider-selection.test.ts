@@ -72,3 +72,26 @@ describe('fake-driven provider selection', () => {
     if (!built.ok) expect(built.message).toContain('sensevoice')
   })
 })
+
+describe('buildProvider models directory wiring', () => {
+  it('resolves the runtime and the weights under the directory the caller passes', () => {
+    // The packaged app passes userData/models; dropping the parameter anywhere
+    // between main and the runner must fail here, not only in a packaged build.
+    const built = buildProvider({
+      mode: 'qwen3',
+      appRoot: '/app',
+      modelsDir: '/data/models',
+      catalog,
+      env: {}
+    })
+    expect(built.ok).toBe(true)
+    if (!built.ok || built.mode === 'fake') return
+    expect(built.paths.modelsDir).toBe('/data/models')
+    expect(built.paths.modelPath).toBe(
+      path.join('/data/models/qwen3-asr-0.6b/Qwen3-ASR-0.6B-Q8_0.gguf')
+    )
+    expect(built.paths.cliPath).toBe(
+      path.join('/data/models/runtime/transcribe.cpp/build/bin/transcribe-cli')
+    )
+  })
+})

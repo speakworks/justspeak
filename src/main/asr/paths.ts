@@ -60,10 +60,14 @@ export function resolveAsrPaths(
   // `buildDir` is appRoot-relative ("models/runtime/transcribe.cpp"); the
   // runtime lives under the models directory, so a relocated models dir moves
   // the runtime with it.
-  const MODELS_PREFIX = `models${path.sep}`
-  const runtimeDir = runtime.buildDir.startsWith(MODELS_PREFIX)
-    ? path.join(modelsDir, runtime.buildDir.slice(MODELS_PREFIX.length))
-    : path.join(appRoot, runtime.buildDir)
+  // The catalog is JSON, so a `buildDir` may use either separator regardless of
+  // the host. Splitting normalises it to the host's separator instead of
+  // trusting `path.sep` to match the catalog.
+  const runtimeParts = runtime.buildDir.split(/[\\/]/)
+  const runtimeDir =
+    runtimeParts[0] === 'models'
+      ? path.join(modelsDir, ...runtimeParts.slice(1))
+      : path.join(appRoot, runtime.buildDir)
 
   return {
     modelsDir,

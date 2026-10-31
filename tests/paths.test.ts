@@ -47,6 +47,17 @@ describe('models directory', () => {
     ).toBe(path.join('/Users/me/Library/Application Support/JustSpeak', 'models'))
   })
 
+  it('moves the runtime with the models directory even if the catalog uses a backslash', () => {
+    const backslashCatalog = parseModelCatalog({
+      ...rawCatalog,
+      runtimes: [{ ...rawCatalog.runtimes[0], buildDir: 'models\\runtime\\transcribe.cpp' }]
+    })
+    const paths = resolveAsrPaths('/app', backslashCatalog, {}, 'qwen3', '/data/models')
+    expect(paths.cliPath).toBe(
+      path.join('/data/models/runtime/transcribe.cpp/build/bin/transcribe-cli')
+    )
+  })
+
   it('lets the caller override where resolveAsrPaths looks', () => {
     const paths = resolveAsrPaths('/app', catalog, {}, 'qwen3', '/data/models')
     expect(paths.modelsDir).toBe('/data/models')

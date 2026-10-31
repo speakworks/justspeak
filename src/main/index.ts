@@ -60,7 +60,7 @@ import {
 } from './asr/mode'
 import { ProviderPreferenceStore } from './asr/provider-preference'
 import { buildProvider } from './asr/providers'
-import { downloadFailureHint } from './asr/download-hint'
+import { downloadFailureHint, runtimeMissingHint } from './asr/download-hint'
 import {
   parseSegmentationConfig,
   type SegmentationMode
@@ -393,7 +393,11 @@ async function initializeProvider(): Promise<void> {
     initializing = false
     failSession(
       `${model.name} 运行时缺失：${paths.cliPath}。` +
-        `请运行 pnpm setup:asr（运行时来源：${MODEL_CATALOG.runtimes[0]?.sourceUrl}）。`
+        runtimeMissingHint({
+          packaged: app.isPackaged,
+          cliPath: paths.cliPath,
+          sourceUrl: MODEL_CATALOG.runtimes[0]?.sourceUrl
+        })
     )
     return
   }

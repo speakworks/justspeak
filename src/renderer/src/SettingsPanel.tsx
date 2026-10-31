@@ -17,7 +17,13 @@ export interface SettingsPanelProps {
   onApplyHotkey: () => void
   onTheme: (theme: ThemePreference) => void
   onReload: () => void
-  onClose: () => void
+  /**
+   * Which half of the surface to render: the sidebar gear shows the editable
+   * settings, the 词典 destination shows the vocabulary editor. One component so
+   * the editors are not duplicated. The panel renders no title of its own — the
+   * page header names the destination and owns the way back.
+   */
+  section?: 'settings' | 'vocabulary'
 }
 
 function StatusChip({ state }: { state: SettingState }): React.JSX.Element {
@@ -54,22 +60,22 @@ export function SettingsPanel({
   onApplyHotkey,
   onTheme,
   onReload,
-  onClose
+  section = 'settings'
 }: SettingsPanelProps): React.JSX.Element {
+  const vocabularyOnly = section === 'vocabulary'
   return (
-    <section className="card settings" id="settings-panel" aria-label="设置">
-      <div className="settings-head">
-        <h2>设置</h2>
-        <button type="button" className="settings-close" onClick={onClose}>
-          完成
-        </button>
-      </div>
-
+    <section
+      className="card settings"
+      id={vocabularyOnly ? 'dictionary-panel' : 'settings-panel'}
+      aria-label={vocabularyOnly ? '词典' : '设置'}
+    >
       {error ? <p className="settings-detail error">{error}</p> : null}
       {!preferences || !rows ? (
         <p className="settings-detail">正在读取设置…</p>
       ) : (
         <div className="settings-body">
+          {vocabularyOnly ? null : (
+          <>
           <div className="settings-row">
             <div className="settings-row-head">
               <span className="settings-label">外观</span>
@@ -139,7 +145,10 @@ export function SettingsPanel({
               <p className="settings-detail">{rows.hotkey.detail}</p>
             )}
           </div>
+          </>
+          )}
 
+          {vocabularyOnly ? (
           <div className="settings-row">
             <div className="settings-row-head">
               <span className="settings-label">词汇表</span>
@@ -164,6 +173,8 @@ export function SettingsPanel({
             </p>
           </div>
 
+          ) : null}
+          {vocabularyOnly ? null : (
           <div className="settings-row">
             <div className="settings-row-head">
               <span className="settings-label">模型</span>
@@ -183,6 +194,7 @@ export function SettingsPanel({
               {rows.provider.detail}
             </p>
           </div>
+          )}
         </div>
       )}
     </section>

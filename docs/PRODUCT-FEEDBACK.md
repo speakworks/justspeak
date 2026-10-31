@@ -143,6 +143,23 @@ that makes each item checkable.
   (signed with the app) is preferred over the current interim of a user-writable
   `userData` path — `docs/PACKAGING-RELEASE.md` describes the former.
 
+### 12. The main window had no design system
+
+- **Observed:** 「UI好丑呀，你好好看看，如何调整」 — after the sidebar shell landed.
+- **Today:** the first shell was a structural change, not a visual one: 30 px
+  slogan heading, a provider `<select>` and an appearance read-out competing in
+  one row, a full-height bordered textarea, text-only sidebar items, and the
+  window was not draggable at all (`titleBarStyle: 'hiddenInset'` with no
+  drag region anywhere).
+- **Decision (owner, 2026-10-31):** the "card workbench" layout, with a palette
+  chosen against a three-plane system: macOS semantic surfaces + one brand accent
+  ("graphite + pine"). Accent under 5% of the surface; amber means working, red
+  means recording or failure.
+- **Made it in:** `app-shell` change, `src/renderer/src/styles.css` tokens.
+- **Still open:** native materials (`vibrancy`) as an optional layer; a
+  "follow system accent colour" setting; the packaged build has not been
+  re-screenshotted.
+
 ---
 
 ## How to use this file

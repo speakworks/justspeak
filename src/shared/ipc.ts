@@ -158,6 +158,8 @@ export interface JustSpeakApi {
   finishRecording: () => void
   onState: (listener: (state: AppState, message?: string) => void) => () => void
   onTranscript: (listener: (event: TranscriptEvent) => void) => () => void
+  /** Fires instead of a paste when the app's own window holds focus. */
+  onTranscriptInsert: (listener: (text: string) => void) => () => void
   onRecordingCommand: (listener: (command: RecordingCommand) => void) => () => void
   /** Fires after main accepts a preference write or re-reads it. */
   onPreferencesChanged: (listener: (preferences: PreferencesView) => void) => () => void

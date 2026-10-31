@@ -59,6 +59,11 @@ const api: JustSpeakApi = {
     ipcRenderer.on('transcript', handler)
     return () => ipcRenderer.removeListener('transcript', handler)
   },
+  onTranscriptInsert: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, text: string) => listener(text)
+    ipcRenderer.on('transcript:insert', handler)
+    return () => ipcRenderer.removeListener('transcript:insert', handler)
+  },
   onRecordingCommand: (listener) => {
     const start = (): void => listener('start' satisfies RecordingCommand)
     const stop = (): void => listener('stop' satisfies RecordingCommand)

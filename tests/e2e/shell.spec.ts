@@ -185,13 +185,14 @@ test.describe('JustSpeak shell', () => {
   // Serial: each test owns a real Electron app and the macOS clipboard.
   test.describe.configure({ mode: 'serial' })
 
-  test('launches the fake provider, dictates, and returns to idle', async () => {
+  test('launches the fake provider, dictates, and pastes when unfocused', async () => {
     await withApp(async ({ app, page, shim }) => {
-      // 1. Launch: sandboxed preload is live, fake mode is idle, placeholder shown.
+      // 1. Launch: sandboxed preload is live, fake mode is idle, the empty
+      //    composer hint is the only thing in the sheet.
       await expect(page.locator('.status')).toHaveText('就绪')
+      await expect(page.locator('.composer-empty-title')).toBeVisible()
       await hideWindow(app)
       const clipboardBefore = await app.evaluate(({ clipboard }) => clipboard.readText())
-      await expect(page.locator('.transcript-text')).toHaveText('还没有文本。按快捷键说一句话。')
       const hasApi = await page.evaluate(
         () => typeof (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording
       )
@@ -206,22 +207,16 @@ test.describe('JustSpeak shell', () => {
       await expect(page.locator('.status')).toHaveText('录音中')
       await page.waitForTimeout(1_500)
 
-      // 3. Stop and observe the whole pipeline.
+      // 3. Stop and observe the whole pipeline. The window is not focused, so
+      //    the transcript is pasted rather than inserted: the textarea must stay
+      //    empty and the keystroke must have been attempted exactly once.
       await page.evaluate(() =>
         (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording()
       )
-      await expect(page.locator('.transcript-text')).toHaveText(FAKE_TRANSCRIPT)
-      await expect(page.locator('.tag')).toHaveText('FAKE ASR')
-      // The recording summary came from the renderer's real capture controller.
-      // Its duration is wall-clock, so it does not by itself prove PCM flowed;
-      // the transcript assertion above is what depends on real samples (the
-      // fake provider returns an empty string for empty input).
-      await expect(page.locator('.meta')).toContainText(/录音 [1-9][\d.]*s/)
-
       await expect(page.locator('.status')).toHaveText('就绪')
-      await expect(page.locator('.message')).toHaveCount(0)
+      await expect(page.locator('.sheet-message')).toHaveCount(0)
+      await expect(page.locator('.dictation-input')).toHaveValue('')
 
-      // 4. The paste step was attempted exactly once with the Cmd+V keystroke.
       const calls = readFileSync(shim.calls, 'utf8')
       expect(calls).toContain('System Events')
       expect(calls.trim().split('\n')).toHaveLength(1)
@@ -231,13 +226,13 @@ test.describe('JustSpeak shell', () => {
       )) as AppStatus
       expect(status.state).toBe('idle')
 
-      // 5. A successful paste put the developer's clipboard back (spec:
+      // 4. A successful paste put the developer's clipboard back (spec:
       //    dictation-session "Successful paste restores the previous clipboard").
       expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(clipboardBefore)
     })
   })
 
-  test('keeps the transcript visible when the paste step fails', async () => {
+  test('keeps the transcript available when the paste step fails', async () => {
     await withApp(async ({ app, page, shim }) => {
       await expect(page.locator('.status')).toHaveText('就绪')
       await hideWindow(app)
@@ -250,13 +245,36 @@ test.describe('JustSpeak shell', () => {
         (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording()
       )
 
-      await expect(page.locator('.transcript-text')).toHaveText(FAKE_TRANSCRIPT)
       await expect(page.locator('.status')).toHaveText('出错了')
-      await expect(page.locator('.message')).toContainText('粘贴失败')
+      await expect(page.locator('.sheet-message.error')).toContainText('粘贴失败')
       expect(readFileSync(shim.calls, 'utf8')).toContain('System Events')
       // The failed paste deliberately keeps the text on the clipboard so the
       // user can press Cmd+V by hand (spec: dictation-session).
       expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(FAKE_TRANSCRIPT)
     }, 'fail')
+  })
+
+  // The routing decision (`insert` vs `paste`) is covered deterministically in
+  // `tests/shell-insert.test.ts`; this covers the renderer half — a transcript
+  // arriving over the insert channel lands in the input once, with no
+  // keystroke and no clipboard write.
+  test('inserts a transcript delivered over the insert channel, without pasting', async () => {
+    await withApp(async ({ app, page, shim }) => {
+      await hideWindow(app)
+      const clipboardBefore = await app.evaluate(({ clipboard }) => clipboard.readText())
+      await expect(page.locator('.dictation-input')).toHaveValue('')
+
+      await app.evaluate(({ BrowserWindow }, text) => {
+        BrowserWindow.getAllWindows()[0].webContents.send('transcript:insert', text)
+      }, FAKE_TRANSCRIPT)
+
+      await expect(page.locator('.dictation-input')).toHaveValue(FAKE_TRANSCRIPT)
+      await expect(page.locator('.composer-empty-title')).toHaveCount(0)
+      await expect(page.locator('.status')).toHaveText('就绪')
+
+      const pasted = existsSync(shim.calls) ? readFileSync(shim.calls, 'utf8').trim() : ''
+      expect(pasted).toBe('')
+      expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(clipboardBefore)
+    })
   })
 })

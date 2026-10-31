@@ -16,12 +16,12 @@ afterEach(async () => {
 })
 
 describe('ASR provider preference', () => {
-  it('returns undefined on first run so selection falls back to qwen3', async () => {
+  it('returns undefined on first run so selection falls back to the default provider', async () => {
     const store = new ProviderPreferenceStore(dir)
     expect(await store.load()).toBeUndefined()
     expect(resolveAsrMode({ preference: await store.load() })).toEqual({
       ok: true,
-      mode: 'qwen3'
+      mode: 'sensevoice'
     })
   })
 

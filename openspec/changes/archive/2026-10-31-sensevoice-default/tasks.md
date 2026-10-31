@@ -1,0 +1,6 @@
+- [x] 1.1 `DEFAULT_ASR_MODE` → `sensevoice`, with the reason recorded at the constant
+- [x] 1.2 `parseAsrMode` honours an explicit `qwen3` instead of mapping it to the default
+- [x] 1.3 `TranscriptionMode` gains `auto`; `AutoAsrProvider` passes through inside the provider limit and segments beyond it
+- [x] 1.4 Segmentation default becomes `auto`; `single`/`vad` stay forceable
+- [x] 1.5 Tests updated for the new defaults, plus a test that auto keeps the one-shot path for a short utterance
+- [x] 1.6 Docs: README states the default provider and the segmentation default

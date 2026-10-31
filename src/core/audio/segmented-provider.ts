@@ -1,9 +1,11 @@
 import type {
   AsrCapabilities,
   AsrErrorCode,
+  AsrModelDescriptor,
   AsrProvider,
   AudioInput,
   ProviderError,
+  ProviderHealth,
   ProviderResult,
   ProviderWarning,
   TranscribeOptions,
@@ -135,6 +137,43 @@ async function transcribeOneSegment(
  * later successes: its index and sample range are returned in `failures`, and
  * the caller can decide whether to surface the partial text.
  */
+/**
+ * Split segments the provider cannot accept in one call.
+ *
+ * The segmenter closes regions on silence, so a single continuous utterance
+ * longer than the provider's limit arrives as one region. A provider with a
+ * 30-second ceiling must still be able to transcribe it, so each oversized
+ * region is cut into consecutive chunks that each fit.
+ */
+export function splitOversizedSegments(
+  segments: SpeechSegment[],
+  maxSamples: number
+): SpeechSegment[] {
+  if (maxSamples <= 0) return segments
+  const out: SpeechSegment[] = []
+  for (const segment of segments) {
+    const length = segment.endSample - segment.startSample
+    if (length <= maxSamples) {
+      out.push({ ...segment, index: out.length })
+      continue
+    }
+    for (let start = segment.startSample; start < segment.endSample; start += maxSamples) {
+      const end = Math.min(start + maxSamples, segment.endSample)
+      // The segment carries its own slice, so a chunk needs a slice of that
+      // slice — spreading alone would hand the provider the whole utterance.
+      const offset = start - segment.startSample
+      out.push({
+        ...segment,
+        index: out.length,
+        startSample: start,
+        endSample: end,
+        pcm: segment.pcm.slice(offset, offset + (end - start))
+      })
+    }
+  }
+  return out
+}
+
 export async function transcribeSegments(
   provider: AsrProvider,
   segments: SpeechSegment[],
@@ -204,6 +243,7 @@ export class SegmentedAsrProvider implements AsrProvider {
   readonly capabilities: AsrCapabilities
 
   private readonly provider: AsrProvider
+  private readonly providerCallLimitMs: number
   private readonly segmenter: SegmenterOptions
   private readonly onPartialFailure?: (error: SegmentedTranscriptionError) => void
   private readonly now: () => number
@@ -214,14 +254,16 @@ export class SegmentedAsrProvider implements AsrProvider {
     this.onPartialFailure = config.onPartialFailure
     this.now = config.now ?? Date.now
     this.id = `${config.provider.id}+vad-segments`
+    // The adapter covers the whole session bound; the *provider's* limit is a
+    // per-call limit and is enforced by splitting long segments below. Taking
+    // min(provider, session) here would reject a long capture before the
+    // segmenter ever ran — which is exactly what a 30-second provider must not do.
+    this.providerCallLimitMs = config.provider.capabilities.maxAudioMs
     this.capabilities = {
       ...config.provider.capabilities,
       streaming: false,
       vad: true,
-      maxAudioMs: Math.min(
-        config.provider.capabilities.maxAudioMs,
-        Math.round((SEGMENTED_MAX_SESSION_SAMPLES / 16000) * 1000)
-      )
+      maxAudioMs: Math.round((SEGMENTED_MAX_SESSION_SAMPLES / 16000) * 1000)
     }
   }
 
@@ -314,7 +356,12 @@ export class SegmentedAsrProvider implements AsrProvider {
       }
     }
 
-    const run = await transcribeSegments(this.provider, segmentation.segments, options)
+    const perCallSamples = Math.floor((this.providerCallLimitMs / 1000) * input.sampleRate)
+    const run = await transcribeSegments(
+      this.provider,
+      splitOversizedSegments(segmentation.segments, perCallSamples),
+      options
+    )
 
     if (run.segments.length === 0 && run.error) {
       // A run cancelled before any segment succeeded is a cancellation, not an
@@ -354,18 +401,62 @@ export class SegmentedAsrProvider implements AsrProvider {
   }
 }
 
-export type TranscriptionMode = 'single' | 'vad'
+/**
+ * `single` is the historical one-shot path, `vad` forces segmentation, and
+ * `auto` — the default — uses the one-shot path whenever the utterance fits the
+ * selected provider's own limit and segments only when it does not. Short
+ * dictation therefore keeps exactly the results it had before segmentation
+ * existed, while a provider with a 30-second ceiling (SenseVoice) stops failing
+ * on longer speech.
+ */
+export type TranscriptionMode = 'single' | 'vad' | 'auto'
 
 /**
  * Returns the inner provider unchanged for the default single-shot mode. That
  * identity is deliberate: the default path must keep exactly one provider call
  * and this adapter must not be able to alter it.
  */
+export class AutoAsrProvider implements AsrProvider {
+  readonly id: string
+  readonly capabilities: AsrCapabilities
+
+  constructor(
+    private readonly provider: AsrProvider,
+    private readonly segmented: SegmentedAsrProvider
+  ) {
+    this.id = provider.id
+    this.capabilities = provider.capabilities
+  }
+
+  prepare(model: AsrModelDescriptor): Promise<void> {
+    return this.provider.prepare(model)
+  }
+
+  health(): Promise<ProviderHealth> {
+    return this.provider.health()
+  }
+
+  dispose(): Promise<void> {
+    return this.provider.dispose()
+  }
+
+  transcribe(
+    input: AudioInput,
+    options: TranscribeOptions
+  ): Promise<ProviderResult<TranscriptionResult>> {
+    const maxSamples = Math.floor((this.capabilities.maxAudioMs / 1000) * input.sampleRate)
+    if (input.pcm.length <= maxSamples) return this.provider.transcribe(input, options)
+    return this.segmented.transcribe(input, options)
+  }
+}
+
 export function createTranscriptionProvider(
   provider: AsrProvider,
   mode: TranscriptionMode,
   options: Omit<SegmentedAsrProviderConfig, 'provider'> = {}
 ): AsrProvider {
   if (mode === 'single') return provider
-  return new SegmentedAsrProvider({ provider, ...options })
+  const segmented = new SegmentedAsrProvider({ provider, ...options })
+  if (mode === 'vad') return segmented
+  return new AutoAsrProvider(provider, segmented)
 }

@@ -50,10 +50,14 @@ pnpm bench:asr   # provider-driven benchmark; writes bench/reports/<date>-qwen3-
 
 - Hotkey: `Command+Shift+Space` (toggle recording; press again to stop).
 - Grant Microphone and Accessibility permissions on first run.
-- Default provider is Qwen3 (`JUSTSPEAK_ASR=qwen3`); `JUSTSPEAK_ASR=sensevoice` selects
-  SenseVoice, whose weights download on first run rather than in `pnpm setup:asr`. Use
-  `JUSTSPEAK_ASR=fake pnpm dev` for the deterministic fake flow. An unknown value is an
+- Default provider is **SenseVoice Small** (`JUSTSPEAK_ASR=sensevoice`); `JUSTSPEAK_ASR=qwen3`
+  selects Qwen3. An explicit value is always honoured — it is never remapped to the default.
+  Use `JUSTSPEAK_ASR=fake pnpm dev` for the deterministic fake flow. An unknown value is an
   error, and a missing model is never silently replaced by fake or cloud.
+- Segmentation defaults to `auto`: an utterance inside the selected provider's own limit
+  takes the unchanged one-shot path, and only a longer one is segmented. That is what makes
+  SenseVoice's 30-second ceiling usable. `JUSTSPEAK_SEGMENTED=single` forces one-shot and
+  `=vad` forces segmentation.
 - The in-app provider picker persists to `asr-preference.json` in the app's user-data
   directory; `JUSTSPEAK_ASR` overrides the stored preference for that run.
 - Model weights and the built runtime live in gitignored `models/`; nothing is committed.

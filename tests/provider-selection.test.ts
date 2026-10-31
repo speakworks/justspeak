@@ -26,7 +26,7 @@ describe('fake-driven provider selection', () => {
     expect(built.provider.health).toBeTypeOf('function')
   })
 
-  it('keeps qwen3 as the catalog-backed default provider', () => {
+  it('builds qwen3 from its catalog entry', () => {
     const built = build('qwen3')
     expect(built.ok).toBe(true)
     if (!built.ok || built.mode === 'fake') return

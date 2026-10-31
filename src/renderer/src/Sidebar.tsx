@@ -60,6 +60,7 @@ export function Sidebar({
           type="button"
           className="model-chip"
           title={providerLabel ?? '模型未就绪'}
+          aria-label={`${providerLabel ?? '模型未就绪'}，打开模型设置`}
           onClick={() => onSelect('settings')}
         >
           <span className={providerLive ? 'model-dot live' : 'model-dot'} aria-hidden="true" />

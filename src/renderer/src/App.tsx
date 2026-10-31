@@ -15,7 +15,6 @@ import { resolveTheme } from '../../core/theme/theme'
 import type {
   AppState,
   AsrProviderSelection,
-  ModelInfo,
   PreferencesView,
   ResolvedTheme,
   SelectableAsrProviderId,
@@ -121,7 +120,6 @@ function createCaptureController(onLevel: (level: number) => void): CaptureContr
 export function App(): React.JSX.Element {
   const [state, setState] = useState<AppState>('idle')
   const [message, setMessage] = useState<string | undefined>()
-  const [modelInfo, setModelInfo] = useState<ModelInfo | undefined>()
   const [asr, setAsr] = useState<AsrProviderSelection | undefined>()
   /** The one renderer copy of persisted settings, replaced by main on every read. */
   const [preferences, setPreferences] = useState<PreferencesView | null>(null)
@@ -182,7 +180,6 @@ export function App(): React.JSX.Element {
       .setAsrProvider(next)
       .then((status) => {
         setAsr(status.asr)
-        setModelInfo(status.modelInfo)
         setState(status.state)
         setMessage(status.message)
       })
@@ -308,7 +305,6 @@ export function App(): React.JSX.Element {
       .getState()
       .then((status) => {
         if (disposed) return
-        setModelInfo(status.modelInfo)
         setAsr(status.asr)
         if (sawStateEvent) return
         setState(status.state)
@@ -339,19 +335,29 @@ export function App(): React.JSX.Element {
     preferences?.hotkey || DEFAULT_ACCELERATOR
   ).join('')
 
+  // Every insert bumps the tick; the effect below then puts the caret where the
+  // text ended. The state updater stays pure (StrictMode invokes it twice), and
+  // the caret is read from the same render the tick arrived in.
+  const [insertTick, setInsertTick] = useState(0)
+  const caretAfterInsert = input.start
+
   const applyInsert = useCallback((text: string): void => {
     setInput((current) => {
       const next = insertAtSelection(current, text)
-      // React paints first; then the caret goes where the text ended.
-      requestAnimationFrame(() => {
-        const node = inputRef.current
-        if (!node) return
-        node.focus()
-        node.setSelectionRange(next.caret, next.caret)
-      })
       return { value: next.value, start: next.caret, end: next.caret }
     })
+    setInsertTick((current) => current + 1)
   }, [])
+
+  useEffect(() => {
+    if (insertTick === 0) return
+    const node = inputRef.current
+    if (!node) return
+    node.focus()
+    node.setSelectionRange(caretAfterInsert, caretAfterInsert)
+    // `insertTick` is the trigger; `caretAfterInsert` belongs to that render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insertTick])
 
   const settingsPanelProps = {
     preferences,
@@ -434,6 +440,7 @@ export function App(): React.JSX.Element {
                   className="dictation-input"
                   value={input.value}
                   spellCheck={false}
+                  aria-describedby={input.value === '' ? 'dictation-empty-hint' : undefined}
                   onChange={(event) => {
                     const node = event.currentTarget
                     setInput({
@@ -462,7 +469,7 @@ export function App(): React.JSX.Element {
                   }}
                 />
                 {input.value === '' ? (
-                  <div className="composer-empty" aria-hidden="true">
+                  <div className="composer-empty" id="dictation-empty-hint">
                     <p className="composer-empty-title">直接说话，文字会落在这里</p>
                     <p className="composer-empty-hint">
                       也可以在任何 App 里说，识别完成后插入光标处

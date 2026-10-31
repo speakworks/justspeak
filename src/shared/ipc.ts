@@ -157,6 +157,11 @@ export interface JustSpeakApi {
   /** Overlay-only: finish the recording (same path as the hotkey's stop). */
   finishRecording: () => void
   onState: (listener: (state: AppState, message?: string) => void) => () => void
+  /**
+   * Every finished transcript, whichever target it went to. The shell no longer
+   * renders one (the home input receives it through `onTranscriptInsert`); the
+   * history destination consumes this channel.
+   */
   onTranscript: (listener: (event: TranscriptEvent) => void) => () => void
   /** Fires instead of a paste when the app's own window holds focus. */
   onTranscriptInsert: (listener: (text: string) => void) => () => void

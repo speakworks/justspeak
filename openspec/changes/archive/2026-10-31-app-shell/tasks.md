@@ -26,6 +26,6 @@
 - [x] 4.1 `pnpm typecheck`, `pnpm test`, `pnpm build`, `openspec validate --strict`, `pnpm e2e`
 - [x] 4.2 Screenshot every destination in light and dark; the header, sidebar and card hierarchy survive both themes
 - [x] 4.3 The overlay no longer deactivates the app: `skipTransformProcessType` on `setVisibleOnAllWorkspaces`, which was making the focused path paste instead of insert
-- [x] 4.4 Real app: destination switch keeps the recording and the input text (owner-verified 2026-10-31)
+- [x] 4.4 Real app: destination switch keeps the recording and the input text (verified 2026-11-01 by Playwright probe: 历史记录 round trip while recording, input text kept)
 - [x] 4.5 Real app: dictating with the window focused inserts once (no duplicate) and leaves the clipboard untouched; dictating from another app still pastes (owner-verified 2026-10-31)
-- [x] 4.6 Real app: the pill still shows above a fullscreen app and on a second Space with `skipTransformProcessType` (owner-verified 2026-10-31)
+- [ ] 4.6 Real app: the pill still shows above a fullscreen app and on a second Space with `skipTransformProcessType` — not yet exercised; the owner accepted the build without this specific pass

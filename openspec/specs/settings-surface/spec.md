@@ -41,8 +41,8 @@ current value and a control where the setting is editable, and SHALL report the
 live provider with a pointer to the header picker rather than an editable control.
 The vocabulary editor SHALL live in its own sidebar destination instead. The
 three-state theme control and the hotkey editor SHALL live in the settings
-surface, and the header SHALL keep a compact read-out of the active appearance
-and the provider picker.
+surface; the header SHALL carry the provider picker and SHALL NOT repeat the
+active appearance, which would duplicate a setting the surface already owns.
 
 #### Scenario: Opening the panel
 
@@ -54,7 +54,7 @@ and the provider picker.
 
 - **WHEN** the settings surface is open
 - **THEN** it exposes system, light, and dark choices
-- **AND** the header shows the current appearance without a cycling control
+- **AND** no other surface repeats the active appearance or offers a cycling control
 
 #### Scenario: Provider stays switchable from the header
 

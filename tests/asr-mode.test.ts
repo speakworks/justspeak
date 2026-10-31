@@ -8,11 +8,11 @@ import {
 } from '../src/main/asr/mode'
 
 describe('JUSTSPEAK_ASR mode parsing', () => {
-  it('defaults to qwen3 when unset or explicitly qwen3', () => {
-    expect(parseAsrMode(undefined)).toEqual({ ok: true, mode: 'qwen3' })
-    expect(parseAsrMode('')).toEqual({ ok: true, mode: 'qwen3' })
+  it('defaults to sensevoice when unset or explicitly qwen3', () => {
+    expect(parseAsrMode(undefined)).toEqual({ ok: true, mode: 'sensevoice' })
+    expect(parseAsrMode('')).toEqual({ ok: true, mode: 'sensevoice' })
     expect(parseAsrMode('qwen3')).toEqual({ ok: true, mode: 'qwen3' })
-    expect(DEFAULT_ASR_MODE).toBe('qwen3')
+    expect(DEFAULT_ASR_MODE).toBe('sensevoice')
   })
 
   it('accepts the second provider as an explicit mode', () => {
@@ -48,8 +48,8 @@ describe('JUSTSPEAK_ASR mode parsing', () => {
 })
 
 describe('provider selection precedence', () => {
-  it('defaults to qwen3 when neither env nor preference is set', () => {
-    expect(resolveAsrMode({})).toEqual({ ok: true, mode: 'qwen3' })
+  it('defaults to sensevoice when neither env nor preference is set', () => {
+    expect(resolveAsrMode({})).toEqual({ ok: true, mode: 'sensevoice' })
   })
 
   it('reads the persisted preference when the env var is unset', () => {

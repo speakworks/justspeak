@@ -128,7 +128,7 @@ The application SHALL install models from the embedded catalog, SHALL verify eac
 
 ### Requirement: The selected app provider SHALL not fall back silently
 
-The app SHALL default to `qwen3`, SHALL read the selected provider from a persisted preference, SHALL keep a non-empty `JUSTSPEAK_ASR` as an explicit override, and SHALL NOT switch providers, models, or to cloud on failure.
+The app SHALL default to `sensevoice`, SHALL read the selected provider from a persisted preference, SHALL keep a non-empty `JUSTSPEAK_ASR` as an explicit override, and SHALL NOT switch providers, models, or to cloud on failure. Because the default provider accepts at most 30 seconds of audio, the default segmentation mode SHALL be `auto`: the one-shot path for any utterance inside the selected provider's own limit, and the segmented path only beyond it.
 
 #### Scenario: Selection precedence
 

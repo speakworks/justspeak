@@ -328,3 +328,67 @@ describe('joinTranscripts', () => {
     expect(joinTranscripts([' one ', '', ' two '])).toBe('one two')
   })
 })
+
+describe('auto segmentation mode', () => {
+  const makeProvider = (maxAudioMs: number) => {
+    const calls: AudioInput[] = []
+    const provider = {
+      id: 'auto-test',
+      capabilities: {
+        languages: ['zh'],
+        streaming: false,
+        punctuation: true,
+        itn: true,
+        timestamps: false,
+        vad: false,
+        maxAudioMs,
+        quantizations: ['Q8_0']
+      },
+      async prepare() {},
+      async dispose() {},
+      async health() {
+        return { status: 'ready' as const }
+      },
+      async transcribe(input: AudioInput) {
+        calls.push(input)
+        return {
+          ok: true as const,
+          value: {
+            text: '好的',
+            language: 'zh',
+            latencyMs: 1,
+            modelId: 'auto-test',
+            runtimeId: 'auto-test',
+            warnings: []
+          }
+        }
+      }
+    }
+    return { provider, calls }
+  }
+
+  it('keeps the one-shot path for an utterance inside the provider limit', async () => {
+    const { provider, calls } = makeProvider(30_000)
+    const selected = createTranscriptionProvider(provider, 'auto')
+    // 2 seconds of silence — far inside a 30 s ceiling.
+    const result = await selected.transcribe(
+      { pcm: new Int16Array(32_000), sampleRate: 16000, channels: 1, durationMs: 2000 },
+      {}
+    )
+    expect(result.ok).toBe(true)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('routes an utterance beyond the limit to the segmenter instead', async () => {
+    const { provider, calls } = makeProvider(30_000)
+    const selected = createTranscriptionProvider(provider, 'auto')
+    // 40 seconds of silence: beyond the ceiling, so the segmented path runs and
+    // finds no speech — which proves the provider was never called directly.
+    const result = await selected.transcribe(
+      { pcm: new Int16Array(640_000), sampleRate: 16000, channels: 1, durationMs: 40_000 },
+      {}
+    )
+    expect(result.ok).toBe(false)
+    expect(calls).toHaveLength(0)
+  })
+})

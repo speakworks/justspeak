@@ -154,7 +154,7 @@ After a successful provider result and before emitting the transcript and pastin
 
 ### Requirement: Segmented dictation SHALL be an opt-in variant with visible partial failures
 
-The session SHALL keep the existing single-shot provider path as its default. Segmentation SHALL be selectable only through explicit configuration, SHALL preserve the existing state machine, paste policy, provider contract, and 120-second audio bound, and SHALL make a partially failed segmented result visible to the user while still delivering the successful text.
+The session SHALL keep the single-shot provider path for any utterance that fits the selected provider's limit, and SHALL segment only utterances beyond it. Segmentation SHALL additionally be forceable on or off through explicit configuration, SHALL preserve the existing state machine, paste policy, provider contract, and 120-second audio bound, and SHALL make a partially failed segmented result visible to the user while still delivering the successful text.
 
 #### Scenario: Default session is unchanged
 

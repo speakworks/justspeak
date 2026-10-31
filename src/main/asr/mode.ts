@@ -8,7 +8,13 @@ export type AsrMode = SelectableAsrProviderId | 'fake'
 
 export type AsrModeResult = { ok: true; mode: AsrMode } | { ok: false; message: string }
 
-export const DEFAULT_ASR_MODE: SelectableAsrProviderId = 'qwen3'
+/**
+ * SenseVoice Small is the default: the owner's hands-on comparison found it more
+ * accurate on real dictation, and it is a third of the download. Its 30-second
+ * ceiling is covered by the default `auto` segmentation mode, which keeps the
+ * one-shot path for anything that fits and segments only what does not.
+ */
+export const DEFAULT_ASR_MODE: SelectableAsrProviderId = 'sensevoice'
 
 export function isSelectableAsrMode(value: unknown): value is SelectableAsrProviderId {
   return (
@@ -17,18 +23,20 @@ export function isSelectableAsrMode(value: unknown): value is SelectableAsrProvi
   )
 }
 
-const ACCEPTED = 'qwen3（默认）、sensevoice、fake（测试）'
+const ACCEPTED = 'sensevoice（默认）、qwen3、fake（测试）'
 
 /**
- * Provider selection is explicit: qwen3 is the default, fake is the test
- * escape hatch, and any other value fails closed instead of being coerced.
+ * Provider selection is explicit. An unset value takes the default; a value the
+ * user actually wrote is honoured as written — `qwen3` must stay `qwen3` even
+ * though it is no longer the default, or an explicit override would be silently
+ * replaced. `fake` stays the test escape hatch, everything else fails closed.
  */
 export function parseAsrMode(value: string | undefined): AsrModeResult {
   const trimmed = value?.trim()
-  if (trimmed === undefined || trimmed === '' || trimmed === 'qwen3') {
+  if (trimmed === undefined || trimmed === '') {
     return { ok: true, mode: DEFAULT_ASR_MODE }
   }
-  if (trimmed === 'sensevoice') return { ok: true, mode: 'sensevoice' }
+  if (isSelectableAsrMode(trimmed)) return { ok: true, mode: trimmed }
   if (trimmed === 'fake') return { ok: true, mode: 'fake' }
   return {
     ok: false,

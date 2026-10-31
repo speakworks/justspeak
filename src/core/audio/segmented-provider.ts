@@ -1,9 +1,11 @@
 import type {
   AsrCapabilities,
   AsrErrorCode,
+  AsrModelDescriptor,
   AsrProvider,
   AudioInput,
   ProviderError,
+  ProviderHealth,
   ProviderResult,
   ProviderWarning,
   TranscribeOptions,
@@ -354,18 +356,62 @@ export class SegmentedAsrProvider implements AsrProvider {
   }
 }
 
-export type TranscriptionMode = 'single' | 'vad'
+/**
+ * `single` is the historical one-shot path, `vad` forces segmentation, and
+ * `auto` — the default — uses the one-shot path whenever the utterance fits the
+ * selected provider's own limit and segments only when it does not. Short
+ * dictation therefore keeps exactly the results it had before segmentation
+ * existed, while a provider with a 30-second ceiling (SenseVoice) stops failing
+ * on longer speech.
+ */
+export type TranscriptionMode = 'single' | 'vad' | 'auto'
 
 /**
  * Returns the inner provider unchanged for the default single-shot mode. That
  * identity is deliberate: the default path must keep exactly one provider call
  * and this adapter must not be able to alter it.
  */
+export class AutoAsrProvider implements AsrProvider {
+  readonly id: string
+  readonly capabilities: AsrCapabilities
+
+  constructor(
+    private readonly provider: AsrProvider,
+    private readonly segmented: SegmentedAsrProvider
+  ) {
+    this.id = provider.id
+    this.capabilities = provider.capabilities
+  }
+
+  prepare(model: AsrModelDescriptor): Promise<void> {
+    return this.provider.prepare(model)
+  }
+
+  health(): Promise<ProviderHealth> {
+    return this.provider.health()
+  }
+
+  dispose(): Promise<void> {
+    return this.provider.dispose()
+  }
+
+  transcribe(
+    input: AudioInput,
+    options: TranscribeOptions
+  ): Promise<ProviderResult<TranscriptionResult>> {
+    const maxSamples = Math.floor((this.capabilities.maxAudioMs / 1000) * input.sampleRate)
+    if (input.pcm.length <= maxSamples) return this.provider.transcribe(input, options)
+    return this.segmented.transcribe(input, options)
+  }
+}
+
 export function createTranscriptionProvider(
   provider: AsrProvider,
   mode: TranscriptionMode,
   options: Omit<SegmentedAsrProviderConfig, 'provider'> = {}
 ): AsrProvider {
   if (mode === 'single') return provider
-  return new SegmentedAsrProvider({ provider, ...options })
+  const segmented = new SegmentedAsrProvider({ provider, ...options })
+  if (mode === 'vad') return segmented
+  return new AutoAsrProvider(provider, segmented)
 }

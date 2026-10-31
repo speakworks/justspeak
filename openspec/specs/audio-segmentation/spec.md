@@ -70,7 +70,7 @@ The segmenter SHALL convert detected regions into ordered segments with contiguo
 
 ### Requirement: Segmented transcription SHALL be opt-in, final-only, and ordered
 
-Segmented transcription SHALL be selectable only through explicit configuration, SHALL call the provider once per segment in utterance order, and SHALL concatenate successful text in that same order. The default single-shot configuration SHALL pass the original provider through unchanged and SHALL make exactly one provider call with the full utterance. The segmented path is final-only: it emits no partial transcript during recording and declares `streaming: false`.
+Segmented transcription SHALL be the default mode in its `auto` form — the one-shot path while the utterance fits the selected provider's limit, and the segmented path only beyond it — MAY be forced on or off through explicit configuration, SHALL call the provider once per segment in utterance order, and SHALL concatenate successful text in that same order. With segmentation explicitly disabled, the configuration SHALL pass the original provider through unchanged and SHALL make exactly one provider call with the full utterance. In `auto`, an utterance inside the limit takes that same unchanged path. The segmented path is final-only: it emits no partial transcript during recording and declares `streaming: false`.
 
 #### Scenario: Default path is unchanged
 

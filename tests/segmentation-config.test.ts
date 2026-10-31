@@ -7,8 +7,8 @@ import {
 
 describe('parseSegmentationMode', () => {
   it.each([
-    [undefined, 'single'],
-    ['', 'single'],
+    [undefined, 'auto'],
+    ['', 'auto'],
     ['single', 'single'],
     ['off', 'single'],
     ['vad', 'vad'],
@@ -28,8 +28,28 @@ describe('parseSegmentationMode', () => {
 })
 
 describe('parseSegmentationConfig', () => {
-  it('keeps the default single-shot path and ignores knobs', () => {
+  it('defaults to auto with the segmenter defaults when no knob is set', () => {
+    const result = parseSegmentationConfig({})
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.config.mode).toBe('auto')
+    // `auto` and `vad` share the same knobs; with none set they resolve the same.
+    const explicit = parseSegmentationConfig({ JUSTSPEAK_SEGMENTED: 'vad' })
+    expect(result.config.segmenter).toEqual(explicit.ok ? explicit.config.segmenter : null)
+  })
+
+  it('fails closed in auto mode on an invalid knob, because auto may segment', () => {
+    // The single-shot default used to return before reading knobs; auto can run
+    // the segmenter, so a bad value must not be silently ignored.
     const result = parseSegmentationConfig({ JUSTSPEAK_VAD_START_THRESHOLD: 'not-a-number' })
+    expect(result.ok).toBe(false)
+  })
+
+  it('still ignores knobs when single-shot is forced', () => {
+    const result = parseSegmentationConfig({
+      JUSTSPEAK_SEGMENTED: 'single',
+      JUSTSPEAK_VAD_START_THRESHOLD: 'not-a-number'
+    })
     expect(result).toEqual({ ok: true, config: { mode: 'single', segmenter: {} } })
   })
 

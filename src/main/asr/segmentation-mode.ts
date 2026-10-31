@@ -14,15 +14,17 @@ export type SegmentationModeResult =
  * fails closed instead of being coerced, matching the ASR provider selector.
  */
 export function parseSegmentationMode(value: string | undefined): SegmentationModeResult {
-  if (value === undefined || value === '' || value === 'single' || value === 'off') {
-    return { ok: true, mode: 'single' }
-  }
+  // Unset means `auto`: the one-shot path unless the utterance exceeds the
+  // provider's own limit. `single` still forces the historical behaviour.
+  if (value === undefined || value === '') return { ok: true, mode: 'auto' }
+  if (value === 'single' || value === 'off') return { ok: true, mode: 'single' }
+  if (value === 'auto') return { ok: true, mode: 'auto' }
   if (value === 'vad' || value === 'on' || value === 'segmented') {
     return { ok: true, mode: 'vad' }
   }
   return {
     ok: false,
-    message: `JUSTSPEAK_SEGMENTED 的值不受支持：${value}。可用值：single（默认）或 vad（实验性分段）。`
+    message: `JUSTSPEAK_SEGMENTED 的值不受支持：${value}。可用值：auto（默认，超限才分段）、single 或 vad（强制分段）。`
   }
 }
 
@@ -84,7 +86,8 @@ export function parseSegmentationConfig(env: EnvLike): SegmentationConfigResult 
     return {
       ok: true,
       config: {
-        mode: 'vad',
+        // Preserve the requested mode: `auto` and `vad` share the same knobs.
+        mode: mode.mode,
         segmenter: {
           ...vad,
           ...(minSegmentMs !== undefined && { minSegmentMs })

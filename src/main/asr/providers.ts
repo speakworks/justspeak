@@ -12,6 +12,8 @@ import { MODEL_ID_BY_PROVIDER, resolveAsrPaths, type AsrPaths } from './paths'
 export interface BuildProviderOptions {
   mode: AsrMode
   appRoot: string
+  /** Resolved by the caller: `<appRoot>/models` in dev, userData when packaged. */
+  modelsDir?: string
   catalog: ModelCatalog
   env?: NodeJS.ProcessEnv
 }
@@ -51,7 +53,7 @@ export const ASR_PROVIDER_FACTORIES: Record<
  * and never branch on a provider id themselves.
  */
 export function buildProvider(options: BuildProviderOptions): BuiltProvider {
-  const { mode, appRoot, catalog, env } = options
+  const { mode, appRoot, modelsDir, catalog, env } = options
 
   if (mode === 'fake') {
     return { ok: true, mode, provider: new FakeAsrProvider() }
@@ -69,7 +71,7 @@ export function buildProvider(options: BuildProviderOptions): BuiltProvider {
   }
 
   const descriptor = toModelDescriptor(model)
-  const paths = resolveAsrPaths(appRoot, catalog, env, providerId)
+  const paths = resolveAsrPaths(appRoot, catalog, env, providerId, modelsDir)
   const runner = new TranscribeCliRunner({
     cliPath: paths.cliPath,
     modelPath: paths.modelPath,

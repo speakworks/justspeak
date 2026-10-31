@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { SELECTABLE_ASR_PROVIDER_IDS } from '../src/shared/ipc'
-import { downloadFailureHint } from '../src/main/asr/download-hint'
+import { downloadFailureHint, runtimeMissingHint } from '../src/main/asr/download-hint'
 import { isSelectableAsrMode } from '../src/main/asr/mode'
 import { ASR_PROVIDER_FACTORIES } from '../src/main/asr/providers'
 
@@ -47,5 +47,27 @@ describe('provider wiring', () => {
     }
     expect(readme).toContain('asr-preference.json')
     expect(readme).toContain('JUSTSPEAK_SENSEVOICE_MODEL')
+  })
+})
+
+describe('runtime missing hint', () => {
+  it('points a checkout at setup:asr', () => {
+    const hint = runtimeMissingHint({
+      packaged: false,
+      cliPath: '/repo/models/runtime/transcribe.cpp/build/bin/transcribe-cli'
+    })
+    expect(hint).toContain('pnpm setup:asr')
+  })
+
+  it('never sends a packaged user to a script that only exists in a checkout', () => {
+    const cliPath =
+      '/Users/me/Library/Application Support/JustSpeak/models/runtime/transcribe.cpp/build/bin/transcribe-cli'
+    const hint = runtimeMissingHint({ packaged: true, cliPath })
+    expect(hint).not.toContain('pnpm')
+    expect(hint).toContain(cliPath)
+    expect(hint).toContain('JUSTSPEAK_TRANSCRIBE_CLI')
+    // Copying the binary is not a fix on its own: the pinned dylibs resolve
+    // through absolute build-time rpaths, so the message must not promise it.
+    expect(hint).not.toMatch(/请把 transcribe-cli 及其依赖放到/)
   })
 })

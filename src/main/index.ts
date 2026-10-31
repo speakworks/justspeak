@@ -34,6 +34,7 @@ import { SessionController } from '../core/session/session-controller'
 import { consumePendingNotice } from '../core/session/state-notice'
 import { planPreferenceSet } from '../core/preferences/merge'
 import { summarizeProvider } from '../core/preferences/view'
+import { resolveModelsDir } from './asr/paths'
 import type {
   AppStatus,
   AsrProviderSelection,
@@ -59,7 +60,7 @@ import {
 } from './asr/mode'
 import { ProviderPreferenceStore } from './asr/provider-preference'
 import { buildProvider } from './asr/providers'
-import { downloadFailureHint } from './asr/download-hint'
+import { downloadFailureHint, runtimeMissingHint } from './asr/download-hint'
 import {
   parseSegmentationConfig,
   type SegmentationMode
@@ -353,9 +354,17 @@ async function initializeProvider(): Promise<void> {
   segmentationMode = segmentation.config.mode
   segmenterOptions = segmentation.config.segmenter
 
+  const appRoot = app.getAppPath()
   const built = buildProvider({
     mode: selection.mode,
-    appRoot: app.getAppPath(),
+    appRoot,
+    // Packaged: appRoot points inside the read-only app.asar, so the runtime and
+    // weights live in userData instead (see resolveModelsDir).
+    modelsDir: resolveModelsDir({
+      appRoot,
+      userDataDir: app.getPath('userData'),
+      packaged: app.isPackaged
+    }),
     catalog: MODEL_CATALOG
   })
   if (!built.ok) {
@@ -384,7 +393,11 @@ async function initializeProvider(): Promise<void> {
     initializing = false
     failSession(
       `${model.name} 运行时缺失：${paths.cliPath}。` +
-        `请运行 pnpm setup:asr（运行时来源：${MODEL_CATALOG.runtimes[0]?.sourceUrl}）。`
+        runtimeMissingHint({
+          packaged: app.isPackaged,
+          cliPath: paths.cliPath,
+          sourceUrl: MODEL_CATALOG.runtimes[0]?.sourceUrl
+        })
     )
     return
   }

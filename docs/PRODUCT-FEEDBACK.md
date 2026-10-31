@@ -98,16 +98,50 @@ that makes each item checkable.
 - Silence-aware segmentation is experimental and configurable only through
   environment variables — there is no UI, and it is not mentioned in the app.
 
-### 10. Packaged build could not find or download its model — FIXED, not yet merged
+### 10. Packaged build could not find its model — path fixed in #16, runtime still missing (see 11)
 
 - **Was:** `resolveAsrPaths` derived the runtime and weights from
   `app.getAppPath()`, which is a path inside the read-only `app.asar` once
   packaged, so a DMG install could neither find the model nor write a download.
 - **Now:** `resolveModelsDir` uses `userData/models` when packaged and the
   repository's `models/` in a dev checkout. Verified on the installed app.
-- **Status:** committed on branch `fix/packaged-models-dir` (`8757ae8`), not
-  merged. (Owner observation, not verifiable from this commit: the build
-  installed for the trial was made from that branch and does reach 「模型就绪」.)
+- **Status:** path resolution fixed in PR #16 — a packaged build now looks in
+  `userData/models` instead of inside `app.asar`. **That is necessary but not
+  sufficient:** see item 11. The trial build only reached 「模型就绪」 because the
+  whole `models/` tree, runtime included, had been copied into `userData` by
+  hand.
+
+### 11. The packaged app has no way to obtain the ASR runtime
+
+- **Was hidden by item 10:** fixing where the app *looks* exposed that nothing
+  ever puts the runtime there.
+  - `electron-builder.yml` ships only `out/`, `package.json`,
+    `resources/models.json`, the notices and `licenses/`. It does not ship
+    `transcribe-cli`.
+  - The first-run download fetches `model.files[0]` (the weights) only; there is
+    no runtime download.
+  - `initializeProvider` tests `existsSync(paths.cliPath)` *before* the weights
+    download (`src/main/index.ts:391`), so a clean install never gets far enough
+    to download anything.
+- **Measured on the pinned runtime (v0.4.1, arm64):** the binary plus what it
+  loads is about 9 MB — `transcribe-cli` 162 KB, `libtranscribe.0.4.1.dylib`
+  1.9 MB, `libggml.0.26.0` 59 KB, `libggml-cpu.0.26.0` 959 KB,
+  `libggml-base.0.26.0` 720 KB, `libggml-metal.0.26.0` 5.3 MB.
+- **The blocker:** those dylibs are found through `@rpath` entries baked at build
+  time as **absolute paths into the build machine's checkout**
+  (`/Users/fuyg/workspace/.../models/runtime/transcribe.cpp/build/{src,ggml/src,ggml/src/ggml-metal}`).
+  Copying the tree next to the app does not help on any other machine, and the
+  trial on this machine only worked because the repository copy still sits at
+  those absolute paths.
+- **Done looks like:** rewrite each dylib's dependency paths and `@rpath` to
+  `@loader_path`-relative (`install_name_tool -change` / `-add_rpath`, or a build
+  that emits them), ship the ~9 MB set via `extraResources` into
+  `Contents/Resources/runtime/...`, resolve the runtime from there when packaged,
+  and keep the weights download where it is. Then a clean DMG install works with
+  no manual steps.
+- **Also worth deciding:** whether executing the runtime from the app bundle
+  (signed with the app) is preferred over the current interim of a user-writable
+  `userData` path — `docs/PACKAGING-RELEASE.md` describes the former.
 
 ---
 

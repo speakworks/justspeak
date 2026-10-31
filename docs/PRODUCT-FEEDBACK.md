@@ -19,12 +19,13 @@ that makes each item checkable.
 - **Reference:** Typeless shows a small pill at the bottom centre of the screen
   while recording — `✕` on the left, a live waveform in the middle, `✓` on the
   right. No text.
-- **Today:** the app creates one plain `BrowserWindow` (`src/main/index.ts:576`)
+- **Today:** the app creates one plain `BrowserWindow` (`src/main/index.ts:567`)
   with no `Tray`, no `alwaysOnTop`, and no blur/hide handling. The window is
-  shown once on `ready-to-show` (`:593`) and the global hotkey only calls
-  `toggleRecording()` (`:785-788`) — it never re-surfaces the window. Dictating
+  shown once on `ready-to-show` (`:584`) and the global hotkey only calls
+  `toggleRecording()` (`:776-779`) — it never re-surfaces the window. Dictating
   while focused in another app therefore produces *no* feedback until the text
-  is pasted, after the fact.
+  is pasted, after the fact. (Line numbers are against `main` at the time of
+  writing; re-check them before relying on one.)
 - **Decision (owner, 2026-10-31):** form = **bottom-centre floating pill**, chosen
   over a menu-bar icon and a Dock badge; and **no text inside it** — iconography
   only, following Typeless.
@@ -60,8 +61,8 @@ that makes each item checkable.
 
 - **Today:** `electron-builder.yml` sets `mac.identity: null` and
   `mac.notarize: false`; `pnpm package:mac:artifacts` produces a working DMG and
-  ZIP (verified 2026-10-31), but another machine will refuse it through
-  Gatekeeper.
+  ZIP (verified 2026-10-31), but another machine will block it through
+  Gatekeeper unless the user overrides the quarantine.
 - **Blocked on:** a Developer ID Application certificate, a team ID, and
   `notarytool` credentials.
 
@@ -76,15 +77,20 @@ that makes each item checkable.
 
 ### 7. Post-processing still produces wrong text in known cases
 
-- **Observed earlier (verified case by case, still reachable):**
-  「他说．．」 → 「他说。.」; 「他说……不对，走了」 loses text; 「他，JustSpeak行。」 →
-  「他,JustSpeak行.」 (full-width punctuation and the personal-vocabulary boundary).
+- **Observed in an earlier pass by running the pipeline directly** (not all of
+  these are pinned by a test): 「他说．．」 → 「他说。.」; 「他说……不对，走了」 loses
+  text; 「他，JustSpeak行。」 → 「他,JustSpeak行.」 (full-width punctuation and the
+  personal-vocabulary boundary). `tests/postprocess.test.ts` covers the `……` /
+  `...` separator run, not the full-width-dot form, so a fix here starts by
+  turning each case into a failing test.
 - **Done looks like:** each case pinned by a failing test first, then fixed.
 
 ### 8. Real-speech evaluation has no data
 
-- `scripts/bench-real.ts` and `docs/REAL-SPEECH-SOP.md` are ready, but no real
-  recordings exist, so the accuracy claim has no number behind it yet.
+- `scripts/bench-real.ts` and `docs/REAL-SPEECH-SOP.md` are ready, but nothing
+  has been recorded into `bench/real/` yet (the WAVs under `bench/fixtures/` and
+  `models/runtime/` are synthetic or upstream), so the accuracy claim has no
+  number behind it.
 
 ### 9. Platform and feature scope
 
@@ -100,7 +106,8 @@ that makes each item checkable.
 - **Now:** `resolveModelsDir` uses `userData/models` when packaged and the
   repository's `models/` in a dev checkout. Verified on the installed app.
 - **Status:** committed on branch `fix/packaged-models-dir` (`8757ae8`), not
-  merged; the installed trial build already contains it.
+  merged. (Owner observation, not verifiable from this commit: the build
+  installed for the trial was made from that branch and does reach 「模型就绪」.)
 
 ---
 

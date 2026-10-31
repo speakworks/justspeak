@@ -430,3 +430,29 @@ describe('session state machine', () => {
     expect(harness.states.at(-1)?.state).toBe('idle')
   })
 })
+
+describe('session cancellation', () => {
+  it('cancels a recording and returns to idle without a transcript', async () => {
+    const harness = setup()
+    expect(harness.controller.toggle(true)).toBe('start')
+    expect(harness.controller.cancel()).toBe('cancel')
+    expect(harness.controller.state).toBe('idle')
+
+    // The renderer's late stop summary must be ignored, exactly like any stale stop.
+    await harness.controller.handleCaptureStopped(SUMMARY)
+    expect(harness.transcripts).toHaveLength(0)
+    expect(harness.pastes).toHaveLength(0)
+    expect(harness.transcribe).not.toHaveBeenCalled()
+  })
+
+  it('ignores cancellation outside recording', async () => {
+    const harness = setup()
+    expect(harness.controller.cancel()).toBe('ignore')
+
+    harness.controller.toggle(true)
+    harness.controller.toggle(true)
+    expect(harness.controller.state).toBe('transcribing')
+    expect(harness.controller.cancel()).toBe('ignore')
+    expect(harness.controller.state).toBe('transcribing')
+  })
+})

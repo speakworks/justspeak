@@ -35,6 +35,17 @@ import { consumePendingNotice } from '../core/session/state-notice'
 import { planPreferenceSet } from '../core/preferences/merge'
 import { summarizeProvider } from '../core/preferences/view'
 import { resolveModelsDir } from './asr/paths'
+import { createLevelThrottle, rmsOf } from '../core/overlay/level'
+import {
+  destroyOverlay,
+  hideOverlay,
+  initOverlay,
+  overlayWebContentsId,
+  replayOverlay,
+  showOverlay,
+  updateOverlayLevel,
+  type OverlayPayload
+} from './overlay'
 import type {
   AppStatus,
   AsrProviderSelection,
@@ -153,6 +164,9 @@ function sendState(next: AppStatus['state'], message?: string): void {
   pendingSegmentFailure = notice.pending
   console.log('[state]', next, message ?? '')
   mainWindow?.webContents.send('state', next, message)
+  const overlay = overlayFor(next)
+  if (overlay) showOverlay(overlay)
+  else hideOverlay()
 }
 
 function sendTranscript(event: TranscriptEvent): void {
@@ -556,6 +570,46 @@ function toggleRecording(): void {
   }
 }
 
+/**
+ * Which pill state a session state maps to, or null when the pill should go.
+ * The theme travels with the state so the pill never has to ask for preferences
+ * (those handlers are gated to the main window).
+ */
+function overlayFor(next: AppStatus['state']): OverlayPayload | null {
+  if (next === 'recording') return { state: 'recording', theme: effectiveTheme() }
+  if (next === 'transcribing' || next === 'pasting') {
+    return { state: 'working', theme: effectiveTheme() }
+  }
+  return null
+}
+
+const levelThrottle = createLevelThrottle()
+
+/** RMS of an incoming PCM batch, or null when the payload is not one. */
+function levelOf(payload: unknown): number | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const samples = (payload as { samples?: unknown }).samples
+  return samples instanceof Int16Array ? rmsOf(samples) : null
+}
+
+function pushOverlayState(): void {
+  replayOverlay()
+}
+
+/** The pill's ✕: discard the capture and return to idle. */
+function cancelRecording(): void {
+  if (!session) return
+  if (session.cancel() !== 'cancel') return
+  pcmBuffer.finish()
+  mainWindow?.webContents.send('recording:stop')
+}
+
+/** The pill's ✓: only meaningful while capturing; a toggle from idle would start one. */
+function finishRecording(): void {
+  if (!session || session.state !== 'recording') return
+  toggleRecording()
+}
+
 function createWindow(): void {
   const preload = preloadPath()
   if (!existsSync(preload)) {
@@ -596,6 +650,8 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
   mainWindow.on('closed', () => {
+    // The pill is a second window; without this the app would stop quitting.
+    destroyOverlay()
     mainWindow = null
     rendererReady = false
   })
@@ -710,9 +766,27 @@ app.whenReady().then(async () => {
       return
     }
     const result = pcmBuffer.append(payload)
-    if (result.ok || result.error.code === 'NOT_RECORDING') return
+    if (result.ok) {
+      const level = levelOf(payload)
+      if (level !== null && levelThrottle.shouldSend(Date.now())) updateOverlayLevel(level)
+      return
+    }
+    if (result.error.code === 'NOT_RECORDING') return
     mainWindow?.webContents.send('recording:stop')
     session?.handleCaptureFailed(result.error.message)
+  })
+  ipcMain.on('overlay:ready', (event) => {
+    if (event.sender.id !== overlayWebContentsId()) return
+    // Re-pushing here is what makes the first recording after launch visible.
+    pushOverlayState()
+  })
+  ipcMain.on('overlay:cancel', (event) => {
+    if (event.sender.id !== overlayWebContentsId()) return
+    cancelRecording()
+  })
+  ipcMain.on('overlay:finish', (event) => {
+    if (event.sender.id !== overlayWebContentsId()) return
+    finishRecording()
   })
   ipcMain.handle('state:get', (): AppStatus => currentStatus())
   ipcMain.handle('asr:set-provider', async (event, payload: unknown): Promise<AppStatus> => {
@@ -782,6 +856,11 @@ app.whenReady().then(async () => {
     }
   )
 
+  initOverlay({
+    preloadPath: preloadPath(),
+    rendererUrl: process.env.ELECTRON_RENDERER_URL,
+    rendererFile: path.join(app.getAppPath(), 'out/renderer/index.html')
+  })
   createWindow()
   void runProviderInitialization()
 

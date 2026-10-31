@@ -3,6 +3,8 @@ import type { PostprocessResult } from '../postprocess'
 import type { AppState, RecordingSummary, TranscriptEvent } from '../../shared/ipc'
 
 export const INVALID_SUMMARY_MESSAGE = '录音数据无效，请重试。'
+export const CANCELLED_MESSAGE = '已取消本次录音。'
+
 export const EMPTY_CAPTURE_MESSAGE = '没有采集到音频，请重试。'
 export const CAPTURE_FAILED_MESSAGE = '录音失败，请重试。'
 export const STOP_MISSING_MESSAGE = '没有收到录音停止事件，请重试。'
@@ -70,6 +72,19 @@ export class SessionController {
     this.lastStartAt = now
     this.setState('recording')
     return 'start'
+  }
+
+  /**
+   * Cancelling is only meaningful while capturing. It short-circuits the chain
+   * (`recording → idle`) instead of entering `transcribing`, so the capture is
+   * discarded and nothing reaches the provider, the transcript, or the
+   * clipboard. Every other state ignores it — the same choice VoiceInk makes
+   * when its recorder close button is pressed during transcription.
+   */
+  cancel(): 'cancel' | 'ignore' {
+    if (this.state !== 'recording') return 'ignore'
+    this.setState('idle', CANCELLED_MESSAGE)
+    return 'cancel'
   }
 
   handleCaptureStarted(_atMs: number): void {

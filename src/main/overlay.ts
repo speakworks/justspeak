@@ -76,7 +76,16 @@ function ensureWindow(): BrowserWindow {
   })
 
   created.setAlwaysOnTop(true, 'status')
-  created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  // `skipTransformProcessType` is not cosmetic. Without it macOS swaps the app
+  // between ForegroundApplication and UIElementApplication every time this is
+  // called, and the swap deactivates the app: the main window loses focus the
+  // moment the pill appears, so a dictation aimed at JustSpeak itself would be
+  // pasted instead of inserted. The collection behaviour alone still puts the
+  // pill on every Space and above fullscreen windows.
+  created.setVisibleOnAllWorkspaces(true, {
+    visibleOnFullScreen: true,
+    skipTransformProcessType: true
+  })
   created.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   created.webContents.on('will-navigate', (event) => {
     // The overlay only ever renders its own bundle.

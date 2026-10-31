@@ -34,6 +34,7 @@ import { SessionController } from '../core/session/session-controller'
 import { consumePendingNotice } from '../core/session/state-notice'
 import { planPreferenceSet } from '../core/preferences/merge'
 import { summarizeProvider } from '../core/preferences/view'
+import { deliverTranscript } from '../core/shell/delivery'
 import { resolveModelsDir } from './asr/paths'
 import { createLevelThrottle, rmsOf } from '../core/overlay/level'
 import {
@@ -83,8 +84,8 @@ import { PcmBuffer } from './pcm-buffer'
 import { ThemeStore } from './theme-store'
 import { VocabularyStore, type VocabularyLoadResult } from './vocabulary-store'
 
-const DARK_BACKGROUND = '#0b0f14'
-const LIGHT_BACKGROUND = '#f6f5f2'
+const DARK_BACKGROUND = '#1e1e1e'
+const LIGHT_BACKGROUND = '#f2f2f2'
 
 const PROVIDER_OPTIONS: Record<SelectableAsrProviderId, ProviderOption> = {
   qwen3: { id: 'qwen3', label: 'Qwen3-ASR 0.6B', capabilities: QWEN3_CAPABILITIES },
@@ -268,7 +269,15 @@ function makeSession(provider: AsrProvider, fake: boolean): SessionController {
   })
   return new SessionController({
     provider: selected,
-    paste: pasteText,
+    // Exactly one target: a focused app window means the renderer inserts, and
+    // no keystroke is synthesized, so the text cannot land twice.
+    paste: async (text: string) => {
+      await deliverTranscript(text, {
+        appFocused: () => mainWindow?.isFocused() ?? false,
+        insert: (out) => mainWindow?.webContents.send('transcript:insert', out),
+        paste: pasteText
+      })
+    },
     sendState,
     sendTranscript,
     fake,
@@ -618,13 +627,9 @@ function createWindow(): void {
     return
   }
 
-  // Height is measured in the real qwen3 mode: the model line only renders
-  // there, so measuring in fake mode under-counts and lets the page scroll.
-  // The transcript card has a fixed height, so empty, one-line, long
-  // transcript and long-error states all measure the same 632 CSS px. The
-  // hotkey editor's error message adds at most one line, which the reduced
-  // app bottom padding absorbs; 640 still leaves a margin. Shrink only,
-  // never grow, on a smaller display.
+  // The shell is full-height and its sheet flexes, so no state can change the
+  // window's scroll height; 720×640 is chosen for reading comfort, not for a
+  // worst-case measurement. Shrink only, never grow, on a smaller display.
   const PREFERRED_WIDTH = 720
   const PREFERRED_HEIGHT = 640
   const workArea = screen.getPrimaryDisplay().workAreaSize

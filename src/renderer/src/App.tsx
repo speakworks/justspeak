@@ -5,26 +5,25 @@ import {
   type CaptureStreamPort,
   type WorkletNodePort
 } from '../../core/capture/capture-controller'
-import { describeCapabilities } from '../../core/asr/capabilities'
-import { DEFAULT_ACCELERATOR } from '../../core/hotkey/accelerator'
+import { DEFAULT_ACCELERATOR, acceleratorDisplayParts } from '../../core/hotkey/accelerator'
 import {
   buildSettingsRows,
   validateHotkeyDraft,
   type SettingsRows
 } from '../../core/preferences/view'
-import { THEME_LABEL, resolveTheme } from '../../core/theme/theme'
+import { resolveTheme } from '../../core/theme/theme'
 import type {
   AppState,
   AsrProviderSelection,
-  ModelInfo,
   PreferencesView,
-  RecordingSummary,
   ResolvedTheme,
   SelectableAsrProviderId,
-  ThemePreference,
-  TranscriptEvent
+  ThemePreference
 } from '../../shared/ipc'
 import { SettingsPanel } from './SettingsPanel'
+import { Sidebar, type Destination } from './Sidebar'
+import { HistoryPane } from './HistoryPane'
+import { insertAtSelection, type InputSelection } from '../../core/shell/insert'
 
 const WORKLET_CODE = `
 class PcmCollector extends AudioWorkletProcessor {
@@ -54,6 +53,16 @@ const STATE_LABEL: Record<AppState, string> = {
   transcribing: '识别中',
   pasting: '粘贴中',
   error: '出错了'
+}
+
+type View = Destination
+
+/** Title and subtitle per destination; the home subtitle carries the hotkey. */
+const PAGE: Record<View, { title: string; subtitle: string }> = {
+  home: { title: '首页', subtitle: '' },
+  history: { title: '历史记录', subtitle: '记录只保存在这台 Mac 上。' },
+  dictionary: { title: '词典', subtitle: '专有名词和热词，识别时优先匹配。' },
+  settings: { title: '设置', subtitle: '外观、快捷键与模型。' }
 }
 
 function createCaptureController(onLevel: (level: number) => void): CaptureController {
@@ -108,19 +117,20 @@ function createCaptureController(onLevel: (level: number) => void): CaptureContr
   })
 }
 
-type View = 'dictation' | 'settings'
-
 export function App(): React.JSX.Element {
   const [state, setState] = useState<AppState>('idle')
   const [message, setMessage] = useState<string | undefined>()
-  const [level, setLevel] = useState(0)
-  const [transcript, setTranscript] = useState<TranscriptEvent | null>(null)
-  const [modelInfo, setModelInfo] = useState<ModelInfo | undefined>()
   const [asr, setAsr] = useState<AsrProviderSelection | undefined>()
   /** The one renderer copy of persisted settings, replaced by main on every read. */
   const [preferences, setPreferences] = useState<PreferencesView | null>(null)
   const [preferencesError, setPreferencesError] = useState<string | undefined>()
-  const [view, setView] = useState<View>('dictation')
+  const [view, setView] = useState<View>('home')
+  // The dictated text lives above the destination switch so a transcript that
+  // lands while another destination is shown is not lost.
+  const [input, setInput] = useState<InputSelection>({ value: '', start: 0, end: 0 })
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const composingRef = useRef(false)
+  const pendingInsertRef = useRef<string | null>(null)
   const [hotkeyDraft, setHotkeyDraft] = useState(DEFAULT_ACCELERATOR)
   const [hotkeyFeedback, setHotkeyFeedback] = useState<string | undefined>()
   const [hotkeyError, setHotkeyError] = useState(false)
@@ -134,7 +144,9 @@ export function App(): React.JSX.Element {
 
   const controllerRef = useRef<CaptureController | null>(null)
   if (!controllerRef.current) {
-    controllerRef.current = createCaptureController(setLevel)
+    // The renderer no longer draws a level bar; the global pill takes its level
+    // from main, so subscribing here would re-render the shell for nothing.
+    controllerRef.current = createCaptureController(() => {})
   }
 
   const reportFailure = useCallback((error: unknown): void => {
@@ -168,7 +180,6 @@ export function App(): React.JSX.Element {
       .setAsrProvider(next)
       .then((status) => {
         setAsr(status.asr)
-        setModelInfo(status.modelInfo)
         setState(status.state)
         setMessage(status.message)
       })
@@ -271,8 +282,14 @@ export function App(): React.JSX.Element {
       setState(next)
       setMessage(nextMessage)
     })
-    const unsubTranscript = window.justspeak.onTranscript((event) => {
-      setTranscript(event)
+    const unsubInsert = window.justspeak.onTranscriptInsert((text) => {
+      // Inserting mid-composition would split an IME session and drop the
+      // pre-edit text, so the transcript waits for compositionend.
+      if (composingRef.current) {
+        pendingInsertRef.current = text
+        return
+      }
+      applyInsert(text)
     })
     const unsubCommand = window.justspeak.onRecordingCommand((command) => {
       if (command === 'start') {
@@ -288,7 +305,6 @@ export function App(): React.JSX.Element {
       .getState()
       .then((status) => {
         if (disposed) return
-        setModelInfo(status.modelInfo)
         setAsr(status.asr)
         if (sawStateEvent) return
         setState(status.state)
@@ -303,8 +319,8 @@ export function App(): React.JSX.Element {
 
     return () => {
       disposed = true
+      unsubInsert()
       unsubState()
-      unsubTranscript()
       unsubCommand()
       void controller.dispose()
     }
@@ -315,121 +331,176 @@ export function App(): React.JSX.Element {
   const hotkeyMessage = hotkeyFeedback ?? liveError
   const hotkeyMessageIsError = hotkeyError || liveError !== undefined
   const rows: SettingsRows | null = preferences ? buildSettingsRows(preferences) : null
-  const settingsOpen = view === 'settings'
+  const hotkeyLabel = acceleratorDisplayParts(
+    preferences?.hotkey || DEFAULT_ACCELERATOR
+  ).join('')
+
+  // Every insert bumps the tick; the effect below then puts the caret where the
+  // text ended. The state updater stays pure (StrictMode invokes it twice), and
+  // the caret is read from the same render the tick arrived in.
+  const [insertTick, setInsertTick] = useState(0)
+  const caretAfterInsert = input.start
+
+  const applyInsert = useCallback((text: string): void => {
+    setInput((current) => {
+      const next = insertAtSelection(current, text)
+      return { value: next.value, start: next.caret, end: next.caret }
+    })
+    setInsertTick((current) => current + 1)
+  }, [])
+
+  useEffect(() => {
+    if (insertTick === 0) return
+    const node = inputRef.current
+    if (!node) return
+    node.focus()
+    node.setSelectionRange(caretAfterInsert, caretAfterInsert)
+    // `insertTick` is the trigger; `caretAfterInsert` belongs to that render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insertTick])
+
+  const settingsPanelProps = {
+    preferences,
+    rows,
+    error: preferencesError,
+    hotkeyDraft,
+    hotkeyMessage,
+    hotkeyMessageIsError,
+    hotkeyBusy,
+    canApplyHotkey: hotkeyDraftState.ok && hotkeyDraftState.dirty,
+    onHotkeyDraft: (value: string) => {
+      setHotkeyDraft(value)
+      setHotkeyFeedback(undefined)
+      setHotkeyError(false)
+    },
+    onApplyHotkey: applyHotkey,
+    onTheme: applyThemePreference,
+    onReload: reloadPreferences
+  }
+
+  const subtitle =
+    view === 'home' && hotkeyLabel
+      ? `按 ${hotkeyLabel} 随时开始说话`
+      : PAGE[view].subtitle
 
   return (
-    <main className="app">
-      <header className="header">
-        <div>
-          <p className="kicker">JustSpeak · M1</p>
-          <h1>按一下，开始说话</h1>
-        </div>
-        <div className="header-actions">
-          {asr ? (
-            <select
-              className="provider-select"
-              aria-label="识别模型"
-              value={asr.id}
-              disabled={isBusy || state === 'recording'}
-              onChange={(event) =>
-                changeProvider(event.target.value as SelectableAsrProviderId)
-              }
-            >
-              {asr.options.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          ) : null}
-          <span className="appearance-indicator" title="当前外观">
-            {preferences ? `外观：${THEME_LABEL[theme]}` : '外观：读取中'}
-          </span>
-          <button
-            type="button"
-            className="header-button"
-            aria-expanded={settingsOpen}
-            aria-controls="settings-panel"
-            onClick={() => setView(settingsOpen ? 'dictation' : 'settings')}
-          >
-            {settingsOpen ? '返回' : '设置'}
-          </button>
-          <span className={`status ${state}`}>{STATE_LABEL[state]}</span>
-        </div>
-      </header>
-
-      {settingsOpen ? (
-        <SettingsPanel
-          preferences={preferences}
-          rows={rows}
-          error={preferencesError}
-          hotkeyDraft={hotkeyDraft}
-          hotkeyMessage={hotkeyMessage}
-          hotkeyMessageIsError={hotkeyMessageIsError}
-          hotkeyBusy={hotkeyBusy}
-          canApplyHotkey={hotkeyDraftState.ok && hotkeyDraftState.dirty}
-          onHotkeyDraft={(value) => {
-            setHotkeyDraft(value)
-            setHotkeyFeedback(undefined)
-            setHotkeyError(false)
-          }}
-          onApplyHotkey={applyHotkey}
-          onTheme={applyThemePreference}
-          onReload={reloadPreferences}
-          onClose={() => setView('dictation')}
-        />
-      ) : (
-        <section className="card">
-          <button
-            className={state === 'recording' ? 'record stop' : 'record'}
-            disabled={isBusy}
-            onClick={() => window.justspeak.toggleRecording()}
-          >
-            {state === 'recording' ? '停止并粘贴' : '开始录音'}
-          </button>
-
-          {modelInfo ? (
-            // The URL is long enough to wrap onto a second row and waste height;
-            // show it on hover instead. Not a link: the main process denies new
-            // windows, so a clickable element here would be a dead affordance.
-            // The source URL stays on hover. The capability summary comes from
-            // the provider's declared flags, not from the selected id.
-            <p
-              className="hint model-meta"
-              title={`${modelInfo.sourceUrl} · ${modelInfo.quantization}`}
-            >
-              模型：{modelInfo.name} · {modelInfo.license} ·{' '}
-              {describeCapabilities(modelInfo.capabilities)}
-            </p>
-          ) : null}
-
-          <div className="level" aria-hidden="true">
-            <span style={{ width: `${Math.min(100, level * 800)}%` }} />
+    <div className="shell">
+      <Sidebar
+        current={view}
+        onSelect={setView}
+        providerLabel={preferences?.provider.label}
+        providerLive={preferences?.provider.selectable ?? false}
+      />
+      <main className="content">
+        <header className="page-header">
+          <div>
+            <h1 className="page-title">{PAGE[view].title}</h1>
+            <p className="page-subtitle">{subtitle}</p>
           </div>
-
-          {message ? <p className="message">{message}</p> : null}
-        </section>
-      )}
-
-      {settingsOpen ? null : (
-        <section className="card transcript">
-          <div className="transcript-head">
-            <span>识别结果</span>
-            {transcript ? (
-              <span className="tag">{transcript.fake ? 'FAKE ASR' : 'LOCAL ASR'}</span>
+          <div className="page-actions">
+            {view === 'settings' ? (
+              <button type="button" className="quiet-button" onClick={() => setView('home')}>
+                完成
+              </button>
+            ) : asr ? (
+              <span className="provider">
+                <select
+                  className="provider-select"
+                  aria-label="识别模型"
+                  value={asr.id}
+                  disabled={isBusy || state === 'recording'}
+                  onChange={(event) =>
+                    changeProvider(event.target.value as SelectableAsrProviderId)
+                  }
+                >
+                  {asr.options.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <svg className="provider-chevron" viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="m4.5 6.5 3.5 3.5 3.5-3.5" />
+                </svg>
+              </span>
             ) : null}
           </div>
-          <p className={transcript ? 'transcript-text' : 'transcript-text empty'}>
-            {transcript?.text ?? '还没有文本。按快捷键说一句话。'}
-          </p>
-          {transcript ? (
-            <p className="meta">
-              {`录音 ${Math.round(transcript.durationMs / 100) / 10}s · 识别 ${transcript.latencyMs}ms`}
-              {transcript.applied?.length ? ` · 清理 ${transcript.applied.length} 项` : ''}
-            </p>
-          ) : null}
-        </section>
-      )}
-    </main>
+        </header>
+
+        {view === 'home' ? (
+          <section className="pane">
+            <div className={`sheet ${state}`}>
+              <label className="sheet-label" htmlFor="dictation-input">
+                口述内容
+              </label>
+              <div className="sheet-body">
+                <textarea
+                  ref={inputRef}
+                  id="dictation-input"
+                  className="dictation-input"
+                  value={input.value}
+                  spellCheck={false}
+                  aria-describedby={input.value === '' ? 'dictation-empty-hint' : undefined}
+                  onChange={(event) => {
+                    const node = event.currentTarget
+                    setInput({
+                      value: node.value,
+                      start: node.selectionStart ?? node.value.length,
+                      end: node.selectionEnd ?? node.value.length
+                    })
+                  }}
+                  onSelect={(event) => {
+                    const node = event.currentTarget
+                    setInput((current) => ({
+                      ...current,
+                      start: node.selectionStart ?? 0,
+                      end: node.selectionEnd ?? 0
+                    }))
+                  }}
+                  onCompositionStart={() => {
+                    composingRef.current = true
+                  }}
+                  onCompositionEnd={() => {
+                    composingRef.current = false
+                    const pending = pendingInsertRef.current
+                    if (pending === null) return
+                    pendingInsertRef.current = null
+                    applyInsert(pending)
+                  }}
+                />
+                {input.value === '' ? (
+                  <div className="composer-empty" id="dictation-empty-hint">
+                    <p className="composer-empty-title">直接说话，文字会落在这里</p>
+                    <p className="composer-empty-hint">
+                      也可以在任何 App 里说，识别完成后插入光标处
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+              {state === 'error' && message ? (
+                <p className="sheet-message error">{message}</p>
+              ) : null}
+              <div className="sheet-foot">
+                <span className="status">
+                  <span className="status-dot" aria-hidden="true" />
+                  {STATE_LABEL[state]}
+                </span>
+                <span className="sheet-hint">{hotkeyLabel}</span>
+              </div>
+            </div>
+          </section>
+        ) : view === 'settings' ? (
+          <section className="pane">
+            <SettingsPanel section="settings" {...settingsPanelProps} />
+          </section>
+        ) : view === 'dictionary' ? (
+          <section className="pane">
+            <SettingsPanel section="vocabulary" {...settingsPanelProps} />
+          </section>
+        ) : (
+          <HistoryPane />
+        )}
+      </main>
+    </div>
   )
 }

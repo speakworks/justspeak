@@ -127,6 +127,12 @@ export interface TranscriptEvent {
   applied?: string[]
 }
 
+/** What the recording pill renders; main pushes it, the pill never polls. */
+export interface OverlayState {
+  state: 'recording' | 'working'
+  theme: 'light' | 'dark'
+}
+
 export interface JustSpeakApi {
   toggleRecording: () => void
   getState: () => Promise<AppStatus>
@@ -140,6 +146,16 @@ export interface JustSpeakApi {
   getPreferences: () => Promise<PreferencesView>
   /** Writes one or more preferences through the single preferences surface. */
   setPreferences: (patch: PreferencesPatch) => Promise<PreferencesSetResult>
+  /** Overlay-only: the pill's state, retained by main and re-pushed on ready. */
+  onOverlayState: (listener: (state: OverlayState) => void) => () => void
+  /** Overlay-only: microphone level, 0..1, throttled to <=30 per second. */
+  onOverlayLevel: (listener: (level: number) => void) => () => void
+  /** Overlay-only: tells main the pill has mounted, so the retained state is pushed. */
+  overlayReady: () => void
+  /** Overlay-only: cancel the recording and discard it. */
+  cancelRecording: () => void
+  /** Overlay-only: finish the recording (same path as the hotkey's stop). */
+  finishRecording: () => void
   onState: (listener: (state: AppState, message?: string) => void) => () => void
   onTranscript: (listener: (event: TranscriptEvent) => void) => () => void
   onRecordingCommand: (listener: (command: RecordingCommand) => void) => () => void

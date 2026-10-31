@@ -3,6 +3,7 @@ import type {
   AppState,
   AppStatus,
   JustSpeakApi,
+  OverlayState,
   PcmBatch,
   PreferencesPatch,
   PreferencesSetResult,
@@ -31,6 +32,19 @@ const api: JustSpeakApi = {
     ipcRenderer.on('preferences:changed', handler)
     return () => ipcRenderer.removeListener('preferences:changed', handler)
   },
+  onOverlayState: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: OverlayState) => listener(state)
+    ipcRenderer.on('overlay:state', handler)
+    return () => ipcRenderer.removeListener('overlay:state', handler)
+  },
+  onOverlayLevel: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, level: number) => listener(level)
+    ipcRenderer.on('overlay:level', handler)
+    return () => ipcRenderer.removeListener('overlay:level', handler)
+  },
+  overlayReady: () => ipcRenderer.send('overlay:ready'),
+  cancelRecording: () => ipcRenderer.send('overlay:cancel'),
+  finishRecording: () => ipcRenderer.send('overlay:finish'),
   onState: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, next: AppState, message?: string) => {
       listener(next, message)

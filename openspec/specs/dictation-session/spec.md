@@ -7,7 +7,10 @@ Defines the observable dictation session behavior in the Electron main process: 
 
 ### Requirement: Session state SHALL follow one explicit state machine
 
-The session SHALL move through `idle → recording → transcribing → pasting → idle`, with `error` reachable from any active state, and SHALL reject or ignore events that are invalid for the current state.
+The session SHALL move through `idle → recording → transcribing → pasting → idle`,
+SHALL allow `recording → idle` when the user cancels, with `error` reachable from
+any active state, and SHALL reject or ignore events that are invalid for the
+current state.
 
 #### Scenario: Happy path
 
@@ -15,6 +18,11 @@ The session SHALL move through `idle → recording → transcribing → pasting 
 - **THEN** the stop command moves the session from `recording` to `transcribing` before main waits for `capture:stopped`
 - **AND** the renderer flushes its final partial 20 ms batch and sends the stop summary
 - **AND** main accepts that final batch for the current session, then emits exactly one transcript event and moves through `pasting` to `idle`
+
+#### Scenario: Cancel short-circuits the chain
+
+- **WHEN** the user cancels while recording
+- **THEN** the session goes from `recording` directly to `idle` without entering `transcribing` or `pasting`
 
 #### Scenario: Stale stop event
 
@@ -172,3 +180,27 @@ The session SHALL keep the existing single-shot provider path as its default. Se
 - **WHEN** segmentation finds no speech in the captured audio
 - **THEN** the session emits an empty transcript and does not call the provider
 - **AND** it returns to idle rather than hanging in transcribing
+
+### Requirement: Cancelling SHALL discard the capture
+
+The session SHALL support cancellation while it is `recording`: the captured
+audio SHALL be discarded, no provider call SHALL be made, no transcript SHALL be
+emitted, the clipboard SHALL be left untouched, and the session SHALL return to
+`idle`. Cancellation SHALL be ignored in every other state.
+
+#### Scenario: Cancel while recording
+
+- **WHEN** cancellation is requested while the session is `recording`
+- **THEN** the session moves to `idle`
+- **AND** the captured audio is discarded
+- **AND** no transcript event is emitted and the clipboard is not written
+
+#### Scenario: The cancelled capture's stop arrives late
+
+- **WHEN** the renderer's `capture:stopped` arrives after a cancellation
+- **THEN** it is ignored as a stale event, exactly like any other stop that arrives while not transcribing
+
+#### Scenario: Cancel while transcribing
+
+- **WHEN** cancellation is requested while the session is `transcribing` or `pasting`
+- **THEN** the session state does not change and no transcript is discarded

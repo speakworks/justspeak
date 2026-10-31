@@ -119,3 +119,8 @@ The session SHALL keep the single-shot provider path for any utterance that fits
 - **WHEN** segmentation finds no speech in the captured audio
 - **THEN** the session emits an empty transcript and does not call the provider
 - **AND** it returns to idle rather than hanging in transcribing
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Post-processing SHALL run between the ASR result and paste`
+- TO: `### Requirement: Post-processing SHALL run between the ASR result and delivery`

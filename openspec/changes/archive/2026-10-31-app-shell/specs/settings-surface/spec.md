@@ -109,3 +109,8 @@ Each row SHALL show exactly one of `default`, `override`, or `unavailable`, and 
 - **WHEN** no provider is live
 - **THEN** the provider row is labelled unavailable
 - **AND** it states that ASR is not ready and no model can be switched
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: The panel SHALL NOT add a page scrollbar`
+- TO: `### Requirement: The shell SHALL NOT add a page scrollbar`

@@ -694,21 +694,25 @@ html[data-overlay='1'] #root {
   color: #fff;
 }
 
+/* Centre-anchored cells: only `transform` changes, so no layout work per frame. */
 .pill-bars {
   display: flex;
   align-items: center;
-  gap: 3px;
+  justify-content: center;
+  gap: 2px;
   height: 18px;
-  width: 72px;
 }
 
 .pill-bars span {
-  flex: 1;
-  min-height: 2px;
+  width: 2px;
+  height: 18px;
   border-radius: 1px;
   background: currentColor;
-  opacity: 0.85;
-  transition: height 80ms linear;
+  opacity: 0.9;
+  transform: scaleY(0.11);
+  transform-origin: center;
+  transition: transform 0.2s cubic-bezier(0.05, 0.6, 0.4, 0.95);
+  will-change: transform;
 }
 
 .pill.is-working .pill-bars span {

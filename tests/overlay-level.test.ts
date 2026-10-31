@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { barHeights, createLevelThrottle, rmsOf } from '../src/core/overlay/level'
+import {
+  PILL_BAR_REST_SCALE,
+  PILL_BARS,
+  barScales,
+  createLevelThrottle,
+  rmsOf
+} from '../src/core/overlay/level'
 
 describe('overlay level', () => {
   it('reports silence as zero and a full-scale square wave as one', () => {
@@ -30,28 +36,33 @@ describe('overlay level', () => {
 })
 
 describe('waveform bars', () => {
-  it('rests low in silence and rises with the level', () => {
-    const quiet = barHeights(0)
-    const loud = barHeights(0.2)
-    expect(Math.max(...quiet)).toBeLessThan(30)
-    expect(Math.max(...loud)).toBeGreaterThan(80)
+  it('collapses every bar to the same resting scale in silence, giving a dashed line', () => {
+    const scales = barScales(0, 0)
+    expect(scales).toHaveLength(PILL_BARS)
+    for (const scale of scales) expect(scale).toBeCloseTo(PILL_BAR_REST_SCALE, 5)
   })
 
-  it('treats ordinary speech levels as partial, not saturated', () => {
-    // Ambient noise measured ~0.0015 RMS on this machine; it must stay small.
-    expect(Math.max(...barHeights(0.0015))).toBeLessThan(30)
-    // A normal speaking voice sits well below full scale.
-    const speaking = barHeights(0.06)
-    expect(Math.max(...speaking)).toBeLessThanOrEqual(100)
-    expect(Math.max(...speaking)).toBeGreaterThan(30)
+  it('stays at rest for ambient noise and rises for speech', () => {
+    const ambient = Math.max(...barScales(0.0015, 0))
+    const speech = Math.max(...barScales(0.06, 0))
+    expect(ambient).toBeCloseTo(PILL_BAR_REST_SCALE, 5)
+    expect(speech).toBeGreaterThan(0.6)
   })
 
-  it('never leaves the 0..100 range', () => {
-    for (const level of [0, 0.001, 0.1, 1, 5]) {
-      for (const height of barHeights(level)) {
-        expect(height).toBeGreaterThanOrEqual(0)
-        expect(height).toBeLessThanOrEqual(100)
-      }
+  it('grows with the level and never leaves 0..1', () => {
+    let previous = 0
+    for (const level of [0, 0.01, 0.05, 0.1, 0.3, 1, 5]) {
+      const peak = Math.max(...barScales(level, 0))
+      expect(peak).toBeGreaterThanOrEqual(previous)
+      expect(peak).toBeGreaterThanOrEqual(PILL_BAR_REST_SCALE)
+      expect(peak).toBeLessThanOrEqual(1)
+      previous = peak
     }
+  })
+
+  it('shifts the pattern with the ripple phase so the bars move between updates', () => {
+    const a = barScales(0.06, 0)
+    const b = barScales(0.06, 1.3)
+    expect(a).not.toEqual(b)
   })
 })

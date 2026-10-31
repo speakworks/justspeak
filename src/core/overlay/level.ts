@@ -41,22 +41,30 @@ export function createLevelThrottle(intervalMs: number = LEVEL_INTERVAL_MS): Lev
   }
 }
 
-/** Relative bar heights so the waveform reads as a waveform, not a solid block. */
-const BAR_WEIGHTS = [0.45, 0.75, 1, 0.65, 0.9, 0.55, 0.8, 1, 0.5]
+/** One cell per bar; thin and close together so the cluster reads as a voice print. */
+export const PILL_BARS = 21
+
+/** Resting scale: 18 px cell * 0.11 ≈ 2 px, so silence looks like a dashed line. */
+export const PILL_BAR_REST_SCALE = 0.11
 
 /**
- * Bar heights (percent) for a 0..1 RMS level.
+ * Vertical scale for each bar, 0..1, centre-anchored.
  *
- * The main window paints its level bar at `level * 800` percent, so a full
- * 0..1 fraction is `level * 8` here — using `level * 800` as a fraction would
- * amplify ambient noise a hundredfold and pin every bar at 100%.
+ * The envelope (a bell across the row) is what makes the cluster read as a
+ * waveform instead of a bar chart; the ripple keeps it alive between level
+ * updates without inventing volume — amplitude still comes from the real RMS.
  */
-export function barHeights(level: number, weights: number[] = BAR_WEIGHTS): number[] {
-  const gain = Math.min(1, Math.max(0, level) * 8)
-  return weights.map((weight, index) => {
-    // A resting sliver keeps the pill from looking dead before audio arrives.
-    const raised = Math.max(0.18, gain * weight)
-    const jitter = index % 2 === 0 ? 1 : 0.82
-    return Math.round(Math.min(1, raised * jitter) * 100)
-  })
+export function barScales(
+  level: number,
+  phase: number,
+  count: number = PILL_BARS
+): number[] {
+  const gain = Math.min(1, Math.max(0, level) * 8) * 1.9
+  const scales: number[] = []
+  for (let i = 0; i < count; i += 1) {
+    const envelope = 0.34 + 0.66 * Math.sin((Math.PI * (i + 0.5)) / count)
+    const ripple = 0.74 + 0.26 * Math.sin(i * 0.55 + phase)
+    scales.push(Math.max(PILL_BAR_REST_SCALE, Math.min(1, gain * envelope * ripple)))
+  }
+  return scales
 }

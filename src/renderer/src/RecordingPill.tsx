@@ -1,22 +1,29 @@
-import React, { useEffect, useState } from 'react'
-import { barHeights } from '../../core/overlay/level'
+import React, { useEffect, useRef, useState } from 'react'
+import { PILL_BARS, barScales } from '../../core/overlay/level'
 import type { OverlayState } from '../../shared/ipc'
 
 /**
  * The recording pill.
  *
  * It renders in its own window (`?overlay=1`) that floats over every other app,
- * so it must stay tiny, must contain no text, and must never depend on state
- * the main window owns — everything arrives through `onOverlayState`.
+ * so it must stay tiny, must contain no text, and must never depend on state the
+ * main window owns — everything arrives through `onOverlayState`.
+ *
+ * The bars are animated on their own frame loop: level updates arrive at most 30
+ * times a second, and driving `transform: scaleY` from them directly would look
+ * stepped. Amplitude still comes from the real level; only the ripple phase runs
+ * free, so motion never claims volume that is not there.
  */
-
 export function RecordingPill(): React.JSX.Element {
   const [state, setState] = useState<OverlayState>({ state: 'recording', theme: 'dark' })
-  const [level, setLevel] = useState(0)
+  const levelRef = useRef(0)
+  const cellsRef = useRef<Array<HTMLSpanElement | null>>([])
 
   useEffect(() => {
     const offState = window.justspeak.onOverlayState(setState)
-    const offLevel = window.justspeak.onOverlayLevel(setLevel)
+    const offLevel = window.justspeak.onOverlayLevel((next) => {
+      levelRef.current = next
+    })
     // Tell main we are mounted: it retains the state and pushes it on this
     // signal, which is what makes the very first recording after launch visible.
     window.justspeak.overlayReady()
@@ -26,8 +33,28 @@ export function RecordingPill(): React.JSX.Element {
     }
   }, [])
 
+  useEffect(() => {
+    let frame = 0
+    let phase = 0
+    let last = 0
+    const tick = (now: number): void => {
+      // ~60 fps, independent of how often the level arrives.
+      if (now - last >= 16) {
+        last = now
+        phase += 0.06
+        const scales = barScales(levelRef.current, phase, PILL_BARS)
+        for (let i = 0; i < scales.length; i += 1) {
+          const cell = cellsRef.current[i]
+          if (cell) cell.style.transform = `scaleY(${scales[i].toFixed(3)})`
+        }
+      }
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [])
+
   const recording = state.state === 'recording'
-  const heights = barHeights(recording ? level : 0.35)
 
   return (
     <div className={`pill pill-${state.theme} ${recording ? 'is-recording' : 'is-working'}`}>
@@ -47,8 +74,13 @@ export function RecordingPill(): React.JSX.Element {
       )}
 
       <div className="pill-bars" aria-hidden="true">
-        {heights.map((height, index) => (
-          <span key={index} style={{ height: `${height}%` }} />
+        {Array.from({ length: PILL_BARS }, (_, index) => (
+          <span
+            key={index}
+            ref={(node) => {
+              cellsRef.current[index] = node
+            }}
+          />
         ))}
       </div>
 

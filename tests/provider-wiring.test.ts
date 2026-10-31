@@ -66,5 +66,8 @@ describe('runtime missing hint', () => {
     expect(hint).not.toContain('pnpm')
     expect(hint).toContain(cliPath)
     expect(hint).toContain('JUSTSPEAK_TRANSCRIBE_CLI')
+    // Copying the binary is not a fix on its own: the pinned dylibs resolve
+    // through absolute build-time rpaths, so the message must not promise it.
+    expect(hint).not.toMatch(/请把 transcribe-cli 及其依赖放到/)
   })
 })

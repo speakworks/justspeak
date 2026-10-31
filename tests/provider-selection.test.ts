@@ -75,8 +75,9 @@ describe('fake-driven provider selection', () => {
 
 describe('buildProvider models directory wiring', () => {
   it('resolves the runtime and the weights under the directory the caller passes', () => {
-    // The packaged app passes userData/models; dropping the parameter anywhere
-    // between main and the runner must fail here, not only in a packaged build.
+    // The packaged app passes userData/models. This covers the hop from
+    // buildProvider to resolveAsrPaths; the main -> buildProvider wiring is
+    // exercised only by a packaged run.
     const built = buildProvider({
       mode: 'qwen3',
       appRoot: '/app',

@@ -33,7 +33,7 @@ export function runtimeMissingHint(input: {
     return `请运行 pnpm setup:asr${source}。`
   }
   return (
-    `请把 transcribe-cli 及其依赖放到 ${input.cliPath}，` +
-    `或用 JUSTSPEAK_TRANSCRIBE_CLI 指向已有的可执行文件${source}。`
+    `可用 JUSTSPEAK_TRANSCRIBE_CLI 指向一个依赖路径可重定位的 transcribe-cli${source}；` +
+    `当前包里没有随附运行时，直接把它拷到 ${input.cliPath} 还需要它的 dylib 能从该位置解析。`
   )
 }

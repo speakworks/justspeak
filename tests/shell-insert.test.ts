@@ -36,11 +36,17 @@ describe('home input insertion', () => {
 
 describe('delivery target', () => {
   it('inserts into the app input when its own window has focus', () => {
-    expect(deliveryTarget({ appFocused: true })).toBe('insert')
+    expect(deliveryTarget({ appFocused: true, focus: 'editable' })).toBe('insert')
+    expect(deliveryTarget({ appFocused: true, focus: 'unknown' })).toBe('insert')
   })
 
-  it('pastes into the frontmost app otherwise', () => {
-    expect(deliveryTarget({ appFocused: false })).toBe('paste')
+  it('pastes into an editable frontmost element', () => {
+    expect(deliveryTarget({ appFocused: false, focus: 'editable' })).toBe('paste')
+  })
+
+  it('shows the panel for a non-editable or unknown element', () => {
+    expect(deliveryTarget({ appFocused: false, focus: 'non-editable' })).toBe('panel')
+    expect(deliveryTarget({ appFocused: false, focus: 'unknown' })).toBe('panel')
   })
 })
 
@@ -48,29 +54,73 @@ describe('delivering a transcript', () => {
   it('inserts once and never pastes while the app window is focused', async () => {
     const insert = vi.fn()
     const paste = vi.fn(async () => {})
+    const probeFocus = vi.fn(async () => 'editable' as const)
+    const showPanel = vi.fn()
     const target = await deliverTranscript('你好', {
       appFocused: () => true,
+      probeFocus,
       insert,
-      paste
+      paste,
+      showPanel
     })
     expect(target).toBe('insert')
     expect(insert).toHaveBeenCalledTimes(1)
     expect(insert).toHaveBeenCalledWith('你好')
     expect(paste).not.toHaveBeenCalled()
+    expect(probeFocus).not.toHaveBeenCalled()
+    expect(showPanel).not.toHaveBeenCalled()
   })
 
-  it('pastes once and never inserts while another app is frontmost', async () => {
+  it('pastes once into an editable frontmost element', async () => {
     const insert = vi.fn()
     const paste = vi.fn(async () => {})
+    const showPanel = vi.fn()
     const target = await deliverTranscript('你好', {
       appFocused: () => false,
+      probeFocus: async () => 'editable',
       insert,
-      paste
+      paste,
+      showPanel
     })
     expect(target).toBe('paste')
     expect(paste).toHaveBeenCalledTimes(1)
     expect(paste).toHaveBeenCalledWith('你好')
     expect(insert).not.toHaveBeenCalled()
+    expect(showPanel).not.toHaveBeenCalled()
+  })
+
+  it('shows the panel and never pastes when the element is not editable', async () => {
+    const insert = vi.fn()
+    const paste = vi.fn(async () => {})
+    const showPanel = vi.fn()
+    const target = await deliverTranscript('你好', {
+      appFocused: () => false,
+      probeFocus: async () => 'non-editable',
+      insert,
+      paste,
+      showPanel
+    })
+    expect(target).toBe('panel')
+    expect(showPanel).toHaveBeenCalledWith('你好')
+    expect(paste).not.toHaveBeenCalled()
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it('shows the panel when the focus probe fails', async () => {
+    const paste = vi.fn(async () => {})
+    const showPanel = vi.fn()
+    const target = await deliverTranscript('你好', {
+      appFocused: () => false,
+      probeFocus: async () => {
+        throw new Error('accessibility unavailable')
+      },
+      insert: vi.fn(),
+      paste,
+      showPanel
+    })
+    expect(target).toBe('panel')
+    expect(showPanel).toHaveBeenCalledWith('你好')
+    expect(paste).not.toHaveBeenCalled()
   })
 
   it('surfaces a paste failure instead of silently dropping the text', async () => {
@@ -79,7 +129,13 @@ describe('delivering a transcript', () => {
       throw new Error('粘贴失败')
     })
     await expect(
-      deliverTranscript('你好', { appFocused: () => false, insert, paste })
+      deliverTranscript('你好', {
+        appFocused: () => false,
+        probeFocus: async () => 'editable',
+        insert,
+        paste,
+        showPanel: vi.fn()
+      })
     ).rejects.toThrow('粘贴失败')
     expect(insert).not.toHaveBeenCalled()
   })

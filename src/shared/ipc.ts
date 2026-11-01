@@ -94,6 +94,20 @@ export interface PreferencesView {
   provider: ProviderSummary
 }
 
+/** `systemPreferences.getMediaAccessStatus` on macOS. */
+export type MediaAccessStatus =
+  | 'not-determined'
+  | 'granted'
+  | 'denied'
+  | 'restricted'
+  | 'unknown'
+
+/** What the first-run screen and the settings surface may show about permissions. */
+export interface PermissionStatus {
+  accessibility: boolean
+  microphone: MediaAccessStatus
+}
+
 /** Only these keys can be written; anything else is rejected, not stored. */
 export interface PreferencesPatch {
   theme?: ThemePreference
@@ -128,7 +142,7 @@ export interface TranscriptEvent {
 }
 
 /** What happened to a finished transcript after it was recognised. */
-export const HISTORY_OUTCOMES = ['inserted', 'pasted', 'paste_failed'] as const
+export const HISTORY_OUTCOMES = ['inserted', 'pasted', 'paste_failed', 'panel'] as const
 export type HistoryOutcome = (typeof HISTORY_OUTCOMES)[number]
 
 /** Audio saved next to a history entry (phase 2); relative to `history/`. */
@@ -156,6 +170,14 @@ export interface OverlayState {
   theme: 'light' | 'dark'
 }
 
+/** What the copy panel renders; main pushes it, the panel never polls. */
+export interface ResultPanelPayload {
+  text: string
+  theme: ResolvedTheme
+  /** False when the OS refused the temporary Escape shortcut. */
+  canEscape: boolean
+}
+
 export interface JustSpeakApi {
   toggleRecording: () => void
   getState: () => Promise<AppStatus>
@@ -169,16 +191,30 @@ export interface JustSpeakApi {
   getPreferences: () => Promise<PreferencesView>
   /** Writes one or more preferences through the single preferences surface. */
   setPreferences: (patch: PreferencesPatch) => Promise<PreferencesSetResult>
+  /** Reads the two permissions the dictation path needs. Never prompts. */
+  getPermissions: () => Promise<PermissionStatus>
+  /** Opens System Settings → Privacy & Security → Accessibility. */
+  openAccessibilitySettings: () => Promise<void>
   /** Overlay-only: the pill's state, retained by main and re-pushed on ready. */
   onOverlayState: (listener: (state: OverlayState) => void) => () => void
   /** Overlay-only: microphone level, 0..1, throttled to <=30 per second. */
   onOverlayLevel: (listener: (level: number) => void) => () => void
+  /** Overlay-only: the transcript is delivered; move the walk to the last bar. */
+  onOverlayComplete: (listener: () => void) => () => void
   /** Overlay-only: tells main the pill has mounted, so the retained state is pushed. */
   overlayReady: () => void
   /** Overlay-only: cancel the recording and discard it. */
   cancelRecording: () => void
   /** Overlay-only: finish the recording (same path as the hotkey's stop). */
   finishRecording: () => void
+  /** Panel-only: the retained text and resolved theme. */
+  onPanelText: (listener: (payload: ResultPanelPayload) => void) => () => void
+  /** Panel-only: tells main it has mounted, so the retained text is pushed. */
+  panelReady: () => void
+  /** Panel-only: copy the retained text and dismiss. */
+  copyPanelText: () => void
+  /** Panel-only: dismiss without copying. */
+  closeResultPanel: () => void
   onState: (listener: (state: AppState, message?: string) => void) => () => void
   /**
    * Every finished transcript, whichever target it went to. The home input

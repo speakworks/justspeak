@@ -137,6 +137,18 @@ export function replayOverlay(): void {
   push()
 }
 
+/**
+ * The transcript landed: keep the pill visible for its short completion beat
+ * and move the walk onto the last bar. Only a working pill completes; an idle
+ * reached from recording (cancel) or from startup must just hide.
+ */
+export function completeOverlay(): boolean {
+  if (!window || window.isDestroyed() || !window.isVisible()) return false
+  if (retained?.state !== 'working') return false
+  window.webContents.send('overlay:complete')
+  return true
+}
+
 /** Push the live level to the pill; the caller throttles. */
 export function updateOverlayLevel(level: number): void {
   if (!window || window.isDestroyed() || !window.isVisible()) return

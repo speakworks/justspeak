@@ -23,7 +23,11 @@ import type {
 import { SettingsPanel } from './SettingsPanel'
 import { Sidebar, type Destination } from './Sidebar'
 import { HistoryPane } from './HistoryPane'
+import { Onboarding } from './Onboarding'
 import { insertAtSelection, type InputSelection } from '../../core/shell/insert'
+
+/** The first-run screen is per userData; clearing app data shows it again. */
+const ONBOARDING_KEY = 'justspeak.onboarding.v1'
 
 const WORKLET_CODE = `
 class PcmCollector extends AudioWorkletProcessor {
@@ -128,6 +132,23 @@ export function App(): React.JSX.Element {
   // The dictated text lives above the destination switch so a transcript that
   // lands while another destination is shown is not lost.
   const [input, setInput] = useState<InputSelection>({ value: '', start: 0, end: 0 })
+  const [onboardingDone, setOnboardingDone] = useState(() => {
+    try {
+      return window.localStorage.getItem(ONBOARDING_KEY) === '1'
+    } catch {
+      // Broken storage must not trap the user behind a modal they cannot finish.
+      return true
+    }
+  })
+
+  const completeOnboarding = useCallback((): void => {
+    try {
+      window.localStorage.setItem(ONBOARDING_KEY, '1')
+    } catch {
+      // The screen is still dismissed for this session.
+    }
+    setOnboardingDone(true)
+  }, [])
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const composingRef = useRef(false)
   const pendingInsertRef = useRef<string | null>(null)
@@ -501,6 +522,12 @@ export function App(): React.JSX.Element {
           <HistoryPane />
         )}
       </main>
+      {!onboardingDone ? (
+        <Onboarding
+          hotkey={preferences?.hotkey || DEFAULT_ACCELERATOR}
+          onDone={completeOnboarding}
+        />
+      ) : null}
     </div>
   )
 }

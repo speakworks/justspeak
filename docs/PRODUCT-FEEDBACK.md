@@ -11,6 +11,47 @@ that makes each item checkable.
 
 ---
 
+## 2026-11-01 — focus-aware delivery and first-run guide
+
+### 1. Delivery had no safe target when focus was not editable
+
+- **Observed (derived from the 2026-10-31 trial):** with JustSpeak unfocused, the app
+  always pasted. Into Finder's desktop or a Chrome page surface, that keystroke had no
+  destination, and the failure arrived only after the fact.
+- **Probe:** macOS Accessibility returns `AXTextArea` for TextEdit/CotEditor/VS Code,
+  `AXTextField` for a focused Chrome input, and `AXGroup`/`AXOutline`/`AXWebArea` for
+  non-editable surfaces. A range alone is not evidence: Finder and Chrome advertise one.
+- **Now:** delivery is insert (own window) → paste (editable element) → copy panel
+  (non-editable or unreadable). The panel sits just above the pill position, never takes
+  focus, shows the text with a copy action, and dismisses on copy, close, or Escape.
+  History records the `panel` outcome.
+- **Contract:** `openspec/changes/archive/2026-11-02-focus-panel-and-onboarding`.
+
+### 2. The waveform kept moving while transcribing
+
+- **Observed:** 「我们语音录入以后是波形变化，录完接着把语音转成文字，这中间有一段等待时间。我觉得在这个等待时间里，波形就不应该继续动了……」
+  and then, after rejecting a separate Thinking/progress surface:
+  「这样吧，这个点跟那个波形变成水平线的时候一样大，我们只要改变那个波形的颜色就好了」
+- **Now:** the working form reuses the same 17 bars at their resting (flat-waveform) size.
+  Their geometry, count, pill size and window never change; only colour does. A lit bar
+  walks right one step at a time (90 ms hop + 20 ms hold), passed bars stay lit, and the
+  active bar hops 4 px. The last bar is the completion signal. If delivery arrives first,
+  the highlight jumps directly to the last bar before the pill hides; if the walk reaches
+  the end first, it waits there. No text, no progress number, no new track.
+- **Contract:** `openspec/changes/archive/2026-11-02-processing-walk`.
+
+### 3. First-run guidance for permissions and destinations
+
+- **Items carried from the 2026-10-31 list:** item 2 (Accessibility permission guidance)
+  and item 3 (first-run onboarding).
+- **Now:** the first launch shows one screen with the hotkey, the three destinations, and
+  microphone/Accessibility status. Status is read without prompting, Accessibility
+  deep-links to System Settings, and the screen re-checks when the window regains focus.
+  Dismissal persists per user data.
+- **Contract:** `openspec/changes/archive/2026-11-02-focus-panel-and-onboarding`.
+
+---
+
 ## 2026-11-01 — history destination was a placeholder
 
 ### 1. Recognised text never appeared in 历史记录

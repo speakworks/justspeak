@@ -28,11 +28,22 @@ type JustSpeakWindow = {
   }
 }
 
-/** Same paste shim as the shell spec: the real keystroke needs Accessibility. */
+/**
+ * Test double for both osascript uses: the focus probe answers "editable" so
+ * the paste path runs, and the synthesized keystroke is a no-op.
+ */
 function makePasteShim(): { dir: string } {
   const dir = mkdtempSync(path.join(tmpdir(), 'justspeak-history-e2e-'))
   const shim = path.join(dir, 'osascript')
-  writeFileSync(shim, '#!/bin/sh\nexit 0\n')
+  writeFileSync(
+    shim,
+    `#!/bin/sh
+case "$*" in
+  *AXFocusedUIElement*) printf 'AXTextArea|1\\n'; exit 0 ;;
+esac
+exit 0
+`
+  )
   chmodSync(shim, 0o755)
   return { dir }
 }
@@ -60,6 +71,9 @@ async function launch(
   try {
     const page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    await page.locator('.shell').waitFor({ state: 'visible', timeout: 5_000 })
+    const start = page.getByRole('button', { name: '开始使用' })
+    if ((await start.count()) > 0) await start.click()
     return { app, page }
   } catch (error) {
     await app.close().catch(() => {})
@@ -73,6 +87,7 @@ async function hideWindow(app: ElectronApplication): Promise<void> {
     for (const window of BrowserWindow.getAllWindows()) window.hide()
   })
 }
+
 
 async function showWindow(app: ElectronApplication): Promise<void> {
   await app.evaluate(({ app: electronApp, BrowserWindow }) => {
@@ -138,6 +153,7 @@ async function snapshotClipboard(app: ElectronApplication): Promise<void> {
   await app.evaluate(async ({ clipboard }) => {
     const items: Array<Record<string, unknown>> = []
     for (const item of await clipboard.read()) {
+      if (item.types.length === 0) continue
       const data: Record<string, unknown> = {}
       for (const type of item.types) data[type] = await item.getType(type)
       items.push(data)
@@ -243,5 +259,4 @@ test.describe('JustSpeak history', () => {
       rmSync(shim.dir, { recursive: true, force: true })
     }
   })
-
 })

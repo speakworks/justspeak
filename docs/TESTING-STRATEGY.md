@@ -154,7 +154,7 @@ Accessibility permission, or a network connection.
 | Main ↔ Swift helper | Main-side client, framing, timeout/restart logic | Helper process implementing the versioned protocol | Handshake, version mismatch, partial/oversized frames, sequence gaps, timeout, crash/restart |
 | Main ↔ ASR sidecar | Sidecar supervisor and adapter | Scripted sidecar binary or process | Cold start, crash, timeout, empty result, missing/corrupt model, kill on idle |
 | Main ↔ cloud provider | Adapter and opt-in gate | Local HTTPS/WebSocket stub | Disabled by default, no key in renderer, redacted errors, explicit fallback only |
-| Main ↔ storage | Persistence layer | Temporary directory | Schema validation, atomic writes, history opt-in, no audio retention by default |
+| Main ↔ storage | Persistence layer | Temporary directory | Schema validation, atomic writes, history write/read/retention, audio cap, deletion |
 
 **Preload and IPC.** Snapshot the preload surface and fail on any new method that was not
 reviewed: only the documented start/stop/cancel, state read, state subscription, settings
@@ -202,7 +202,7 @@ scripted ASR; they never use a real microphone or cloud key.
 | Settings open, validate, save, and reload | Yes | Real renderer, preload, IPC, and storage in a temp profile |
 | Dictation state sequence with fake ASR | Yes | Start via the test IPC command; assert overlay states and final text |
 | Error and retry surfaces | Yes | Scripted fake ASR timeout and helper crash |
-| History opt-in and empty state | Yes | Assert no history file when disabled |
+| History persistence and empty state | Yes | Assert JSONL + WAV written, row survives restart, delete removes both |
 | Permission onboarding deep link | Partial | Assert the UI and link target; do not trigger TCC in CI |
 | Real global hotkey and push-to-talk | No | Manual or local self-hosted test; depends on OS event tap |
 | Real microphone capture and stop flush | No | Manual; depends on device and TCC |
@@ -617,8 +617,9 @@ Rules for fixtures:
   the fake and the real adapters fail together.
 
 Privacy tests are part of the regular suite, not a one-off review: logs contain no
-transcript text, no network call occurs with cloud disabled, audio buffers are cleared after
-finalization, and history is not written unless the user enabled it.
+transcript text, no network call occurs with cloud disabled, the session audio buffer is
+cleared after finalization, and history is written by default for every delivered
+transcript and bounded by the retention limits.
 
 ## Recommendation
 

@@ -158,7 +158,7 @@ The boundary rules are the load-bearing part:
 | **`src/core`** | TypeScript, framework-neutral | Audio frame types, ring buffer, VAD/endpointing/chunking, ASR provider interfaces and adapters, post-processing, model catalog/manager, transcription settings schema, result/error types | Electron/React/DOM imports, OS APIs, window or IPC knowledge |
 | **Swift helper** | Native macOS process (v0.1 helper not yet shipped) | Global hotkey/event tap, focused-app/input context, permission status, Keychain access; native text injection and `AVAudioEngine` capture are later/fallback paths | Product policy, network calls, transcript storage, UI |
 | **ASR runtime** | Local child process (`transcribe-cli`) or remote service | Speech-to-text inference; v0.1 returns one final transcript | UI, injection, settings |
-| **Storage** | Main process, local files | Settings, opt-in history, model metadata | Audio retention by default, plaintext secrets |
+| **Storage** | Main process, local files | Settings, local history (text + bounded audio), model metadata | Unbounded audio retention, plaintext secrets |
 
 ### Electron main
 
@@ -232,10 +232,11 @@ writes a temporary WAV, runs the CLI, and removes the WAV. Cloud providers are a
 ### Storage
 
 Settings are stored locally as validated JSON (or SQLite if history grows). Transcript
-history is opt-in and local. Audio is not retained after a session by default; a failed
-session may keep a bounded temporary clip only if the user has enabled retry. Secrets and
-API keys live in the macOS Keychain through the helper (or Electron `safeStorage`), never
-in renderer storage or plaintext config.
+history is local and on by default in v0.1: text is capped at the newest 1000 entries or
+30 days, and one 16 kHz mono PCM16 WAV per entry is kept for the newest 500 entries only.
+A failed session may keep a bounded temporary clip only if the user has enabled retry.
+Secrets and API keys live in the macOS Keychain through the helper (or Electron
+`safeStorage`), never in renderer storage or plaintext config.
 
 ### Boundary enforcement
 
@@ -308,8 +309,8 @@ audio buffer is still valid.
    clipboard with a permission notice. Accessibility insertion is a later upgrade, not a
    v0.1 path (ADR-0003).
 7. **Completion.** The overlay shows pasting and then returns to idle; history is written
-   only if enabled, and metrics (duration, provider, latency, error class) are recorded
-   without audio or transcript.
+   for each non-empty transcript under the retention limits, and metrics (duration,
+   provider, latency, error class) are recorded without audio or transcript.
 
 ### Latency targets
 
@@ -372,8 +373,8 @@ rewrite because this boundary already exists.
 
 | Data | Sensitivity | Default handling |
 |---|---|---|
-| Raw audio | High | Processed locally; never persisted by default; cloud only on explicit opt-in; buffers cleared after finalization |
-| Transcript text | High | Local history only if enabled; never in telemetry; redacted in logs by default |
+| Raw audio | High | Processed locally; one WAV per history entry when history is on (default), newest 500 entries; session buffer cleared after finalization; cloud only on explicit opt-in |
+| Transcript text | High | Local history on by default, newest 1000 entries or 30 days; never in telemetry; redacted in logs by default |
 | Focused-app context | High | v0.1 captures only app name/bundle id and focus state; no surrounding text, no screen text, no keystroke logging |
 | Settings | Low | Local; validated; no secrets |
 | API keys / tokens | High | Keychain or `safeStorage`; never renderer storage, never logs |
@@ -507,8 +508,8 @@ architecture shape.
 5. **Injection strategy:** how often Accessibility insert works across target apps versus
    clipboard fallback; build a compatibility matrix.
 6. **Minimum macOS version:** constrained by Electron 45 support and the Swift APIs used.
-7. **History storage and encryption:** JSON versus SQLite, retention defaults, and
-   encryption at rest.
+7. **History encryption at rest:** JSONL + WAV and the retention defaults (1000 text /
+   30 days, 500 audio) are decided; whether to encrypt the files at rest remains open.
 8. **Windows helper language and contract details:** separate card; keep the contract
    language-neutral.
 9. **Packaging, signing, notarization, and auto-update:** separate card.

@@ -50,12 +50,16 @@ exit 0
 
 async function launch(
   env: Record<string, string> = {}
-): Promise<{ app: ElectronApplication; page: Page }> {
+): Promise<{ app: ElectronApplication; page: Page; userData: string }> {
+  // A private userData keeps transcripts, preferences and the history written
+  // by this run out of the developer's real application data.
+  const userData = mkdtempSync(path.join(tmpdir(), 'justspeak-e2e-userdata-'))
   const app = await electron.launch({
     // `--use-fake-*` make Chromium supply a synthetic microphone: the test never
     // touches a real input device, and its PCM still flows through the real
     // AudioWorklet -> `window.justspeak.sendPcmBatch` IPC path.
     args: [
+      `--user-data-dir=${userData}`,
       '--use-fake-device-for-media-stream',
       '--use-fake-ui-for-media-stream',
       ROOT
@@ -73,9 +77,10 @@ async function launch(
   try {
     const page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
-    return { app, page }
+    return { app, page, userData }
   } catch (error) {
     await app.close().catch(() => {})
+    rmSync(userData, { recursive: true, force: true })
     throw error
   }
 }
@@ -143,9 +148,11 @@ async function withApp(
   const shim = makePasteShim()
   shim.setMode(pasteMode)
   let app: ElectronApplication | undefined
+  let userData: string | undefined
   try {
     const launched = await launch({ PATH: `${shim.dir}:${process.env.PATH ?? ''}` })
     app = launched.app
+    userData = launched.userData
     await snapshotClipboard(app)
     await scenario({ app: launched.app, page: launched.page, shim })
   } finally {
@@ -159,6 +166,7 @@ async function withApp(
       }
       await app.close()
     }
+    if (userData) rmSync(userData, { recursive: true, force: true })
     rmSync(shim.dir, { recursive: true, force: true })
   }
 }

@@ -127,6 +127,29 @@ export interface TranscriptEvent {
   applied?: string[]
 }
 
+/** What happened to a finished transcript after it was recognised. */
+export const HISTORY_OUTCOMES = ['inserted', 'pasted', 'paste_failed'] as const
+export type HistoryOutcome = (typeof HISTORY_OUTCOMES)[number]
+
+/** Audio saved next to a history entry (phase 2); relative to `history/`. */
+export interface HistoryAudioRef {
+  file: string
+  bytes: number
+}
+
+/** One row in the local transcript history. */
+export interface HistoryEntry {
+  id: string
+  text: string
+  /** Epoch milliseconds, local-time grouping happens in the renderer. */
+  createdAt: number
+  outcome: HistoryOutcome
+  fake: boolean
+  durationMs: number
+  latencyMs: number
+  audio?: HistoryAudioRef
+}
+
 /** What the recording pill renders; main pushes it, the pill never polls. */
 export interface OverlayState {
   state: 'recording' | 'working'
@@ -158,9 +181,9 @@ export interface JustSpeakApi {
   finishRecording: () => void
   onState: (listener: (state: AppState, message?: string) => void) => () => void
   /**
-   * Every finished transcript, whichever target it went to. The shell no longer
-   * renders one (the home input receives it through `onTranscriptInsert`); the
-   * history destination consumes this channel.
+   * Every finished transcript, whichever target it went to. The home input
+   * receives it through `onTranscriptInsert`; main persists it independently
+   * and tells the history pane through `onHistoryChanged`.
    */
   onTranscript: (listener: (event: TranscriptEvent) => void) => () => void
   /** Fires instead of a paste when the app's own window holds focus. */
@@ -168,4 +191,14 @@ export interface JustSpeakApi {
   onRecordingCommand: (listener: (command: RecordingCommand) => void) => () => void
   /** Fires after main accepts a preference write or re-reads it. */
   onPreferencesChanged: (listener: (preferences: PreferencesView) => void) => () => void
+  /** Transcript history, newest first. */
+  getHistory: () => Promise<HistoryEntry[]>
+  /** Remove one entry; resolves with the surviving list, newest first. */
+  deleteHistoryEntry: (id: string) => Promise<HistoryEntry[]>
+  /** WAV bytes for one entry's recording; null once audio was evicted. */
+  getHistoryAudio: (id: string) => Promise<ArrayBuffer | null>
+  /** Writes text to the system clipboard (used by the history copy action). */
+  copyText: (text: string) => Promise<void>
+  /** Fires when main appended or removed an entry; refetch with `getHistory`. */
+  onHistoryChanged: (listener: () => void) => () => void
 }

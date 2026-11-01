@@ -456,3 +456,77 @@ describe('session cancellation', () => {
     expect(harness.controller.state).toBe('transcribing')
   })
 })
+
+describe('transcript settlement', () => {
+  async function runOnce(
+    overrides: Partial<SessionControllerDeps> = {}
+  ): Promise<ReturnType<typeof setup>> {
+    const harness = setup(overrides)
+    harness.controller.toggle(true)
+    harness.advance(1000)
+    harness.controller.toggle(true)
+    await harness.controller.handleCaptureStopped(SUMMARY)
+    return harness
+  }
+
+  it('reports the insert target after a successful focused delivery', async () => {
+    const settled: unknown[] = []
+    await runOnce({
+      paste: async () => 'insert',
+      onTranscriptSettled: (_event, settlement) => settled.push(settlement)
+    })
+    expect(settled).toEqual([{ ok: true, target: 'insert' }])
+  })
+
+  it('reports the paste target after a successful unfocused delivery', async () => {
+    const settled: unknown[] = []
+    await runOnce({
+      paste: async () => 'paste',
+      onTranscriptSettled: (_event, settlement) => settled.push(settlement)
+    })
+    expect(settled).toEqual([{ ok: true, target: 'paste' }])
+  })
+
+  it('treats a delivery that returns nothing as a paste', async () => {
+    const settled: unknown[] = []
+    await runOnce({
+      paste: async () => {},
+      onTranscriptSettled: (_event, settlement) => settled.push(settlement)
+    })
+    expect(settled).toEqual([{ ok: true, target: 'paste' }])
+  })
+
+  it('reports a failed delivery with the error message and still enters error', async () => {
+    const settled: unknown[] = []
+    const harness = await runOnce({
+      paste: async () => {
+        throw new Error('粘贴失败')
+      },
+      onTranscriptSettled: (_event, settlement) => settled.push(settlement)
+    })
+    expect(settled).toEqual([{ ok: false, message: '粘贴失败' }])
+    expect(harness.controller.state).toBe('error')
+  })
+
+  it('does not report when recognition itself fails', async () => {
+    const settled: unknown[] = []
+    const harness = await runOnce({
+      provider: fakeProvider({
+        ok: false,
+        error: { code: 'INFERENCE_FAILED', message: '识别失败', retryable: false }
+      }),
+      onTranscriptSettled: (_event, settlement) => settled.push(settlement)
+    })
+    expect(settled).toEqual([])
+    expect(harness.controller.state).toBe('error')
+  })
+
+  it('keeps a successful delivery successful when the observer throws', async () => {
+    const harness = await runOnce({
+      onTranscriptSettled: () => {
+        throw new Error('history blew up')
+      }
+    })
+    expect(harness.controller.state).toBe('idle')
+  })
+})

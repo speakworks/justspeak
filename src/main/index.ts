@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   globalShortcut,
   ipcMain,
@@ -50,6 +51,8 @@ import {
 import type {
   AppStatus,
   AsrProviderSelection,
+  HistoryEntry,
+  HistoryOutcome,
   HotkeySetResult,
   ModelInfo,
   ProviderOption,
@@ -78,6 +81,7 @@ import {
   type SegmentationMode
 } from './asr/segmentation-mode'
 import { ElectronGlobalShortcutSource } from './hotkey-source'
+import { HistoryStore } from './history-store'
 import { pasteText } from './injection'
 import { isTrustedSender } from './ipc-sender'
 import { PcmBuffer } from './pcm-buffer'
@@ -94,6 +98,8 @@ const PROVIDER_OPTIONS: Record<SelectableAsrProviderId, ProviderOption> = {
 
 let mainWindow: BrowserWindow | null = null
 let rendererReady = false
+/** A second launch that arrives before the first window exists focuses it on ready. */
+let pendingSecondInstanceFocus = false
 let session: SessionController | null = null
 let sessionMode: AsrMode = DEFAULT_ASR_MODE
 let activeProvider: AsrProvider | null = null
@@ -104,6 +110,13 @@ let activeModelInfo: ModelInfo | undefined
 let themePreference: ThemePreference = 'system'
 let themeStore: ThemeStore
 let vocabularyStore: VocabularyStore
+let historyStore: HistoryStore | undefined
+
+/** History is created in `whenReady`; IPC handlers only run after the window loads. */
+function requireHistoryStore(): HistoryStore {
+  if (!historyStore) throw new Error('历史记录尚未就绪。')
+  return historyStore
+}
 let hotkeySource: HotkeySource | undefined
 let activeHotkey = DEFAULT_ACCELERATOR
 let hotkeyNotice: string | undefined
@@ -247,14 +260,23 @@ async function readPreferencesView(): Promise<PreferencesView> {
   }
 }
 
+/**
+ * The capture behind the in-flight transcript. `getAudio` clears the PCM
+ * buffer, so this is the only copy left for history once transcription starts;
+ * the next recording start drops whatever an earlier failure left behind.
+ */
+let historyAudio: AudioInput | undefined
+
 function getAudio(): AudioInput {
   const { pcm } = pcmBuffer.finish()
-  return {
+  const audio: AudioInput = {
     pcm,
     sampleRate: 16000,
     channels: 1,
     durationMs: Math.round((pcm.length / 16000) * 1000)
   }
+  historyAudio = audio
+  return audio
 }
 
 function makeSession(provider: AsrProvider, fake: boolean): SessionController {
@@ -271,15 +293,39 @@ function makeSession(provider: AsrProvider, fake: boolean): SessionController {
     provider: selected,
     // Exactly one target: a focused app window means the renderer inserts, and
     // no keystroke is synthesized, so the text cannot land twice.
-    paste: async (text: string) => {
-      await deliverTranscript(text, {
+    paste: (text: string) =>
+      deliverTranscript(text, {
         appFocused: () => mainWindow?.isFocused() ?? false,
         insert: (out) => mainWindow?.webContents.send('transcript:insert', out),
         paste: pasteText
-      })
-    },
+      }),
     sendState,
     sendTranscript,
+    onTranscriptSettled: (event, settlement) => {
+      // History is a convenience, never part of the dictation contract: a
+      // failed write is logged and the session still reports success.
+      if (!historyStore) {
+        console.warn('[history] store not ready; transcript was not recorded')
+        return
+      }
+      const audio = historyAudio
+      historyAudio = undefined
+      // A silent capture can still complete; an empty row helps nobody.
+      if (event.text.trim() === '') return
+      const outcome: HistoryOutcome = settlement.ok
+        ? settlement.target === 'insert'
+          ? 'inserted'
+          : 'pasted'
+        : 'paste_failed'
+      void historyStore
+        .append(
+          event,
+          outcome,
+          audio === undefined ? undefined : { pcm: audio.pcm, sampleRate: audio.sampleRate }
+        )
+        .then(() => mainWindow?.webContents.send('history:changed'))
+        .catch((error) => console.warn('[history] could not record transcript', error))
+    },
     fake,
     // The stage sits between the provider result and paste, so the fake and
     // the local provider both go through it.
@@ -569,6 +615,7 @@ function toggleRecording(): void {
   const action = session.toggle(rendererReady)
   if (action === 'start') {
     pendingSegmentFailure = undefined
+    historyAudio = undefined
     pcmBuffer.begin()
     mainWindow?.webContents.send('recording:start')
     return
@@ -653,7 +700,13 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.on('ready-to-show', () => mainWindow?.show())
+  mainWindow.on('ready-to-show', () => {
+    mainWindow?.show()
+    if (!pendingSecondInstanceFocus || !mainWindow) return
+    pendingSecondInstanceFocus = false
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  })
   mainWindow.on('closed', () => {
     // The pill is a second window; without this the app would stop quitting.
     destroyOverlay()
@@ -733,9 +786,34 @@ async function applyHotkeyPreference(payload: unknown): Promise<HotkeySetResult>
   }
 }
 
+/**
+ * One writer for one history directory. A second instance would rewrite
+ * `entries.jsonl` from its own stale snapshot and silently drop rows the first
+ * instance just appended, so the second launch focuses the existing window and
+ * exits instead.
+ */
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) app.quit()
+else
+  app.on('second-instance', () => {
+    if (!mainWindow) {
+      pendingSecondInstanceFocus = true
+      return
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  })
+
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return
   themeStore = new ThemeStore(app.getPath('userData'))
   vocabularyStore = new VocabularyStore(app.getPath('userData'))
+  historyStore = new HistoryStore(app.getPath('userData'))
+  // Startup is one of the two retention points; the other is every append.
+  void historyStore
+    .sweep()
+    .catch((error) => console.warn('[history] startup sweep failed', error))
   const preferences = await themeStore.loadPreferences()
   themePreference = preferences.theme
   providerPreference = new ProviderPreferenceStore(app.getPath('userData'))
@@ -747,21 +825,26 @@ app.whenReady().then(async () => {
     // Only `system` follows the OS; pinned choices ignore the OS change.
     if (themePreference === 'system') applyTheme()
   })
-  ipcMain.on('renderer:ready', () => {
+  ipcMain.on('renderer:ready', (event) => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) return
     rendererReady = true
     console.log('[renderer] ready')
   })
-  ipcMain.on('recording:toggle', () => {
+  ipcMain.on('recording:toggle', (event) => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) return
     toggleRecording()
   })
-  ipcMain.on('capture:started', (_event, atMs: number) => {
+  ipcMain.on('capture:started', (event, atMs: number) => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) return
     console.log('[capture] started', atMs)
     session?.handleCaptureStarted(atMs)
   })
-  ipcMain.on('capture:stopped', (_event, summary: unknown) => {
+  ipcMain.on('capture:stopped', (event, summary: unknown) => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) return
     void session?.handleCaptureStopped(summary)
   })
-  ipcMain.on('capture:failed', (_event, message: unknown) => {
+  ipcMain.on('capture:failed', (event, message: unknown) => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) return
     pcmBuffer.finish()
     session?.handleCaptureFailed(message)
   })
@@ -793,7 +876,12 @@ app.whenReady().then(async () => {
     if (event.sender.id !== overlayWebContentsId()) return
     finishRecording()
   })
-  ipcMain.handle('state:get', (): AppStatus => currentStatus())
+  ipcMain.handle('state:get', (event): AppStatus => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      throw new Error('未授权的状态请求。')
+    }
+    return currentStatus()
+  })
   ipcMain.handle('asr:set-provider', async (event, payload: unknown): Promise<AppStatus> => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
       console.warn('[asr] rejected untrusted sender')
@@ -860,6 +948,39 @@ app.whenReady().then(async () => {
       return { ok, preferences: view, hotkey: hotkeyResult, message }
     }
   )
+  ipcMain.handle('history:list', async (event): Promise<HistoryEntry[]> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      console.warn('[history] rejected untrusted sender')
+      throw new Error('未授权的历史记录请求。')
+    }
+    return requireHistoryStore().list()
+  })
+  ipcMain.handle('history:delete', async (event, id: unknown): Promise<HistoryEntry[]> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      console.warn('[history] rejected untrusted sender')
+      throw new Error('未授权的历史记录请求。')
+    }
+    if (typeof id !== 'string' || id.length === 0) throw new Error('历史记录 id 无效。')
+    const entries = await requireHistoryStore().remove(id)
+    mainWindow?.webContents.send('history:changed')
+    return entries
+  })
+  ipcMain.handle('history:audio', async (event, id: unknown): Promise<ArrayBuffer | null> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      console.warn('[history] rejected untrusted sender')
+      throw new Error('未授权的历史记录请求。')
+    }
+    if (typeof id !== 'string' || id.length === 0) throw new Error('历史记录 id 无效。')
+    return requireHistoryStore().readAudio(id)
+  })
+  ipcMain.handle('clipboard:write-text', async (event, text: unknown): Promise<void> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      console.warn('[clipboard] rejected untrusted sender')
+      throw new Error('未授权的剪贴板请求。')
+    }
+    if (typeof text !== 'string') throw new Error('复制内容无效。')
+    clipboard.writeText(text)
+  })
 
   initOverlay({
     preloadPath: preloadPath(),
@@ -880,8 +1001,23 @@ app.whenReady().then(async () => {
   if (outcome.message) console.warn('[hotkey]', outcome.message)
 })
 
-app.on('will-quit', () => {
+let flushingHistoryForQuit = false
+
+app.on('will-quit', (event) => {
   void hotkeySource?.stop()
+  if (flushingHistoryForQuit || !historyStore) return
+  // A transcript appended just before Cmd+Q must reach disk: the append is
+  // fire-and-forget, and `app.quit()` does not wait for pending fs promises.
+  const store = historyStore
+  event.preventDefault()
+  flushingHistoryForQuit = true
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 2000))
+  void Promise.race([
+    store.flush().catch((error) => console.warn('[history] flush on quit failed', error)),
+    timeout
+    // `app.exit` skips another `will-quit` pass; re-entering `quit()` while the
+    // first quit is suspended is what wedges Electron's shutdown.
+  ]).finally(() => app.exit(0))
 })
 
 app.on('window-all-closed', () => {

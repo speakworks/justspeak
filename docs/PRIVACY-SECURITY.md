@@ -26,8 +26,9 @@ JustSpeak v0.1 is a local-first dictation app. The privacy promise is not "we co
 less"; it is "the default path has no network and no content capture". The user presses a
 hotkey, speaks, and the app transcribes on device, cleans the text with deterministic
 rules, and injects it into the focused application. Cloud ASR, cloud LLM cleanup,
-selected-text context, history, telemetry, and crash upload are separate opt-in features,
-each with its own consent, data notice, and off switch.
+selected-text context, telemetry, and crash upload are separate opt-in features, each with
+its own consent, data notice, and off switch. Local history is on by default in v0.1 and
+never leaves the device.
 
 This document recommends **Option B (minimal context) for v0.1**, evolving toward
 **Option C (opt-in context)** only after measured quality evidence and a privacy review.
@@ -54,8 +55,8 @@ gap.
 
 | Data | Source | v0.1 default | Destination / storage | Retention | Sensitivity |
 |---|---|---|---|---|---|
-| **Microphone audio** | Renderer `getUserMedia` + AudioWorklet (AUDIO-PIPELINE) | Captured in memory as 16 kHz mono PCM; VAD/endpointing in `src/core`; local ASR by default | Memory only; zeroed after finalization; no disk write | Session only; bounded at 120 s of audio | High |
-| **Transcripts** | Local ASR result; rule-based cleanup | Processed locally; injected into the focused app; history is opt-in and local | Main process memory; optional local history DB; optional cloud LLM only if enabled | Session only by default; opt-in history follows retention setting | High |
+| **Microphone audio** | Renderer `getUserMedia` + AudioWorklet (AUDIO-PIPELINE) | Captured in memory as 16 kHz mono PCM; VAD/endpointing in `src/core`; local ASR by default | Memory for recognition; one 16 kHz mono WAV per history entry under the app-support directory; no upload | Session buffer bounded at 120 s; history audio keeps the newest 500 entries | High |
+| **Transcripts** | Local ASR result; rule-based cleanup | Processed locally; injected into the focused app; history is local and on by default | Main process memory; local history JSONL + WAV; optional cloud LLM only if enabled | Text keeps the newest 1000 entries or 30 days, whichever binds first | High |
 | **User edits / corrections** | User edits to history text; explicit personal-dictionary edits | No automatic learning from edits; dictionary edits are explicit and local | Local settings/history only; never uploaded as a training signal | User-controlled | High |
 | **App name, bundle id, pid, focus state** | Swift helper (`NSWorkspace`) | Collected locally for safe injection, per-app policy, and diagnostics | Main process memory; not persisted in history; never in telemetry | Session only | Medium |
 | **Window title** | Accessibility API / `CGWindowListCopyWindowInfo` | **Not collected** in v0.1; window titles require Accessibility or Screen Recording | — | — | High |
@@ -215,12 +216,12 @@ default path:
 |---|---|
 | **Local-first ASR** | Default provider is Qwen3-ASR 0.6B through transcribe.cpp; SenseVoice Small is the lightweight tier and Whisper is the multilingual fallback. After model download, the app works fully offline with no account and no vendor key. Cloud ASR is a separate opt-in adapter. |
 | **Context capture off by default** | v0.1 collects only app identity and the narrow safety flags required for injection. No content, no title, no URL, no screen text. App identity stays local. |
-| **Per-feature opt-in** | Cloud ASR, cloud LLM cleanup, selected-text context, surrounding-text context, history, telemetry, and crash upload each have their own toggle and consent text. Enabling one does not enable another. |
+| **Per-feature opt-in** | Cloud ASR, cloud LLM cleanup, selected-text context, surrounding-text context, telemetry, and crash upload each have their own toggle and consent text. Enabling one does not enable another. |
 | **No screen capture by default** | No screenshots, no OCR, no Screen Recording permission. Visible-text capture is not in v0.1 and is not an implied roadmap feature. |
-| **No raw audio retention** | Audio lives in memory for the session; buffers are zeroed after finalization. A retry clip is allowed only if the user explicitly enables retry, and it is bounded and deleted. |
+| **Bounded local audio retention** | Audio is processed locally and the session buffer is cleared after recognition. When local history is on (the v0.1 default), one 16 kHz mono WAV per entry is kept under the app's local data directory, for the newest 500 entries only. No audio is uploaded. A retry clip is allowed only if the user explicitly enables retry, and it is bounded and deleted. |
 | **No telemetry by default** | The app makes no analytics call in v0.1. If metrics are added, they are opt-in, content-free, and documented field by field. |
-| **Local history** | History is opt-in, stored locally, and never uploaded. The default is off; the user chooses a retention period. |
-| **Clear deletion** | Delete one item, delete all history, clear the dictionary, delete API keys, delete downloaded models, and reset consent. The UI explains what is deleted and what cannot be guaranteed on SSD media. |
+| **Local history** | v0.1 history is on by default, stored only on this Mac, and never uploaded. Text keeps the newest 1000 entries or 30 days (first to bind); audio keeps the newest 500 entries. A row can be deleted from 历史记录. |
+| **Clear deletion** | Delete one history item, clear the dictionary, delete downloaded models, and reset consent. v0.1 ships per-row history deletion plus automatic retention; a single "delete all history" control is not part of this version. The UI explains what is deleted and what cannot be guaranteed on SSD media. |
 | **No silent failover** | If local ASR fails, the app offers retry and a user-configured fallback; it never sends audio to a cloud provider the user did not enable for that session. |
 | **Visible mode** | The overlay shows when cloud processing is active and which provider receives data. A local-only session is visibly local. |
 
@@ -311,7 +312,7 @@ shows a real gain.
 | Permission surface | Accessibility + screen-related risk | Microphone, Accessibility for output | Same as B plus per-feature consent |
 | Implementation complexity | High | Low | Medium-high |
 | Consent complexity | Low (one broad consent) but poor transparency | Low | High (per feature), manageable with good UX |
-| Retention surface | Cloud + large local history | Local, opt-in history | Local + per-provider retention |
+| Retention surface | Cloud + large local history | Local history, on by default, bounded | Local + per-provider retention |
 | Fit with frozen v0.1 scope | No | Yes | Later |
 | Recommendation | Reject as default | **Adopt for v0.1** | Adopt incrementally after gates |
 
@@ -335,7 +336,7 @@ or update channel.
 | T9 | **Renderer compromise / XSS** | A malicious local file, injected content, or a dependency renders script in the sandboxed renderer and calls privileged IPC | Settings/history manipulation, transcript disclosure, or helper actions | Low–medium | No remote content; strict CSP; `sandbox`, `contextIsolation`, `nodeIntegration: false`; narrow contextBridge; no generic IPC; schema validation; navigation/window.open blocked; ASAR integrity; Electron fuses | A Chromium zero-day or a compromised bundled dependency; defense-in-depth limits blast radius |
 | T10 | **IPC / helper spoofing or framing attacks** | A local process connects to the helper socket, sends oversized/malformed frames, or impersonates the helper | Crash, memory corruption, unauthorized injection, or command execution | Low–medium | Stdio or `0600` Unix socket; handshake + version check; length caps; schema validation; timeouts; sender/frame checks; helper path and code-signature verification; no shell interpolation; fail closed on mismatch | Same-user local attackers can often attach debuggers; the helper must stay small and statically reviewable |
 | T11 | **Local ASR sidecar compromise or resource abuse** | Malformed audio/model triggers a crash or memory corruption; sidecar is tricked into reading files or using the network | Crash, data disclosure, or resource exhaustion | Low–medium | Sidecar has no network; explicit model path; checksum verification; process isolation; kill on idle/session end; resource limits; bounded audio input; no dynamic model URL | A memory-safety bug in the runtime; mitigation is upstream patching and process isolation |
-| T12 | **History/logs at rest** | Plaintext history DB or logs are read by another app, backup, or forensic tool | Transcript and dictionary disclosure | Medium | History opt-in; local-only; app-support directory with least privilege; encryption-at-rest decision (open question); content-free logs by default; retention + deletion; no transcript in crash reports | Full-disk backup and same-user malware remain; encryption key management adds complexity |
+| T12 | **History/logs at rest** | Plaintext history DB or logs are read by another app, backup, or forensic tool | Transcript and dictionary disclosure | Medium | History local-only and bounded (1000 text / 30 days, 500 audio); app-support directory with least privilege; encryption-at-rest decision (open question); content-free logs by default; per-row deletion; no transcript in crash reports | Full-disk backup and same-user malware remain; encryption key management adds complexity |
 | T13 | **Cloud provider retention / jurisdiction** | Opted-in cloud ASR/LLM retains audio/text, trains on it, or stores it in an unexpected region | Content disclosure beyond the user's expectation | Medium (only with cloud enabled) | Per-provider data notice; BYOK; no silent failover; TLS; provider retention/residency review before shipping; minimal payload; no account identity; visible active mode | Provider policy and subpoena risk cannot be eliminated by the client |
 | T14 | **Remote configuration / blacklist supply chain** | If a future remote config or blacklist is unsigned, an attacker changes capture/injection policy | Privacy regression or unsafe injection behavior | Low now, medium if added | Signed config; no executable content; local defaults; fail closed; versioned and auditable; no remote prompt/config in v0.1 | Key compromise or a signed bad policy; keep remote policy minimal |
 | T15 | **v0.2 agent actions** | A voice agent with desktop-control tools is induced to click, type, or open URLs by malicious text | Unintended actions, data loss, or exfiltration | Future | Separate design; least-privilege tools; explicit confirmation; allowlists; local audit log; prompt-injection defenses; no autonomous destructive actions | Agent safety is not solved by prompting alone; requires design review |
@@ -468,14 +469,18 @@ or update channel.
 
 - App-support directory with least-privilege permissions; history and settings are
   separate from models and logs.
-- History is opt-in and local. Encryption at rest is an open question: if enabled, the key
-  must live in the Keychain, not beside the database.
-- Delete one item, delete all history, clear the dictionary, delete keys, delete models,
-  and reset consent. The UI explains that SSD wear-leveling and backups may retain copies
+- History is local and on by default in v0.1: text keeps the newest 1000 entries or 30
+  days, audio the newest 500. Encryption at rest is an open question: if enabled, the key
+  must live in the Keychain, not beside the history files.
+- Delete one history item, clear the dictionary, delete keys, delete models, and reset
+  consent. v0.1 ships per-row history deletion plus automatic retention; a single
+  "delete all history" control is not part of this version. The UI explains that SSD
+  wear-leveling and backups may retain copies
   the app cannot erase; "delete" means the app removes its references and files, not
   physical destruction.
-- On quit or crash, audio buffers are released and not written to disk; a retry clip is
-  allowed only with explicit retry opt-in.
+- On quit or crash, the session audio buffer is released; history WAVs already written
+  follow the 500-entry retention. A retry clip is allowed only with explicit retry
+  opt-in.
 
 ## Consent and Privacy Policy Requirements
 
@@ -487,16 +492,16 @@ enough that a privacy test can compare it with network behavior.
 Before the first public release, the policy must state:
 
 1. **What is processed**: microphone audio, transcripts, app identity/safety flags,
-   settings, dictionary, optional history, optional telemetry/crash data, and any
-   opted-in cloud data.
+   settings, dictionary, local history (on by default, bounded), optional
+   telemetry/crash data, and any opted-in cloud data.
 2. **Why**: dictation, local cleanup, injection, user-requested cloud quality, history,
    diagnostics.
 3. **Where it goes**: local-only by default; the exact cloud provider and region when the
    user enables a cloud feature; every network destination (model download, update feed,
    cloud ASR, cloud LLM, optional telemetry/crash).
-4. **Retention**: audio is not retained by default; history follows the user's retention
-   setting; cloud retention is the provider's policy and must be named; local logs and
-   crash files have bounded retention.
+4. **Retention**: audio is kept only as the newest 500 history WAVs; text history keeps
+   the newest 1000 entries or 30 days; cloud retention is the provider's policy and must
+   be named; local logs and crash files have bounded retention.
 5. **Recipients/subprocessors**: model hosts, update host, and each optional cloud
    provider; no sale of data; no advertising analytics.
 6. **User rights**: access, export, delete, withdraw consent, and reset; a contact channel;
@@ -511,8 +516,10 @@ Before the first public release, the policy must state:
 ### Consent UX rules
 
 - **Separate toggles** for cloud ASR, cloud LLM, selected text, surrounding text,
-  history, telemetry, and crash upload. No bundled "privacy settings" switch.
-- **Off by default**, no pre-checked boxes, and withdrawal as easy as grant.
+  telemetry, and crash upload. No bundled "privacy settings" switch. Local history is
+  not a network feature; it is governed by retention plus per-row deletion.
+- **Off by default** for each network feature, no pre-checked boxes, and withdrawal as
+  easy as grant. Local history is on by default and never leaves the device.
 - **Just-in-time consent**: ask when the feature is first used, not only in onboarding.
   Show the exact data, the destination, the retention, and a preview where practical.
 - **No dark patterns**: "Not now" is as prominent as "Enable"; disabling a feature does
@@ -520,8 +527,9 @@ Before the first public release, the policy must state:
 - **Visible state**: the overlay shows "local" vs "cloud (provider)" while processing.
 - **Consent ledger**: record the feature, version, timestamp, and choice locally; do not
   upload it.
-- **Deletion**: a single "delete my data" flow covers history, dictionary, keys, logs,
-  crash files, and cached context; explain what is deleted and what remains in backups.
+- **Deletion**: v0.1 deletes one history item at a time and clears the dictionary; keys,
+  logs, crash files, cached context, and a one-shot "delete all history" flow remain
+  pre-release items. Explain what is deleted and what remains in backups.
 
 ### Claims discipline
 
@@ -546,11 +554,12 @@ as the v0.1 default** and **Option C as the post-v0.1 evolution**.
    No window title, URL, input content, selected text, surrounding text, screen text,
    clipboard content, or keystroke history.
 3. **No screen capture.** No Screen Recording permission, no screenshots, no OCR.
-4. **No raw audio retention.** In-memory only; buffers zeroed; bounded session; retry clip
-   only with explicit opt-in.
+4. **Bounded local audio retention.** In-memory for recognition; one WAV per history entry,
+   newest 500, local-only; session buffer cleared after finalization; retry clip only with
+   explicit opt-in.
 5. **No telemetry by default.** If added, opt-in and content-free.
-6. **Local history, off by default.** Opt-in, local-only, deletable; encryption at rest
-   decided separately.
+6. **Local history, on by default.** Local-only, bounded (1000 text / 30 days, 500 audio),
+   per-row deletable; encryption at rest decided separately.
 7. **Cloud cleanup is opt-in BYOK.** It sends the transcript, coarse app category
    (optional), locale, and matched dictionary terms only. No app name, window contents,
    screen text, clipboard, or history. The validator and rule fallback are mandatory.
@@ -603,8 +612,9 @@ validation and does not disable it for convenience.
   vendor-dependent.
 - **Telemetry on by default**: rejected; even "content-free" metrics can identify usage
   patterns, and v0.1 has no need for them.
-- **Raw audio retention for "quality"**: rejected; retry is the only bounded exception and
-  requires opt-in.
+- **Unbounded raw audio retention for "quality"**: rejected. History keeps the newest 500
+  local WAVs so a transcript can be replayed; a retry clip is a separate bounded opt-in
+  exception.
 - **Screen capture / OCR**: rejected; it is a hard boundary, not a toggle.
 - **Automatic dictionary learning from edits**: rejected for v0.1; it creates a
   post-insertion surveillance path and a prompt-injection surface. Dictionary changes are
@@ -742,8 +752,8 @@ state; server-side retention and vendor intent are not asserted.
 **Frozen for this card:**
 
 - Docs-only privacy/security research and design; no code or package changes.
-- Local-first stance; context capture opt-in; no raw audio retention by default; no
-  telemetry by default.
+- Local-first stance; context capture opt-in; bounded local history (text plus the newest
+  500 audio WAVs); no telemetry by default.
 - Exact telemetry/crash-report provider is a later decision; the v0.2 agent audit log is a
   separate design.
 - Direct distribution (not Mac App Store) for v0.1; Keychain is available.
@@ -751,9 +761,10 @@ state; server-side retention and vendor intent are not asserted.
   default; opt-in context (Option C) is the recommended evolution.
 
 **Recommendation summary:** local-first ASR + opt-in context; every network destination
-documented; telemetry and crash upload off by default; no screen capture; no raw audio
-retention; local history with clear deletion; least-privilege permissions; signed,
-notarized, hardened builds; checksum-verified models; Keychain-backed secrets.
+documented; telemetry and crash upload off by default; no screen capture; bounded local
+history audio (newest 500 WAVs); local history with per-row deletion and automatic
+retention; least-privilege permissions; signed, notarized, hardened builds;
+checksum-verified models; Keychain-backed secrets.
 
 **Pre-launch self-review:** passed. The document is English, docs-only, cites E2/E3
 sources, distinguishes observed competitor behavior from inference, does not claim

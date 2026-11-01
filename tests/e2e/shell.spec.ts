@@ -35,6 +35,14 @@ function makePasteShim(): { dir: string; calls: string; setMode: (mode: 'ok' | '
   writeFileSync(
     shim,
     `#!/bin/sh
+case "$*" in
+  *AXFocusedUIElement*)
+    # The focus probe shares this PATH entry; answer it without counting it as
+    # a paste keystroke.
+    printf 'AXTextArea|1\\n'
+    exit 0
+    ;;
+esac
 echo "$@" >> "${calls}"
 if grep -q fail "${mode}"; then exit 1; fi
 exit 0
@@ -77,6 +85,10 @@ async function launch(
   try {
     const page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    // A fresh profile opens the first-run screen; every scenario starts after it.
+    await page.locator('.shell').waitFor({ state: 'visible', timeout: 5_000 })
+    const start = page.getByRole('button', { name: '开始使用' })
+    if ((await start.count()) > 0) await start.click()
     return { app, page, userData }
   } catch (error) {
     await app.close().catch(() => {})
@@ -99,6 +111,7 @@ async function snapshotClipboard(app: ElectronApplication): Promise<void> {
     // has to be materialised now and rebuilt on restore.
     const items: Array<Record<string, unknown>> = []
     for (const item of await clipboard.read()) {
+      if (item.types.length === 0) continue
       const data: Record<string, unknown> = {}
       for (const type of item.types) data[type] = await item.getType(type)
       items.push(data)
@@ -176,6 +189,28 @@ async function withApp(
  * a run does not steal focus. Rendering, the AudioWorklet, and IPC keep running
  * while hidden.
  */
+/** Wait for the real capture start instead of guessing with a fixed sleep. */
+function waitForCaptureStarted(app: ElectronApplication): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const stdout = app.process().stdout
+    if (!stdout) {
+      reject(new Error('Electron stdout is unavailable'))
+      return
+    }
+    const timer = setTimeout(() => {
+      stdout.off('data', onData)
+      reject(new Error('capture did not start within 10s'))
+    }, 10_000)
+    const onData = (chunk: Buffer): void => {
+      if (!chunk.toString().includes('[capture] started')) return
+      clearTimeout(timer)
+      stdout.off('data', onData)
+      resolve()
+    }
+    stdout.on('data', onData)
+  })
+}
+
 async function hideWindow(app: ElectronApplication): Promise<void> {
   await app.evaluate(({ app: electronApp, BrowserWindow }) => {
     electronApp.dock?.hide()
@@ -209,11 +244,14 @@ test.describe('JustSpeak shell', () => {
       // 2. Start dictation through the same API the record button calls (the
       //    global hotkey is deliberately not used). Synthetic audio from the
       //    fake device is batched by the renderer and sent over `capture:pcm`.
+      const started = waitForCaptureStarted(app)
+      started.catch(() => {})
       await page.evaluate(() =>
         (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording()
       )
       await expect(page.locator('.status')).toHaveText('录音中')
-      await page.waitForTimeout(1_500)
+      await started
+      await page.waitForTimeout(700)
 
       // 3. Stop and observe the whole pipeline. The window is not focused, so
       //    the transcript is pasted rather than inserted: the textarea must stay
@@ -244,11 +282,14 @@ test.describe('JustSpeak shell', () => {
     await withApp(async ({ app, page, shim }) => {
       await expect(page.locator('.status')).toHaveText('就绪')
       await hideWindow(app)
+      const started = waitForCaptureStarted(app)
+      started.catch(() => {})
       await page.evaluate(() =>
         (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording()
       )
       await expect(page.locator('.status')).toHaveText('录音中')
-      await page.waitForTimeout(1_500)
+      await started
+      await page.waitForTimeout(700)
       await page.evaluate(() =>
         (globalThis as unknown as JustSpeakWindow).justspeak.toggleRecording()
       )

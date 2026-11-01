@@ -7,7 +7,9 @@ import {
   ipcMain,
   nativeTheme,
   net,
-  screen
+  screen,
+  shell,
+  systemPreferences
 } from 'electron'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
@@ -39,6 +41,7 @@ import { deliverTranscript } from '../core/shell/delivery'
 import { resolveModelsDir } from './asr/paths'
 import { createLevelThrottle, rmsOf } from '../core/overlay/level'
 import {
+  completeOverlay,
   destroyOverlay,
   hideOverlay,
   initOverlay,
@@ -55,6 +58,7 @@ import type {
   HistoryOutcome,
   HotkeySetResult,
   ModelInfo,
+  PermissionStatus,
   ProviderOption,
   PreferencesSetResult,
   PreferencesView,
@@ -80,9 +84,20 @@ import {
   parseSegmentationConfig,
   type SegmentationMode
 } from './asr/segmentation-mode'
+import { createFocusProbe } from './focus-probe'
 import { ElectronGlobalShortcutSource } from './hotkey-source'
 import { HistoryStore } from './history-store'
 import { pasteText } from './injection'
+import {
+  copyResultPanelText,
+  destroyResultPanel,
+  hideResultPanel,
+  initResultPanel,
+  refreshResultPanelEscape,
+  replayResultPanel,
+  resultPanelWebContentsId,
+  showResultPanel
+} from './result-panel'
 import { isTrustedSender } from './ipc-sender'
 import { PcmBuffer } from './pcm-buffer'
 import { ThemeStore } from './theme-store'
@@ -179,11 +194,28 @@ function sendState(next: AppStatus['state'], message?: string): void {
   console.log('[state]', next, message ?? '')
   mainWindow?.webContents.send('state', next, message)
   const overlay = overlayFor(next)
-  if (overlay) showOverlay(overlay)
-  else hideOverlay()
+  if (overlay) {
+    if (next === 'recording') transcriptEmittedForOverlay = false
+    showOverlay(overlay)
+  } else {
+    // A transcript that reached the user gets one last beat on the pill: move
+    // the walk to the final bar before the pill fades. An empty capture or a
+    // cancellation goes straight to idle without a transcript, so it must not
+    // light the completion bar.
+    if (next === 'idle') {
+      if (transcriptEmittedForOverlay) completeOverlay()
+      transcriptEmittedForOverlay = false
+    }
+    if (next === 'error') transcriptEmittedForOverlay = false
+    hideOverlay()
+  }
 }
 
+/** Set when the session emits a non-empty transcript for the current recording. */
+let transcriptEmittedForOverlay = false
+
 function sendTranscript(event: TranscriptEvent): void {
+  if (event.text.trim() !== '') transcriptEmittedForOverlay = true
   mainWindow?.webContents.send('transcript', event)
 }
 
@@ -296,8 +328,10 @@ function makeSession(provider: AsrProvider, fake: boolean): SessionController {
     paste: (text: string) =>
       deliverTranscript(text, {
         appFocused: () => mainWindow?.isFocused() ?? false,
+        probeFocus,
         insert: (out) => mainWindow?.webContents.send('transcript:insert', out),
-        paste: pasteText
+        paste: pasteText,
+        showPanel: (out) => showResultPanel(out, effectiveTheme())
       }),
     sendState,
     sendTranscript,
@@ -315,7 +349,9 @@ function makeSession(provider: AsrProvider, fake: boolean): SessionController {
       const outcome: HistoryOutcome = settlement.ok
         ? settlement.target === 'insert'
           ? 'inserted'
-          : 'pasted'
+          : settlement.target === 'paste'
+            ? 'pasted'
+            : 'panel'
         : 'paste_failed'
       void historyStore
         .append(
@@ -434,7 +470,8 @@ async function initializeProvider(): Promise<void> {
       userDataDir: app.getPath('userData'),
       packaged: app.isPackaged
     }),
-    catalog: MODEL_CATALOG
+    catalog: MODEL_CATALOG,
+    env: process.env
   })
   if (!built.ok) {
     await disposeActiveProvider()
@@ -616,6 +653,7 @@ function toggleRecording(): void {
   if (action === 'start') {
     pendingSegmentFailure = undefined
     historyAudio = undefined
+    hideResultPanel()
     pcmBuffer.begin()
     mainWindow?.webContents.send('recording:start')
     return
@@ -640,6 +678,9 @@ function overlayFor(next: AppStatus['state']): OverlayPayload | null {
 }
 
 const levelThrottle = createLevelThrottle()
+
+/** One Accessibility probe for the whole process; it spawns `osascript`. */
+const probeFocus = createFocusProbe()
 
 /** RMS of an incoming PCM batch, or null when the payload is not one. */
 function levelOf(payload: unknown): number | null {
@@ -708,8 +749,10 @@ function createWindow(): void {
     mainWindow.focus()
   })
   mainWindow.on('closed', () => {
-    // The pill is a second window; without this the app would stop quitting.
+    // The pill and the copy panel are extra windows; without this the app
+    // would stop quitting.
     destroyOverlay()
+    destroyResultPanel()
     mainWindow = null
     rendererReady = false
   })
@@ -777,6 +820,9 @@ async function applyHotkeyPreference(payload: unknown): Promise<HotkeySetResult>
   activeHotkey = outcome.accelerator
   hotkeyNotice = outcome.message
   if (outcome.message) console.warn('[hotkey]', outcome.message)
+  // The hotkey source unregisters every accelerator first; a visible copy panel
+  // must get its temporary Escape back (or drop the hint if registration fails).
+  refreshResultPanelEscape()
   return {
     accelerator: activeHotkey,
     requested: parsed.value.accelerator,
@@ -876,6 +922,18 @@ app.whenReady().then(async () => {
     if (event.sender.id !== overlayWebContentsId()) return
     finishRecording()
   })
+  ipcMain.on('panel:ready', (event) => {
+    if (event.sender.id !== resultPanelWebContentsId()) return
+    replayResultPanel()
+  })
+  ipcMain.on('panel:copy', (event) => {
+    if (event.sender.id !== resultPanelWebContentsId()) return
+    copyResultPanelText()
+  })
+  ipcMain.on('panel:close', (event) => {
+    if (event.sender.id !== resultPanelWebContentsId()) return
+    hideResultPanel()
+  })
   ipcMain.handle('state:get', (event): AppStatus => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
       throw new Error('未授权的状态请求。')
@@ -948,6 +1006,25 @@ app.whenReady().then(async () => {
       return { ok, preferences: view, hotkey: hotkeyResult, message }
     }
   )
+  ipcMain.handle('permissions:get', (event): PermissionStatus => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      throw new Error('未授权的权限查询。')
+    }
+    // `false` asks without prompting: the first-run screen must explain the
+    // permission before macOS can show its own dialog.
+    return {
+      accessibility: systemPreferences.isTrustedAccessibilityClient(false),
+      microphone: systemPreferences.getMediaAccessStatus('microphone')
+    }
+  })
+  ipcMain.handle('permissions:open-accessibility', async (event): Promise<void> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      throw new Error('未授权的权限请求。')
+    }
+    await shell.openExternal(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
+    )
+  })
   ipcMain.handle('history:list', async (event): Promise<HistoryEntry[]> => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
       console.warn('[history] rejected untrusted sender')
@@ -983,6 +1060,11 @@ app.whenReady().then(async () => {
   })
 
   initOverlay({
+    preloadPath: preloadPath(),
+    rendererUrl: process.env.ELECTRON_RENDERER_URL,
+    rendererFile: path.join(app.getAppPath(), 'out/renderer/index.html')
+  })
+  initResultPanel({
     preloadPath: preloadPath(),
     rendererUrl: process.env.ELECTRON_RENDERER_URL,
     rendererFile: path.join(app.getAppPath(), 'out/renderer/index.html')

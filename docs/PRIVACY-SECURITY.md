@@ -413,7 +413,8 @@ or update channel.
   - Microphone: request when the user first starts dictation, with a plain-language
     reason.
   - Accessibility: request when the user enables text output, not at first launch; explain
-    that it is used to paste and to avoid password fields.
+    that it is used to paste and to avoid password fields. The first-run guide may read and
+    explain the current status without prompting; the request itself stays tied to use.
   - Input Monitoring: only if the user enables a Fn/Right Option binding; the default
     `globalShortcut` path does not need it.
   - **Never** request Screen Recording, Full Disk Access, Automation/Apple Events, or

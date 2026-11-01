@@ -302,12 +302,19 @@ audio buffer is still valid.
    vocabulary, and optional LLM polish as separate steps. Each step is cancellable and
    records timing without transcript content. The final text preserves the user's language
    and does not invent content.
-6. **Injection.** Main writes the final text to the clipboard and sends a synthesized
-   Cmd+V through System Events (`src/main/injection.ts`). Snapshot/restore and ownership
-   policy lives in `src/core/injection/paste.ts`: the previous clipboard is restored only
-   when it still holds this transcript, and a failed paste leaves the transcript on the
-   clipboard with a permission notice. Accessibility insertion is a later upgrade, not a
-   v0.1 path (ADR-0003).
+6. **Injection.** Main inserts into its own input when its window is focused. Otherwise
+   it reads the frontmost element's Accessibility role and text range: an editable role
+   (`AXTextField`, `AXTextArea`, `AXComboBox`) with `AXSelectedTextRange` gets the
+   clipboard + synthesized Cmd+V path (`src/main/injection.ts`). A non-editable element
+   — or a probe that cannot answer — gets the copy panel (`src/main/result-panel.ts`)
+   instead, which never pastes, never takes focus, and dismisses on copy, close, or
+   Escape (a temporary global shortcut while the panel is visible; if the OS refuses
+   the registration the panel omits the hint and close remains). Snapshot/restore and
+   ownership policy lives in
+   `src/core/injection/paste.ts`: the previous clipboard is restored only when it still
+   holds this transcript, and a failed paste leaves the transcript on the clipboard with
+   a permission notice. Accessibility insertion is a later upgrade, not a v0.1 path
+   (ADR-0003).
 7. **Completion.** The overlay shows pasting and then returns to idle; history is written
    for each non-empty transcript under the retention limits, and metrics (duration,
    provider, latency, error class) are recorded without audio or transcript.
@@ -441,8 +448,8 @@ Rules for the port:
 
 | Failure | Behavior |
 |---|---|
-| Microphone permission denied | Onboarding explains why and links to System Settings; no session starts; no crash |
-| Accessibility/Input Monitoring denied | Dictation still records and transcribes; the paste fails with a permission notice and the transcript stays on the clipboard |
+| Microphone permission denied | Onboarding explains the status without prompting; macOS asks on the first recording; no session starts until granted; no crash |
+| Accessibility/Input Monitoring denied | Dictation still records and transcribes; the probe cannot answer, so delivery uses the copy panel instead of pasting. Text is not placed on the clipboard until the user clicks copy |
 | Helper crash or hang | Kill and restart the helper for OS operations; the renderer stops capture and releases the mic; show retry if audio is still valid |
 | ASR timeout or network failure | Keep the buffered audio, offer retry, optionally fall back to a configured provider; never silently drop the transcript |
 | Local model missing or corrupt | Prompt to download/repair; verify checksums before use |

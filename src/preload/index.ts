@@ -6,11 +6,13 @@ import type {
   JustSpeakApi,
   OverlayState,
   PcmBatch,
+  PermissionStatus,
   PreferencesPatch,
   PreferencesSetResult,
   PreferencesView,
   RecordingCommand,
   RecordingSummary,
+  ResultPanelPayload,
   TranscriptEvent
 } from '../shared/ipc'
 
@@ -26,6 +28,9 @@ const api: JustSpeakApi = {
   getPreferences: () => ipcRenderer.invoke('preferences:get') as Promise<PreferencesView>,
   setPreferences: (patch: PreferencesPatch) =>
     ipcRenderer.invoke('preferences:set', patch) as Promise<PreferencesSetResult>,
+  getPermissions: () => ipcRenderer.invoke('permissions:get') as Promise<PermissionStatus>,
+  openAccessibilitySettings: () =>
+    ipcRenderer.invoke('permissions:open-accessibility') as Promise<void>,
   onPreferencesChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, preferences: PreferencesView) => {
       listener(preferences)
@@ -43,9 +48,24 @@ const api: JustSpeakApi = {
     ipcRenderer.on('overlay:level', handler)
     return () => ipcRenderer.removeListener('overlay:level', handler)
   },
+  onOverlayComplete: (listener) => {
+    const handler = (): void => listener()
+    ipcRenderer.on('overlay:complete', handler)
+    return () => ipcRenderer.removeListener('overlay:complete', handler)
+  },
   overlayReady: () => ipcRenderer.send('overlay:ready'),
   cancelRecording: () => ipcRenderer.send('overlay:cancel'),
   finishRecording: () => ipcRenderer.send('overlay:finish'),
+  onPanelText: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: ResultPanelPayload) => {
+      listener(payload)
+    }
+    ipcRenderer.on('panel:text', handler)
+    return () => ipcRenderer.removeListener('panel:text', handler)
+  },
+  panelReady: () => ipcRenderer.send('panel:ready'),
+  copyPanelText: () => ipcRenderer.send('panel:copy'),
+  closeResultPanel: () => ipcRenderer.send('panel:close'),
   onState: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, next: AppState, message?: string) => {
       listener(next, message)

@@ -49,7 +49,10 @@ pnpm bench:asr   # provider-driven benchmark; writes bench/reports/<date>-qwen3-
 ```
 
 - Hotkey: `Command+Shift+Space` (toggle recording; press again to stop).
-- Grant Microphone and Accessibility permissions on first run.
+- Grant Microphone and Accessibility permissions on first run. The first-run screen
+  explains the hotkey, where text goes, and both permissions.
+- When the focused element cannot accept text (the desktop, a web page surface), a copy
+  panel appears at the bottom of the screen instead of pasting into the wrong place.
 - Default provider is **SenseVoice Small** (`JUSTSPEAK_ASR=sensevoice`); `JUSTSPEAK_ASR=qwen3`
   selects Qwen3. An explicit value is always honoured — it is never remapped to the default.
   Use `JUSTSPEAK_ASR=fake pnpm dev` for the deterministic fake flow. An unknown value is an

@@ -10,12 +10,13 @@ both from growing without limit on the user's Mac.
 ### Requirement: Every finished transcript SHALL be recorded locally
 
 Main SHALL append one history entry for every non-empty transcript the session
-delivers. An entry SHALL carry its text, the local timestamp, the recording duration, the
-transcription latency and the delivery outcome: `inserted` when the app's own
-input received it, `pasted` when the frontmost app received it, and
-`paste_failed` when the paste step failed and the text was left on the clipboard.
-Recording SHALL be best effort: a failed history write SHALL NOT change the
-session state or the delivery result.
+delivers. An entry SHALL carry its text, the local timestamp, the recording duration,
+the transcription latency and the delivery outcome: `inserted` when the app's own
+input received it, `pasted` when the frontmost app received it, `panel` when the copy
+panel was shown because no editable element was available, and `paste_failed` when
+the paste step failed and the text was left on the clipboard. Recording SHALL be best
+effort: a failed history write SHALL NOT change the session state or the delivery
+result.
 
 #### Scenario: A transcript is inserted into JustSpeak
 
@@ -26,6 +27,11 @@ session state or the delivery result.
 
 - **WHEN** another app holds focus and the paste step succeeds
 - **THEN** one entry is recorded with outcome `pasted`
+
+#### Scenario: The copy panel is shown
+
+- **WHEN** delivery chooses the copy panel
+- **THEN** one entry is recorded with outcome `panel`
 
 #### Scenario: The paste step fails
 

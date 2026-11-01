@@ -18,6 +18,10 @@ async function snapshotClipboard(): Promise<ClipboardSnapshot> {
   const snapshots: ClipboardItem[] = []
 
   for (const item of items) {
+    // An empty clipboard can still yield one item with no types; constructing
+    // a ClipboardItem from an empty map throws and would turn a normal paste
+    // into a failure.
+    if (item.types.length === 0) continue
     const data: Record<string, string | Blob | Electron.ClipboardBookmark> = {}
     for (const type of item.types) {
       const value = await item.getType(type)

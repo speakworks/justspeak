@@ -52,11 +52,24 @@ export const ASR_PROVIDER_FACTORIES: Record<
  * One construction point for every provider. Callers pass the resolved mode
  * and never branch on a provider id themselves.
  */
+function fakeDelay(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === '') return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined
+}
+
 export function buildProvider(options: BuildProviderOptions): BuiltProvider {
   const { mode, appRoot, modelsDir, catalog, env } = options
 
   if (mode === 'fake') {
-    return { ok: true, mode, provider: new FakeAsrProvider() }
+    // Test-only: a longer fake delay lets E2E observe the working pill without
+    // touching the local model. Invalid values fall back to the default.
+    const delay = fakeDelay(env?.JUSTSPEAK_FAKE_DELAY_MS)
+    return {
+      ok: true,
+      mode,
+      provider: new FakeAsrProvider(delay === undefined ? {} : { delayMs: delay })
+    }
   }
 
   const providerId: SelectableAsrProviderId = mode

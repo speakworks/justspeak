@@ -44,3 +44,27 @@ export function indicatorBounds(workArea: WorkArea): IndicatorBounds {
     height: INDICATOR_HEIGHT
   }
 }
+
+/**
+ * The copy panel: same horizontal anchor as the pill, sitting just above the
+ * spot the pill occupied. A fixed height with internal scrolling is deliberate
+ * — a window whose bounds change with the transcript would jump around while
+ * the user is reading it.
+ */
+export const RESULT_PANEL_WIDTH = 420
+export const RESULT_PANEL_HEIGHT = 220
+export const RESULT_PANEL_BOTTOM_INSET = 64
+
+export function resultPanelBounds(workArea: WorkArea): IndicatorBounds {
+  // Keep the panel inside the work area even on a display narrower than the
+  // preferred width; a 240 px floor would push it off-screen below ~272 px.
+  const width = Math.min(RESULT_PANEL_WIDTH, Math.max(1, workArea.width - 32))
+  const x = workArea.x + Math.round((workArea.width - width) / 2)
+  const preferredY = workArea.y + workArea.height - RESULT_PANEL_HEIGHT - RESULT_PANEL_BOTTOM_INSET
+  return {
+    x,
+    y: Math.max(workArea.y, preferredY),
+    width,
+    height: RESULT_PANEL_HEIGHT
+  }
+}

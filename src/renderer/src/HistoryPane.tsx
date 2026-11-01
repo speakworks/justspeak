@@ -9,13 +9,15 @@ import type { HistoryEntry, HistoryOutcome } from '../../shared/ipc'
 const OUTCOME_LABEL: Record<HistoryOutcome, string> = {
   inserted: '已插入',
   pasted: '已粘贴',
-  paste_failed: '粘贴失败'
+  paste_failed: '粘贴失败',
+  panel: '待复制'
 }
 
 const OUTCOME_TITLE: Record<HistoryOutcome, string> = {
   inserted: '已插入到 JustSpeak 输入框',
   pasted: '已粘贴到前台应用',
-  paste_failed: '粘贴失败，文本已保留在剪贴板'
+  paste_failed: '粘贴失败，文本已保留在剪贴板',
+  panel: '焦点不在输入框，已弹出复制面板'
 }
 
 

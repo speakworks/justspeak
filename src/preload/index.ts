@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AppState,
   AppStatus,
+  HistoryEntry,
   JustSpeakApi,
   OverlayState,
   PcmBatch,
@@ -73,6 +74,17 @@ const api: JustSpeakApi = {
       ipcRenderer.removeListener('recording:start', start)
       ipcRenderer.removeListener('recording:stop', stop)
     }
+  },
+  getHistory: () => ipcRenderer.invoke('history:list') as Promise<HistoryEntry[]>,
+  deleteHistoryEntry: (id: string) =>
+    ipcRenderer.invoke('history:delete', id) as Promise<HistoryEntry[]>,
+  getHistoryAudio: (id: string) =>
+    ipcRenderer.invoke('history:audio', id) as Promise<ArrayBuffer | null>,
+  copyText: (text: string) => ipcRenderer.invoke('clipboard:write-text', text) as Promise<void>,
+  onHistoryChanged: (listener) => {
+    const handler = (): void => listener()
+    ipcRenderer.on('history:changed', handler)
+    return () => ipcRenderer.removeListener('history:changed', handler)
   }
 }
 

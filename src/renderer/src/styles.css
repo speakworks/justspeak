@@ -522,6 +522,125 @@ textarea {
   font-size: 12px;
 }
 
+/* ---- History ------------------------------------------------------------- */
+
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-bottom: 4px;
+}
+
+.history-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-date {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.history-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.history-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 16px;
+}
+
+.history-row + .history-row {
+  border-top: 1px solid var(--line);
+}
+
+.history-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-time {
+  color: var(--faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-outcome {
+  padding: 1px 6px;
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--field);
+  font-size: 10.5px;
+}
+
+.history-outcome.pasted {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+
+.history-outcome.paste_failed {
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+.history-duration {
+  color: var(--faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.history-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+.history-row:hover .history-actions,
+.history-row:focus-within .history-actions {
+  opacity: 1;
+}
+
+.history-actions .quiet-button:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.history-actions .quiet-button.history-delete:hover:not(:disabled) {
+  color: var(--red);
+  background: var(--red-soft);
+}
+
 /* ---- Settings and vocabulary -------------------------------------------- */
 
 .card {

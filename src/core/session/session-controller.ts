@@ -1,5 +1,6 @@
 import type { AsrErrorCode, AsrProvider, AudioInput } from '../asr/types'
 import type { PostprocessResult } from '../postprocess'
+import type { DeliveryTarget } from '../shell/delivery'
 import type { AppState, RecordingSummary, TranscriptEvent } from '../../shared/ipc'
 
 export const INVALID_SUMMARY_MESSAGE = '录音数据无效，请重试。'
@@ -15,11 +16,26 @@ export type ToggleAction = 'start' | 'stop' | 'ignore'
 /** ADR-0003 retry policy: one same-provider retry for transient failures. */
 const RETRYABLE_CODES = new Set<AsrErrorCode>(['TIMEOUT', 'INFERENCE_FAILED'])
 
+/** What became of a transcript that already reached the user. */
+export type TranscriptSettlement =
+  | { ok: true; target: DeliveryTarget }
+  | { ok: false; message: string }
+
 export interface SessionControllerDeps {
   provider: AsrProvider
-  paste: (text: string) => Promise<void>
+  /**
+   * Delivers one transcript. Returns the target that ran so the caller can
+   * record it; implementations that do not care may return nothing.
+   */
+  paste: (text: string) => Promise<DeliveryTarget | void>
   sendState: (state: AppState, message?: string) => void
   sendTranscript: (event: TranscriptEvent) => void
+  /**
+   * Called once per recognised transcript, after delivery settles. A failed
+   * delivery still reports, because the text reached the clipboard and the
+   * history row is the user's only durable copy.
+   */
+  onTranscriptSettled?: (event: TranscriptEvent, settlement: TranscriptSettlement) => void
   fake: boolean
   /** Deterministic cleanup between the ASR result and the paste call. */
   postprocess?: (text: string) => PostprocessResult
@@ -140,6 +156,8 @@ export class SessionController {
     if (this.pipelineRunning) return
     this.pipelineRunning = true
     const startedAt = (this.deps.now ?? Date.now)()
+    // Set only once a transcript exists: an ASR failure has no text to record.
+    let event: TranscriptEvent | undefined
 
     try {
       const options = { timeoutMs: this.deps.transcribeTimeoutMs }
@@ -165,21 +183,39 @@ export class SessionController {
         applied = processed.applied
       }
 
-      this.deps.sendTranscript({
+      event = {
         text,
         applied,
         fake: this.deps.fake,
         durationMs: summary.durationMs,
-        latencyMs: (this.deps.now ?? Date.now)() - startedAt
-      })
+        // A backwards clock must not produce a negative latency: the history
+        // reader rejects negative numbers and would drop the whole row.
+        latencyMs: Math.max(0, (this.deps.now ?? Date.now)() - startedAt)
+      }
+      this.deps.sendTranscript(event)
 
       this.setState('pasting')
-      await this.deps.paste(text)
+      const target = await this.deps.paste(text)
+      this.settle(event, { ok: true, target: target ?? 'paste' })
       this.setState('idle')
     } catch (error) {
-      this.enterError(error instanceof Error ? error.message : String(error))
+      const message = error instanceof Error ? error.message : String(error)
+      if (event !== undefined) this.settle(event, { ok: false, message })
+      this.enterError(message)
     } finally {
       this.pipelineRunning = false
+    }
+  }
+
+  /**
+   * Observers are not part of the dictation contract: a throwing history
+   * writer must not turn a successful paste into a session error.
+   */
+  private settle(event: TranscriptEvent, settlement: TranscriptSettlement): void {
+    try {
+      this.deps.onTranscriptSettled?.(event, settlement)
+    } catch (error) {
+      console.warn('[session] transcript observer failed', error)
     }
   }
 

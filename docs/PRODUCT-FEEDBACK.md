@@ -11,6 +11,33 @@ that makes each item checkable.
 
 ---
 
+## 2026-11-01 — history destination was a placeholder
+
+### 1. Recognised text never appeared in 历史记录
+
+- **Observed:** 「我都使用了，语音也识别成文字了，但是历史记录中什么都没有」
+- **Was:** `HistoryPane.tsx` always rendered 「还没有记录」. Main did emit one
+  `transcript` event per delivery, but no renderer subscribed to it and nothing
+  was written to disk, so the text had been delivered correctly and was simply
+  never recorded — not lost.
+- **Now:** main appends every delivered transcript to
+  `userData/history/entries.jsonl` with its local timestamp, duration, latency and
+  delivery outcome, and saves the recording as 16 kHz mono PCM16 WAV under
+  `userData/history/audio/`. 历史记录 groups rows by local day, newest first, with
+  copy, delete and playback. Retention follows the plan card's frozen decisions
+  (1000 text entries / 30 days; newest 500 audio files).
+- **Contract:** `openspec/changes/archive/2026-11-01-transcription-history`
+  (validated and archived 2026-11-01; main spec `openspec/specs/history/spec.md`).
+  Automated evidence: unit tests for parsing/grouping/retention and the
+  insert→outcome mapping, plus `tests/e2e/history.spec.ts`, which records
+  against a temporary `userData` and checks the JSONL row, the WAV header,
+  restart persistence, copy and delete. A one-off local probe with real
+  SenseVoice and a WAV microphone also verified playback and the WAV bytes; it
+  needs the downloaded model, so it is not part of the default suite. Owner
+  accepted the development build on 2026-11-01.
+
+---
+
 ## 2026-10-31 — first real-device trial (packaged build, local models)
 
 ### 1. No visible cue while dictating into another app

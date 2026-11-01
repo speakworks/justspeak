@@ -646,7 +646,7 @@ Accessed 2026-10-26. E2 = primary artifact inspected directly; E3 = web/third-pa
 |---|---|---|---|---|
 | E2-1 | E2 | `src/core` owns post-processing as composable steps: punctuation/casing, filler removal, personal vocabulary, optional LLM polish; renderer never handles it | [docs/ARCHITECTURE.md](ARCHITECTURE.md) | High; project design baseline |
 | E2-2 | E2 | Rule-based post-processing budget ≤150 ms; optional LLM polish is separate with ≤800 ms target | [docs/AUDIO-PIPELINE.md](AUDIO-PIPELINE.md) | High; design target, not measured |
-| E2-3 | E2 | Local-first default; cloud ASR/LLM only explicit opt-in; keys in Keychain; no audio/transcript retention by default | [docs/ADR-0002-tech-stack.md](ADR-0002-tech-stack.md), [docs/ARCHITECTURE.md](ARCHITECTURE.md) | High; accepted project decisions |
+| E2-3 | E2 | Local-first default; cloud ASR/LLM only explicit opt-in; keys in Keychain; bounded local history (text 1000 / 30 days, audio newest 500) | [docs/ADR-0002-tech-stack.md](ADR-0002-tech-stack.md), [docs/ARCHITECTURE.md](ARCHITECTURE.md) | High; accepted project decisions |
 | E2-4 | E2 | v0.1 focus context is app name/bundle id and focus state only; surrounding text/selected text are later opt-in with caps (300/300 chars, 500 selected, 2,000 total) | [docs/TEXT-INJECTION-HOTKEYS.md](TEXT-INJECTION-HOTKEYS.md) | High; project decision |
 | E2-5 | E2 | ASR evaluation uses WER/CER after normalization; punctuation removal is specified for scoring | [docs/ASR-RESEARCH.md](ASR-RESEARCH.md) | High; project method |
 | E2-6 | E2 | v0.1 roadmap includes clean punctuation, filler-word removal, and personal vocabulary | [docs/ROADMAP.md](ROADMAP.md) | High |

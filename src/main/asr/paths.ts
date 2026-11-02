@@ -28,13 +28,15 @@ function modelPathOverride(
 }
 
 /**
- * Where the runtime and weights live.
+ * Where the weights live.
  *
  * In a packaged app `appRoot` is the path *inside* `app.asar` — read-only, and
- * not a directory at all — so neither the shipped bundle nor a first-run
- * download can use it. Packaged builds therefore read and write under the
- * user's data directory; a dev checkout keeps everything in the gitignored
- * `models/` next to the source, which is what `pnpm setup:asr` prepares.
+ * not a directory at all — so a first-run download cannot write there. Packaged
+ * builds therefore read and write weights under the user's data directory; a
+ * dev checkout keeps everything in the gitignored `models/` next to the source,
+ * which is what `pnpm setup:asr` prepares. The runtime is different: packaged
+ * builds execute it from `Contents/Resources/runtime` (see
+ * `packagedRuntimeDir`), while a checkout runs it from `models/`.
  */
 export function resolveModelsDir(input: {
   appRoot: string
@@ -46,12 +48,23 @@ export function resolveModelsDir(input: {
     : path.join(input.appRoot, 'models')
 }
 
+/**
+ * A packaged app ships the runtime next to its resources, because both
+ * `app.getAppPath()` and the repository tree are unreachable from an installed
+ * bundle. The staging script flattens the CLI and its dylibs into one
+ * directory, so packaged resolution uses the catalog's binary name only.
+ */
+export function packagedRuntimeDir(resourcesPath: string): string {
+  return path.join(resourcesPath, 'runtime')
+}
+
 export function resolveAsrPaths(
   appRoot: string,
   catalog: ModelCatalog,
   env: NodeJS.ProcessEnv = process.env,
   provider: SelectableAsrProviderId = 'qwen3',
-  explicitModelsDir?: string
+  explicitModelsDir?: string,
+  explicitRuntimeDir?: string
 ): AsrPaths {
   const model = findModel(catalog, MODEL_ID_BY_PROVIDER[provider])
   const runtime = findRuntime(catalog, PRIMARY_RUNTIME_ID)
@@ -69,9 +82,18 @@ export function resolveAsrPaths(
       ? path.join(modelsDir, ...runtimeParts.slice(1))
       : path.join(appRoot, runtime.buildDir)
 
+  // An explicit runtime directory is the flat packaged layout; the catalog's
+  // `build/bin/...` path would point inside the read-only asar.
+  const cliPath =
+    env.JUSTSPEAK_TRANSCRIBE_CLI ??
+    path.join(
+      explicitRuntimeDir ?? runtimeDir,
+      explicitRuntimeDir ? path.basename(runtime.binary) : runtime.binary
+    )
+
   return {
     modelsDir,
-    cliPath: env.JUSTSPEAK_TRANSCRIBE_CLI ?? path.join(runtimeDir, runtime.binary),
+    cliPath,
     modelPath:
       modelPathOverride(provider, env) ??
       path.join(modelsDir, model.files[0]?.path ?? model.id),

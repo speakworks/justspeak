@@ -229,6 +229,11 @@ spawned by main, rather than inside the Electron main process itself. Each trans
 writes a temporary WAV, runs the CLI, and removes the WAV. Cloud providers are adapters in
 `src/core` and require explicit user enablement. The renderer never talks to either.
 
+A development checkout runs the CLI from `models/runtime/transcribe.cpp/`. A packaged app
+runs it from `Contents/Resources/runtime/`: the CLI and its dylibs are staged flat with
+`@loader_path` rpaths, because the CMake build bakes absolute build-machine paths into
+`LC_RPATH`. Model weights stay in `userData/models` and are downloaded on first run.
+
 ### Storage
 
 Settings are stored locally as validated JSON (or SQLite if history grows). Transcript

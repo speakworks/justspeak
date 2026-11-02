@@ -419,17 +419,67 @@ targets described below.
 | Item | Current state |
 |---|---|
 | Config | `electron-builder.yml` reads the `electron-vite` output in `out/`, targets arm64 macOS, and writes to `release/` (gitignored). `appId` is `com.justspeak.app`; the product name is `JustSpeak`. |
-| Build | `pnpm package:mac` produces the unpacked, unsigned arm64 `.app` under `release/` (fast; the current local path). `pnpm package:mac:artifacts` additionally builds the DMG and ZIP from the same config; it is slower and is the step to use once signing exists. |
-| Signing | **Disabled.** `mac.identity` is `null` and `mac.notarize` is `false`. Enabling them is pending the human's Developer ID Application certificate, team ID, and `notarytool` credentials. Hardened runtime is also left off until signing exists. Do not sign or notarize a local build. |
+| Build | `pnpm package:mac` stages the ASR runtime, builds `out/`, and produces the unpacked, unsigned arm64 `.app` under `release/` (fast; the current local path). `pnpm package:mac:artifacts` additionally builds the DMG and ZIP from the same config; it is slower and is the step to use once signing exists. |
+| ASR runtime | **Bundled.** `scripts/package-runtime.ts` stages the pinned CLI and five dylibs into `resources/runtime/`, rewrites every absolute `LC_RPATH` to `@loader_path`, re-signs ad-hoc, and copies the runtime license texts. `extraResources` ships the directory as `Contents/Resources/runtime/`; the app resolves it from `process.resourcesPath`. `models/` and `resources/runtime/` are gitignored, so packaging requires `pnpm setup:asr` first. |
+| Signing | **Disabled by default; prepared.** `mac.identity` stays `null` and `mac.notarize` stays `false` for local builds. `pnpm package:mac:signed` requires a Developer ID identity and one complete notarisation credential pair, then enables hardened runtime, `resources/entitlements.mac.plist`, and notarisation. Enabling it for real is still pending the human's certificate and notarytool credentials. |
 | Upload | **Disabled.** `publish` is `null`; a local build never uploads artifacts. Publishing is a release-process step that needs credentials and a release channel decision. |
 | Model weights | **Not bundled.** The installer contains no `.gguf` files. Only the small `resources/models.json` catalog is copied to the app's resources directory; the ~850 MB Qwen3-ASR weights are downloaded on first run after consent, exactly as designed in "Model Distribution Design". |
 | Network at build time | The build uses the Electron installation in `node_modules` (`electronDist`) and does not rebuild native modules (`npmRebuild: false`), so packaging does not fetch a runtime. |
 | Notices | `pnpm notices` regenerates [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) from the production dependency tree and `resources/models.json`. The script is deterministic: sorting and the absence of timestamps make a second run byte-identical. |
 | License texts | **Shipped.** `extraResources` copies `THIRD_PARTY_NOTICES.md` and `licenses/` into `Contents/Resources/`, together with Electron's `LICENSE` and `LICENSES.chromium.html`. An identifier in the notices file is not a license grant; the text it points at travels with the app. See [`licenses/README.md`](../licenses/README.md). |
 
-Before a public release, supply signing credentials, add the hardened-runtime and
-entitlements configuration described in the next section, and verify the signed build on
-a clean macOS account. None of that is part of the current local configuration.
+Before a public release, supply signing credentials, run the signed packaging path
+described below, and verify the signed build on a clean macOS account. The
+hardened-runtime and entitlements configuration is in place; only the credentials
+remain outstanding.
+
+### Signing readiness (2026-11-02)
+
+`scripts/package-mac-signed.ts` is the only path that signs. It rejects an incomplete
+environment before electron-builder starts, naming exactly which variable is missing:
+
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `CSC_NAME` | yes | `Developer ID Application: <Team Name> (<TEAMID>)` |
+| `CSC_LINK`, `CSC_KEY_PASSWORD` | CI only | base64 `.p12` and its password; omit when the certificate is in the login Keychain |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | one pair | Apple ID notarisation credentials |
+| `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | one pair | App Store Connect API key alternative |
+| `APPLE_KEYCHAIN_PROFILE` | one pair | `notarytool` keychain profile; `APPLE_KEYCHAIN` is optional |
+
+A complete pair wins over a stray variable from another pair (a CI image may export
+`APPLE_ID` for unrelated tooling without breaking the API-key path).
+
+```bash
+# Signed, hardened, notarised DMG + ZIP
+CSC_NAME='Developer ID Application: …' \
+APPLE_ID=… APPLE_APP_SPECIFIC_PASSWORD=… APPLE_TEAM_ID=… \
+pnpm package:mac:signed
+
+# Local, unsigned (never signs):
+pnpm package:mac
+```
+
+`resources/entitlements.mac.plist` carries the minimal set the design froze: `allow-jit`
+only. `get-task-allow` never appears in a distribution build.
+
+`scripts/verify-mac-app.ts` inspects the finished bundle with `codesign --verify --deep
+--strict`, `spctl --assess`, and `xcrun stapler validate`. Without
+`--require-distribution` it is informational and reports the local unsigned build as
+ad-hoc; with it, the command fails unless the bundle is Developer ID signed, Gatekeeper
+accepted, stapled, and carries a relocatable, signed ASR runtime (checked against its
+manifest, rpaths, arm64 slices, and the bundled catalog's pinned commit):
+
+```bash
+pnpm verify:mac release/mac-arm64/JustSpeak.app --require-distribution
+```
+
+**Current blockers (recorded 2026-11-02):** no Developer ID Application certificate, team
+ID, or notarytool credentials are available in this environment, so the signed path has
+only been exercised up to its environment check. The unsigned artifact reports
+`FAIL codesign verify` and `FAIL Gatekeeper` — expected, because `identity: null` leaves
+the renamed Electron bundle's original signature with no resource envelope. Auto-update
+and crash diagnostics remain unimplemented; see `docs/PRODUCT-FEEDBACK.md` for their
+prerequisites.
 
 ## macOS Distribution Design
 

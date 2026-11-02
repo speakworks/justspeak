@@ -2,7 +2,11 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import rawCatalog from '../resources/models.json'
 import { parseModelCatalog } from '../src/core/asr/model-catalog'
-import { resolveAsrPaths, resolveModelsDir } from '../src/main/asr/paths'
+import {
+  packagedRuntimeDir,
+  resolveAsrPaths,
+  resolveModelsDir
+} from '../src/main/asr/paths'
 
 const catalog = parseModelCatalog(rawCatalog)
 
@@ -67,5 +71,41 @@ describe('models directory', () => {
     expect(paths.cliPath).toBe(
       path.join('/data/models/runtime/transcribe.cpp/build/bin/transcribe-cli')
     )
+  })
+})
+
+describe('packaged runtime directory', () => {
+  const resources = '/Applications/JustSpeak.app/Contents/Resources'
+
+  it('lives next to the app resources', () => {
+    expect(packagedRuntimeDir(resources)).toBe(path.join(resources, 'runtime'))
+  })
+
+  it('uses the flat staged binary name, not the catalog build path', () => {
+    const paths = resolveAsrPaths(
+      '/Applications/JustSpeak.app/Contents/Resources/app.asar',
+      catalog,
+      {},
+      'sensevoice',
+      '/Users/me/Library/Application Support/JustSpeak/models',
+      packagedRuntimeDir(resources)
+    )
+    expect(paths.cliPath).toBe(path.join(resources, 'runtime/transcribe-cli'))
+    expect(paths.modelsDir).toBe('/Users/me/Library/Application Support/JustSpeak/models')
+    expect(paths.modelPath).toBe(
+      path.join('/Users/me/Library/Application Support/JustSpeak/models', 'sensevoice-small/SenseVoiceSmall-Q8_0.gguf')
+    )
+  })
+
+  it('still honours the CLI environment override', () => {
+    const paths = resolveAsrPaths(
+      '/app',
+      catalog,
+      { JUSTSPEAK_TRANSCRIBE_CLI: '/custom/transcribe-cli' } as NodeJS.ProcessEnv,
+      'qwen3',
+      '/data/models',
+      packagedRuntimeDir(resources)
+    )
+    expect(paths.cliPath).toBe('/custom/transcribe-cli')
   })
 })

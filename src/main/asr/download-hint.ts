@@ -19,9 +19,9 @@ export function downloadFailureHint(
  * The repair hint when the ASR runtime binary is missing.
  *
  * `pnpm setup:asr` only exists in a checkout, and it writes into the
- * repository's `models/`. A packaged app reads the runtime from the user's data
- * directory, so telling a packaged user to run it sends them to a step that
- * cannot fix anything. Say where the binary has to be instead.
+ * repository's `models/`. A packaged app ships its runtime in the bundle, so a
+ * missing binary means the installation is damaged — telling the user to run a
+ * checkout script would send them to a step that cannot fix anything.
  */
 export function runtimeMissingHint(input: {
   packaged: boolean
@@ -33,7 +33,7 @@ export function runtimeMissingHint(input: {
     return `请运行 pnpm setup:asr${source}。`
   }
   return (
-    `可用 JUSTSPEAK_TRANSCRIBE_CLI 指向一个依赖路径可重定位的 transcribe-cli${source}；` +
-    `当前包里没有随附运行时，直接把它拷到 ${input.cliPath} 还需要它的 dylib 能从该位置解析。`
+    `安装包内未找到随附的 ASR 运行时（${input.cliPath}），请重新安装 JustSpeak${source}；` +
+    `也可用 JUSTSPEAK_TRANSCRIBE_CLI 指向一个依赖路径可重定位的 transcribe-cli。`
   )
 }

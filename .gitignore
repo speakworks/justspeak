@@ -44,6 +44,10 @@ target/
 # Local ASR models and runtime (never commit weights)
 models/
 
+# Staged ASR runtime for packaging (rebuilt by `pnpm package:runtime`)
+resources/runtime/
+resources/runtime.tmp-*
+
 # Real speech samples and their local-only results (personal voice data)
 bench/real/
 bench/results/*-real.json

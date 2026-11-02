@@ -14,6 +14,8 @@ export interface BuildProviderOptions {
   appRoot: string
   /** Resolved by the caller: `<appRoot>/models` in dev, userData when packaged. */
   modelsDir?: string
+  /** Packaged only: the flat `Contents/Resources/runtime` directory. */
+  runtimeDir?: string
   catalog: ModelCatalog
   env?: NodeJS.ProcessEnv
 }
@@ -59,7 +61,7 @@ function fakeDelay(value: string | undefined): number | undefined {
 }
 
 export function buildProvider(options: BuildProviderOptions): BuiltProvider {
-  const { mode, appRoot, modelsDir, catalog, env } = options
+  const { mode, appRoot, modelsDir, runtimeDir, catalog, env } = options
 
   if (mode === 'fake') {
     // Test-only: a longer fake delay lets E2E observe the working pill without
@@ -84,7 +86,7 @@ export function buildProvider(options: BuildProviderOptions): BuiltProvider {
   }
 
   const descriptor = toModelDescriptor(model)
-  const paths = resolveAsrPaths(appRoot, catalog, env, providerId, modelsDir)
+  const paths = resolveAsrPaths(appRoot, catalog, env, providerId, modelsDir, runtimeDir)
   const runner = new TranscribeCliRunner({
     cliPath: paths.cliPath,
     modelPath: paths.modelPath,

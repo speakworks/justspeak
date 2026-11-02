@@ -11,6 +11,39 @@ that makes each item checkable.
 
 ---
 
+## 2026-11-02 — packaged runtime and release readiness
+
+### 1. A packaged install could not transcribe (resolves item 11)
+
+- **Observed (carried from the 2026-10-31 list):** the DMG shipped no ASR
+  runtime, and the dylibs that did exist resolved through absolute paths into the
+  build machine's checkout.
+- **Now:** the runtime is staged into a flat `resources/runtime/` with
+  `@loader_path` rpaths, shipped as `Contents/Resources/runtime/`, and resolved
+  from `process.resourcesPath` when packaged. The packaging script validates the
+  staged links and signatures before electron-builder runs.
+- **Evidence:** the staged CLI transcribes `bench/fixtures/zh-4s.wav`; the
+  packaged app, given a temporary `userData` containing only the SenseVoice
+  weights, reaches 「模型就绪」 from the bundled runtime.
+- **Contract:** `openspec/changes/packaged-runtime`.
+
+### 2. Signing readiness (item 4)
+
+- Prepared: `resources/entitlements.mac.plist`, `scripts/package-mac-signed.ts`
+  (fails naming missing variables), `scripts/verify-mac-app.ts`, and documented
+  env/commands in `docs/PACKAGING-RELEASE.md`.
+- **Blocked:** no Developer ID certificate or notarytool credentials. The signed
+  path is exercised only up to its environment check; the unsigned artifact is
+  reported as expected.
+
+### 3. Auto-update and crash diagnostics (items 5 and 6)
+
+- Recorded, not implemented. Auto-update needs item 4 and a publish channel;
+  diagnostics needs either a local log/export design or an upload endpoint with
+  a privacy decision.
+
+---
+
 ## 2026-11-01 — focus-aware delivery and first-run guide
 
 ### 1. Delivery had no safe target when focus was not editable
@@ -127,21 +160,42 @@ that makes each item checkable.
 
 ### 4. Distribution is unsigned and not notarised
 
-- **Today:** `electron-builder.yml` sets `mac.identity: null` and
-  `mac.notarize: false`; `pnpm package:mac:artifacts` produces a working DMG and
-  ZIP (verified 2026-10-31), but another machine will block it through
-  Gatekeeper unless the user overrides the quarantine.
+- **Today:** `electron-builder.yml` still sets `mac.identity: null` and
+  `mac.notarize: false` for local builds; `pnpm package:mac:artifacts` produces
+  a working DMG and ZIP (verified 2026-10-31), but another machine will block it
+  through Gatekeeper unless the user overrides the quarantine.
+- **Prepared (2026-11-02):** `pnpm package:mac:signed` now exists. It refuses to
+  start unless the release environment provides `CSC_NAME` and one complete
+  notarisation credential pair, then turns on hardened runtime, the minimal
+  `resources/entitlements.mac.plist` (`allow-jit` only), and notarisation.
+  `pnpm verify:mac <app> --require-distribution` checks the finished bundle with
+  `codesign`, `spctl`, and `stapler`, plus the shipped runtime against its
+  manifest (link closure, `@loader_path` rpaths, arm64 slices, signatures). The
+  unsigned local build reports `FAIL codesign verify` / `FAIL Gatekeeper`, which
+  is the expected result of `identity: null`.
 - **Blocked on:** a Developer ID Application certificate, a team ID, and
-  `notarytool` credentials.
+  `notarytool` credentials. The signed path has been exercised only up to its
+  environment check, not end to end.
 
 ### 5. No auto-update
 
 - No updater is configured. Every fix needs a manual reinstall.
+- **Prerequisites (2026-11-02):** auto-update cannot be verified before item 4
+  lands (Squirrel.Mac requires a Developer ID signature) and a publish channel
+  exists (`publish: null` today). The next step is choosing GitHub Releases vs a
+  generic HTTPS feed, then adding `electron-updater` and a release job that
+  uploads `latest-mac.yml` with the signed artifacts. Not started.
 
 ### 6. No crash reporting or diagnostics export
 
 - A failure reaches the user as one status line and reaches the maintainer
   nowhere. There is no bundled log bundle to ask for.
+- **Decision deferred (2026-11-02):** two shapes are feasible without a vendor
+  account — (a) local crash dumps plus a "导出诊断" bundle (app logs, catalog
+  state, version, crash dumps) saved through a native dialog, or (b) an upload
+  endpoint with consent and retention rules. Neither is implemented; (a) needs a
+  persistent log writer that does not exist yet, and (b) needs a privacy
+  decision. Recorded rather than half-built.
 
 ### 7. Post-processing still produces wrong text in known cases
 
@@ -174,10 +228,10 @@ that makes each item checkable.
 - **Now:** `resolveModelsDir` uses `userData/models` when packaged and the
   repository's `models/` in a dev checkout. Verified on the installed app.
 - **Status:** path resolution fixed in PR #16 — a packaged build now looks in
-  `userData/models` instead of inside `app.asar`. **That is necessary but not
-  sufficient:** see item 11. The trial build only reached 「模型就绪」 because the
-  whole `models/` tree, runtime included, had been copied into `userData` by
-  hand.
+  `userData/models` instead of inside `app.asar`. That was necessary but not
+  sufficient; see item 11, which is now resolved. The trial build only reached
+  「模型就绪」 because the whole `models/` tree, runtime included, had been copied
+  into `userData` by hand.
 
 ### 11. The packaged app has no way to obtain the ASR runtime
 
@@ -201,15 +255,21 @@ that makes each item checkable.
   Copying the tree next to the app does not help on any other machine, and the
   trial on this machine only worked because the repository copy still sits at
   those absolute paths.
-- **Done looks like:** rewrite each dylib's dependency paths and `@rpath` to
-  `@loader_path`-relative (`install_name_tool -change` / `-add_rpath`, or a build
-  that emits them), ship the ~9 MB set via `extraResources` into
-  `Contents/Resources/runtime/...`, resolve the runtime from there when packaged,
-  and keep the weights download where it is. Then a clean DMG install works with
-  no manual steps.
-- **Also worth deciding:** whether executing the runtime from the app bundle
-  (signed with the app) is preferred over the current interim of a user-writable
-  `userData` path — `docs/PACKAGING-RELEASE.md` describes the former.
+- **Now (2026-11-02):** `scripts/package-runtime.ts` stages the CLI and five
+  dylibs into a flat `resources/runtime/`, deletes every absolute `LC_RPATH`,
+  adds `@loader_path`, re-signs each binary ad-hoc (`install_name_tool`
+  invalidates the arm64 signature), and copies the runtime license texts.
+  `extraResources` ships the directory as `Contents/Resources/runtime/`; a
+  packaged app resolves the CLI from `process.resourcesPath/runtime` and keeps
+  weights in `userData/models`. Verified by launching the packaged app with a
+  temporary `userData` containing only the weights: it reached 「模型就绪」from
+  the bundled runtime, with no manual copy of `models/runtime`.
+- **Still open:** the clean-install check on another Mac and with a *signed*
+  build (item 4); the unsigned artifact cannot pass Gatekeeper.
+- **Decision taken:** execute the runtime from the app bundle (signed with the
+  app) rather than a user-writable `userData` path, matching
+  `docs/PACKAGING-RELEASE.md`. Contract:
+  `openspec/changes/packaged-runtime`.
 
 ### 12. The main window had no design system
 

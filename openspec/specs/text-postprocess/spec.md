@@ -1,7 +1,7 @@
 # text-postprocess Specification
 
 ## Purpose
-Defines the deterministic transcript-cleaning stage that runs between the ASR result and the paste call: Unicode and punctuation normalisation, filler and separator-run removal, repetition collapse, self-correction cleanup, sentence-initial casing, and a local personal vocabulary. The stage is pure, offline, and individually configurable.
+Defines the deterministic transcript-cleaning stage that runs between the ASR result and the paste call: Unicode and punctuation normalisation, filler and separator-run removal, repetition collapse, sentence-initial casing, and a local personal vocabulary. Correction markers pass through unchanged; deciding whether one is a self-correction is deferred to an optional LLM stage. The stage is pure, offline, and individually configurable.
 
 ## Requirements
 
@@ -27,7 +27,7 @@ Defines the deterministic transcript-cleaning stage that runs between the ASR re
 
 ### Requirement: Normalisation SHALL be conservative
 
-The stage SHALL apply Unicode NFKC, collapse repeated whitespace, trim, remove stray spacing before punctuation, and convert punctuation to the dominant script. It SHALL NOT edit code-like tokens, including backtick spans, URLs, emails, paths, versions, numbers with units, environment variables, CLI flags, code identifiers, and bare multi-word commands such as `pnpm test`, `npm run build`, and `git commit`. A punctuation run of two or more marks, and every ellipsis/leader form (`…`, `‥`, `︙`, `︰`), SHALL be treated as an atomic token: it SHALL NOT be width-converted, split, or otherwise edited, and SHALL survive normalisation exactly as spoken. Stray whitespace before the first mark of a run SHALL be removed.
+The stage SHALL apply Unicode NFKC, collapse repeated whitespace, trim, remove stray spacing before punctuation, and convert punctuation to the dominant script. It SHALL NOT edit code-like tokens, including backtick spans, URLs, emails, paths, versions, numbers with units, environment variables, CLI flags, code identifiers, and bare multi-word commands such as `pnpm test`, `npm run build`, and `git commit`. A punctuation run of two or more marks, and every ellipsis/leader form (`…`, `‥`, `︙`, `︰`), SHALL be treated as an atomic token: it SHALL NOT be width-converted, split, or otherwise edited, and SHALL survive normalisation exactly as spoken. The run set SHALL include the full-width full stop `．` (U+FF0E), so a run of two or more full-width dots is preserved rather than split by NFKC, and SHALL remain a separator run for filler removal. Stray whitespace before the first mark of a run SHALL be removed. Dominant-script detection SHALL ignore every masked span as a neutral boundary, so a protected term or a code-like token cannot change the punctuation branch of the surrounding prose.
 
 #### Scenario: Full-width input
 
@@ -63,6 +63,18 @@ The stage SHALL apply Unicode NFKC, collapse repeated whitespace, trim, remove s
 - **THEN** the text is unchanged
 - **AND** no `。.` or other split run appears
 
+#### Scenario: Full-width dot run
+
+- **WHEN** the transcript is `他说．．` or `他说．．然后走了`
+- **THEN** the text is unchanged
+- **AND** no `。.` appears
+
+#### Scenario: Full-width dot run as a filler separator
+
+- **WHEN** the transcript is `um．．然后`, `嗯．．我们走`, or `um．．`
+- **THEN** the filler and the adjacent run are removed, yielding `然后` or `我们走`
+- **AND** a filler-only run returns the original text with no applied rules
+
 #### Scenario: Ellipsis and leader forms
 
 - **WHEN** the transcript is `他说‥然后走了`, `他说︙然后走了`, or `等一下︰`
@@ -78,6 +90,12 @@ The stage SHALL apply Unicode NFKC, collapse repeated whitespace, trim, remove s
 
 - **WHEN** the transcript is `hello ... there`
 - **THEN** the output is `hello... there`
+
+#### Scenario: Masked text does not change the dominant script
+
+- **WHEN** `JustSpeak` is protected and the transcript is `他，JustSpeak行。`
+- **THEN** the output is `他，JustSpeak行。`
+- **AND** the mask placeholder's Latin characters do not flip the sentence to the Latin punctuation branch
 
 ### Requirement: Filler removal SHALL avoid real words
 
@@ -152,7 +170,7 @@ The stage SHALL remove the standalone Chinese fillers `嗯`, `呃`, `啊`, `那�
 
 ### Requirement: Repetition collapse SHALL be bounded
 
-The stage SHALL collapse an immediately repeated Latin word at two occurrences (`the the` to `the`) and an immediately repeated Han character when the run reaches the configurable Han threshold. The Han threshold SHALL default to 3 and SHALL have a floor of 3: a configured value below 3 SHALL be ignored and the default SHALL apply, and a non-finite value SHALL be ignored and the default SHALL apply. The stage SHALL preserve any two-character Chinese reduplication at the default threshold (`默默`, `冉冉`, `匆匆`, `津津`, `欣欣`, and other productive forms), laughter (`哈哈哈`), grammatical English doubles (`had had`, `that that`), and all punctuation runs; only filler or self-correction removal may consume a punctuation run. The curated keep list SHALL be retained for a future lower floor but is not reachable through configuration today.
+The stage SHALL collapse an immediately repeated Latin word at two occurrences (`the the` to `the`) and an immediately repeated Han character when the run reaches the configurable Han threshold. The Han threshold SHALL default to 3 and SHALL have a floor of 3: a configured value below 3 SHALL be ignored and the default SHALL apply, and a non-finite value SHALL be ignored and the default SHALL apply. The stage SHALL preserve any two-character Chinese reduplication at the default threshold (`默默`, `冉冉`, `匆匆`, `津津`, `欣欣`, and other productive forms), laughter (`哈哈哈`), grammatical English doubles (`had had`, `that that`), and all punctuation runs; only filler removal may consume a punctuation run. The curated keep list SHALL be retained for a future lower floor but is not reachable through configuration today.
 
 #### Scenario: Stutter
 
@@ -216,31 +234,6 @@ The stage SHALL read a word list from `userData/vocabulary.json` with `replace` 
 - **WHEN** `vocabulary.json` is missing, corrupt, or not an object
 - **THEN** the stage runs with default options and no error
 
-### Requirement: Self-corrections SHALL drop the abandoned fragment
-
-The stage SHALL treat `不对`, `我是说`, `no wait`, and `I mean` as correction markers only when punctuation or the start of the text sets them off and replacement content follows. It SHALL delete the clause before the marker through the marker and its entire trailing separator run, SHALL keep earlier clauses, and SHALL treat a run of markers as one correction.
-
-#### Scenario: Chinese correction
-
-- **WHEN** the transcript is `周一发，不对，周二发。`
-- **THEN** the output is `周二发。`
-
-#### Scenario: Earlier clause survives
-
-- **WHEN** the transcript is `先做A，然后B，不对，我是说C。`
-- **THEN** the output is `先做A，C。`
-
-#### Scenario: Ellipsis after the marker
-
-- **WHEN** the transcript is `No wait... Tuesday.`
-- **THEN** the output is `Tuesday.`
-- **AND** it does not start with a dangling mark
-
-#### Scenario: Marker-shaped phrase
-
-- **WHEN** the transcript is `这个不对。` or `The fact that I mean it is fine.`
-- **THEN** the text is unchanged
-
 ### Requirement: A non-empty transcript SHALL never become empty
 
 If every enabled rule would delete the whole input, the stage SHALL return the original text with an empty `applied` list. The session SHALL also fall back to the raw provider text when an injected stage returns empty for a non-empty result.
@@ -258,7 +251,7 @@ If every enabled rule would delete the whole input, the stage SHALL return the o
 
 ### Requirement: Every rule SHALL be individually disableable
 
-`vocabulary`, `normalize`, `self-correction`, `filler`, `repetition`, and `casing` SHALL each be disableable through `rules`, and an omitted rule SHALL be enabled. Protection SHALL remain active even when `vocabulary` is disabled because it only prevents edits.
+`vocabulary`, `normalize`, `filler`, `repetition`, and `casing` SHALL each be disableable through `rules`, and an omitted rule SHALL be enabled. Protection SHALL remain active even when `vocabulary` is disabled because it only prevents edits.
 
 #### Scenario: One rule off
 

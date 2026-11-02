@@ -16,7 +16,7 @@
 - [x] 3.1 OpenSpec delta: remove the self-correction requirement; modify normalisation, repetition, and rule-disableability requirements
 - [x] 3.2 Record the removal decision and the research outcome in `docs/PRODUCT-FEEDBACK.md`
 - [x] 3.3 Update `docs/ASR-CORRECTION-RESEARCH.md` with the accepted next step (rules removed; LLM research pending)
-- [ ] 3.4 At archive time, update the main spec Purpose sentence (OpenSpec keeps the existing Purpose and ignores a delta Purpose)
+- [x] 3.4 At archive time, update the main spec Purpose sentence (OpenSpec keeps the existing Purpose and ignores a delta Purpose)
 
 ## 4. Verification
 

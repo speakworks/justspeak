@@ -22,6 +22,9 @@ const MASK_MARKERS: Readonly<Record<MaskLayer, MaskMarkers>> = {
   punctuation: { start: '\uE004', end: '\uE005' }
 }
 
+const MASK_START_CHARS = new Set(Object.values(MASK_MARKERS).map((marker) => marker.start))
+const MASK_END_CHARS = new Set(Object.values(MASK_MARKERS).map((marker) => marker.end))
+
 export const MASK_SENTINELS: readonly string[] = Object.values(MASK_MARKERS).flatMap(
   ({ start, end }) => [start, end]
 )
@@ -204,7 +207,7 @@ export function findCodeSpans(text: string, excluded: readonly Span[] = []): Spa
 // when single because NFKC expands every one of them (…, ‥, ︙, ︰).
 const ELLIPSIS_FORMS = new Set(['…', '‥', '︙', '︰'])
 const PUNCTUATION_RUN_CHARS = new Set([
-  '.', '…', '‥', '︙', '︰', '!', '?', ',', ';', ':', '。', '，', '！', '？', '；', '：', '、'
+  '.', '．', '…', '‥', '︙', '︰', '!', '?', ',', ';', ':', '。', '，', '！', '？', '；', '：', '、'
 ])
 
 export function findPunctuationRunSpans(text: string, excluded: readonly Span[] = []): Span[] {
@@ -245,7 +248,27 @@ export function dominantScript(text: string): 'zh' | 'en' {
   let han = 0
   let latinWords = 0
   let inLatin = false
+  // Mask placeholders carry a base36 nonce, so their letters would otherwise
+  // count as Latin word runs and flip a Chinese sentence to `en`. Detection
+  // must see only the text the user actually said.
+  let maskDepth = 0
   for (const char of text) {
+    if (MASK_START_CHARS.has(char)) {
+      maskDepth += 1
+      inLatin = false
+      continue
+    }
+    if (MASK_END_CHARS.has(char)) {
+      maskDepth = Math.max(0, maskDepth - 1)
+      inLatin = false
+      continue
+    }
+    if (maskDepth > 0) {
+      // A masked span is a neutral boundary: two Latin runs separated by one
+      // must not merge into a single run and undercount the Latin side.
+      inLatin = false
+      continue
+    }
     if (HAN.test(char)) {
       han += 1
       inLatin = false
@@ -331,7 +354,7 @@ export function normalizeSpacing(text: string): string {
  * so full-width punctuation keeps its established behaviour.
  */
 export function removeSpacesBeforePunctuation(text: string): string {
-  return text.replace(/\s+([,.;:!?，。；：！？、…‥︙︰])/g, '$1')
+  return text.replace(/\s+([,.;:!?，。；：！？、…‥︙︰．])/g, '$1')
 }
 
 export function normalizeText(text: string): string {
@@ -340,18 +363,18 @@ export function normalizeText(text: string): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* Self-corrections                                                    */
+/* Separators and leading positions                                    */
 /* ------------------------------------------------------------------ */
 
 const SEPARATORS = new Set([
-  ',', '，', ';', '；', ':', '：', '.', '。', '!', '！', '?', '？', '、', '…', '‥', '︙', '︰'
+  ',', '，', ';', '；', ':', '：', '.', '．', '。', '!', '！', '?', '？', '、', '…', '‥', '︙', '︰'
 ])
 
 const COMMA_SEPARATORS = new Set([',', '，', ';', '；', ':', '：'])
 
-const CJK_SEPARATORS = new Set(['，', '。', '；', '：', '！', '？', '、'])
-
-const SENTENCE_SEPARATORS = new Set(['.', '。', '!', '！', '?', '？', '…', '‥', '︙', '︰'])
+const SENTENCE_SEPARATORS = new Set([
+  '.', '．', '。', '!', '！', '?', '？', '…', '‥', '︙', '︰'
+])
 
 // Characters that can precede the first word without starting it. Quotes and
 // brackets are transparent for casing and for "leading removal" detection; a
@@ -384,8 +407,6 @@ export interface RuleResult {
   removedLeading: boolean
 }
 
-const MARKER_PATTERN = /no\s+wait|i\s+mean|不对|我是说/giu
-
 function isSpace(char: string | undefined): boolean {
   return char !== undefined && /\s/.test(char)
 }
@@ -404,116 +425,6 @@ function nextNonSpace(text: string, index: number): number {
   return -1
 }
 
-function previousSeparator(text: string, index: number): number {
-  for (let i = index - 1; i >= 0; i -= 1) {
-    if (SEPARATORS.has(text[i] ?? '')) return i
-  }
-  return -1
-}
-
-interface Deletion {
-  start: number
-  end: number
-}
-
-const MARKER_AT_START = /^(?:no\s+wait|i\s+mean|不对|我是说)/i
-
-function matchMarkerAt(text: string, index: number): number | null {
-  if (index >= text.length) return null
-  const match = MARKER_AT_START.exec(text.slice(index))
-  return match ? index + match[0].length : null
-}
-
-/**
- * A marker counts only when punctuation (or the start of the text) sets it
- * off and replacement content follows it. A run of markers ("不对，我是说C")
- * is one correction: the abandoned fragment starts after the separator before
- * the first marker and the deletion runs through the last marker.
- *
- * The fragment is the clause immediately before the marker; earlier clauses
- * survive. Words before the first separator in the same clause are part of
- * the fragment, so "send it Monday, no wait, Tuesday" yields "Tuesday" — a
- * parser would be needed to know that only "Monday" is abandoned.
- */
-function findCorrectionDeletion(text: string): Deletion | null {
-  for (const match of text.matchAll(MARKER_PATTERN)) {
-    const start = match.index
-    if (start === undefined) continue
-    const end = start + match[0].length
-
-    const left = previousNonSpace(text, start)
-    if (left >= 0 && !SEPARATORS.has(text[left] ?? '')) continue
-    if (end < text.length && !isSpace(text[end]) && !SEPARATORS.has(text[end] ?? '')) continue
-
-    let content = end
-    while (content < text.length && (isSpace(text[content]) || SEPARATORS.has(text[content] ?? ''))) {
-      content += 1
-    }
-    if (content >= text.length) continue
-
-    // The clause ending at the separator directly before the marker is the
-    // abandoned fragment; anything before the preceding separator survives.
-    const previous = left >= 0 ? previousSeparator(text, left) : -1
-    const fragmentStart = previous + 1
-
-    let deleteEnd = end
-    for (;;) {
-      let cursor = deleteEnd
-      while (
-        cursor < text.length &&
-        (isSpace(text[cursor]) || SEPARATORS.has(text[cursor] ?? ''))
-      ) {
-        cursor += 1
-      }
-      const nextMarkerEnd = matchMarkerAt(text, cursor)
-      if (nextMarkerEnd === null) break
-      deleteEnd = nextMarkerEnd
-    }
-
-    // Consume the entire separator run after the marker, not one character:
-    // `No wait... Tuesday.` must not become `. Tuesday.`.
-    while (
-      deleteEnd < text.length &&
-      (isSpace(text[deleteEnd]) || SEPARATORS.has(text[deleteEnd] ?? ''))
-    ) {
-      deleteEnd += 1
-    }
-
-    return { start: fragmentStart, end: deleteEnd }
-  }
-
-  return null
-}
-
-export function applySelfCorrections(text: string): RuleResult {
-  let output = text
-  let removedLeading = false
-  // A handful of markers can chain ("A, no wait, B, no wait, C"); the bound
-  // makes the rule total even on adversarial input.
-  for (let pass = 0; pass < 8; pass += 1) {
-    const deletion = findCorrectionDeletion(output)
-    if (!deletion) break
-    if (isLeadingPosition(output, deletion.start)) removedLeading = true
-    const before = output.slice(0, deletion.start)
-    const after = output.slice(deletion.end)
-    // Deleting a clause can butt a Latin sentence stop against the next word;
-    // Chinese punctuation already separates without a space.
-    const left = before[before.length - 1]
-    const right = after[0]
-    const joiner =
-      left !== undefined &&
-      right !== undefined &&
-      !isSpace(left) &&
-      !isSpace(right) &&
-      !SEPARATORS.has(right) &&
-      !CJK_SEPARATORS.has(left)
-        ? ' '
-        : ''
-    output = before + joiner + after
-  }
-  return { text: normalizeSpacing(output), removedLeading }
-}
-
 /* ------------------------------------------------------------------ */
 /* Filler removal                                                      */
 /* ------------------------------------------------------------------ */
@@ -523,7 +434,7 @@ const CHINESE_FILLERS = ['嗯', '呃', '啊', '那个', '就是说'] as const
 // `like` and `you know` are ordinary words in many sentences, so they only
 // count when punctuation sets them off. `um`, `uh`, and `er` have no everyday
 // prose use and are removed whenever they stand as a token.
-const AMBIGUOUS_FILLER_PATTERN = /(?:^|(?<=[，,；;：:]))\s*(like|you\s+know)\s*(?=[，,；;：:。.!?！？]|$)/gid
+const AMBIGUOUS_FILLER_PATTERN = /(?:^|(?<=[，,；;：:]))\s*(like|you\s+know)\s*(?=[，,；;：:。.!?！？．]|$)/gid
 const UNAMBIGUOUS_FILLER_PATTERN = /\b(?:um|uh|er)\b/gi
 
 interface FillerMatch {
@@ -710,10 +621,10 @@ const KEEP_REPEATED_TOKENS = new Set(['had', 'that'])
 /* ------------------------------------------------------------------ */
 
 /**
- * Restore the capital that a dropped leading filler or correction took with
- * it. Only the first Latin letter of the result is considered: a CJK start, a
- * digit, or a protected/code-like token leaves the text alone, and nothing
- * after the first letter is ever touched, so inner casing cannot be damaged.
+ * Restore the capital that a dropped leading filler took with it. Only the
+ * first Latin letter of the result is considered: a CJK start, a digit, or a
+ * protected/code-like token leaves the text alone, and nothing after the first
+ * letter is ever touched, so inner casing cannot be damaged.
  * The caller runs this only when a rule actually removed leading material.
  */
 export function restoreSentenceCase(text: string): string {
@@ -761,7 +672,7 @@ export function collapseRepetitions(text: string, hanThreshold: number): string 
     return char
   })
 
-  // Punctuation runs are atomic and preserved; only filler/self-correction
-  // removal may consume one, so there is deliberately no punctuation collapse.
+  // Punctuation runs are atomic and preserved; only filler removal may consume
+  // one, so there is deliberately no punctuation collapse.
   return output
 }

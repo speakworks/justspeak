@@ -1,5 +1,4 @@
 import {
-  applySelfCorrections,
   collapseRepetitions,
   containsSentinel,
   findCodeSpans,
@@ -12,7 +11,6 @@ import {
   type MaskedText
 } from './rules'
 import {
-  applyVocabulary,
   applyVocabularyOutside,
   findProtectSpans,
   ruleEnabled
@@ -83,8 +81,7 @@ function firstVisibleCharacter(
  * code-like spans, so it cannot rewrite a user literal or a mask id; then the
  * two disjoint mask layers hide those spans from normalisation and the rule
  * pass. Vocabulary still runs before normalisation, as a user spelling is the
- * authority. Corrections resolve before fillers, so a filler inside an
- * abandoned fragment disappears with it.
+ * authority.
  */
 export function postprocess(text: string, options: PostprocessOptions = {}): PostprocessResult {
   if (text.length === 0) return { text, applied: [] }
@@ -160,13 +157,6 @@ export function postprocess(text: string, options: PostprocessOptions = {}): Pos
 
   const firstVisible = (value: string): string | undefined =>
     firstVisibleCharacter(value, [codeMask, protectMask])
-
-  if (ruleEnabled(options, 'self-correction')) {
-    const result = applySelfCorrections(working)
-    record(applied, 'self-correction', working, result.text)
-    removedLeading ||= result.removedLeading
-    working = result.text
-  }
 
   if (ruleEnabled(options, 'filler')) {
     const result = removeFillers(working, firstVisible)

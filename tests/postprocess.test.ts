@@ -53,10 +53,12 @@ describe('postprocess: normalisation', () => {
     expect(clean('比如说 e.g. 这样，很好。')).toBe('比如说 e.g. 这样，很好。')
   })
 
+  it('treats a masked run as a neutral boundary for script detection', () => {
+    expect(clean('好，a...b')).toBe('好,a...b')
+  })
+
   it('removes stray spacing before a punctuation run', () => {
-    expect(
-      clean('hello ... there', { rules: { 'self-correction': false, filler: false } })
-    ).toBe('hello... there')
+    expect(clean('hello ... there', { rules: { filler: false } })).toBe('hello... there')
   })
 
   it('reports normalisation as the applied rule', () => {
@@ -95,36 +97,35 @@ describe('postprocess: filler removal', () => {
     expect(clean('It is, you know, fine.')).toBe('It is fine.')
   })
 
+  it.each([
+    ['um．．然后', '然后'],
+    ['嗯．．我们走', '我们走'],
+    ['We go um．．然后', 'We go．然后'],
+    ['We should go. Um．． More.', 'We should go. More.'],
+    ['You know．． it works.', 'It works.']
+  ])('treats a full-width dot run as a separator in %j', (input, expected) => {
+    expect(clean(input)).toBe(expected)
+  })
+
+  it('returns the original when a filler-only run would leave punctuation', () => {
+    expect(postprocess('um．．')).toEqual({ text: 'um．．', applied: [] })
+  })
+
   it('is individually disableable', () => {
     expect(clean('嗯，我觉得可以。', { rules: { filler: false } })).toBe('嗯，我觉得可以。')
   })
 })
 
-describe('postprocess: self-corrections', () => {
+describe('postprocess: self-correction markers are left alone', () => {
   it.each([
-    ['周一发，不对，周二发。', '周二发。'],
-    ['我是说，明天发。', '明天发。'],
-    ['先做A，然后B，不对，我是说C。', '先做A，C。'],
-    ['Send it Monday, no wait, Tuesday.', 'Tuesday.'],
-    ['I mean, Tuesday.', 'Tuesday.'],
-    ['No wait... Tuesday.', 'Tuesday.'],
-    ['First we test. Send it Monday. No wait, Tuesday.', 'First we test. Tuesday.']
-  ])('drops the abandoned fragment in %j', (input, expected) => {
-    expect(clean(input)).toBe(expected)
-  })
-
-  it.each([
-    ['这个不对。', '这个不对。'],
-    ['不对。', '不对。'],
-    ['The fact that I mean it is fine.', 'The fact that I mean it is fine.']
-  ])('keeps a marker-shaped phrase in %j', (input, expected) => {
-    expect(clean(input)).toBe(expected)
-  })
-
-  it('is individually disableable', () => {
-    expect(clean('周一发，不对，周二发。', { rules: { 'self-correction': false } })).toBe(
-      '周一发，不对，周二发。'
-    )
+    ['周一发，不对，周二发。', '周一发，不对，周二发。'],
+    ['我是说，明天发。', '我是说，明天发。'],
+    ['他说……不对，走了', '他说……不对，走了'],
+    ['Send it Monday, no wait, Tuesday.', 'Send it Monday, no wait, Tuesday.'],
+    ['No wait... Tuesday.', 'No wait... Tuesday.'],
+    ['I mean, tuesday.', 'I mean, tuesday.']
+  ])('does not delete text around %j', (input, expected) => {
+    expect(postprocess(input)).toEqual({ text: expected, applied: [] })
   })
 })
 
@@ -185,6 +186,8 @@ describe('postprocess: punctuation runs', () => {
     ['他说……', '他说……'],
     ['他说...', '他说...'],
     ['他说…', '他说…'],
+    ['他说．．', '他说．．'],
+    ['他说．．然后走了', '他说．．然后走了'],
     ['他说‥然后走了', '他说‥然后走了'],
     ['他说︙然后走了', '他说︙然后走了'],
     ['等一下︰', '等一下︰'],
@@ -267,6 +270,14 @@ describe('postprocess: personal vocabulary', () => {
     ).toBe('JustSpeak 很好用。')
   })
 
+  it('keeps CJK punctuation when a protected term would flip script detection', () => {
+    // The mask placeholder carries a base36 nonce; counting those letters made
+    // this Chinese sentence look Latin-dominant and rewrote 「，。」 to ASCII.
+    expect(
+      clean('他，JustSpeak行。', { vocabulary: { protect: ['JustSpeak'] } })
+    ).toBe('他，JustSpeak行。')
+  })
+
   it('can be disabled without disabling protection', () => {
     const vocabulary = { replace: [{ from: 'cat', to: 'dog' }], protect: ['cat'] }
     expect(clean('cat', { vocabulary, rules: { vocabulary: false } })).toBe('cat')
@@ -278,7 +289,6 @@ describe('postprocess: rule isolation', () => {
     return {
       vocabulary: rule === 'vocabulary',
       normalize: rule === 'normalize',
-      'self-correction': rule === 'self-correction',
       filler: rule === 'filler',
       repetition: rule === 'repetition',
       casing: rule === 'casing'
@@ -287,7 +297,6 @@ describe('postprocess: rule isolation', () => {
 
   const cases: Array<[PostprocessRule, string, string]> = [
     ['normalize', '你好,世界!', '你好，世界！'],
-    ['self-correction', '周一发，不对，周二发。', '周二发。'],
     ['filler', '嗯，我觉得可以。', '我觉得可以。'],
     ['repetition', '我我我觉得可以。', '我觉得可以。'],
     ['vocabulary', '库贝内特斯', 'Kubernetes']
@@ -310,7 +319,6 @@ describe('postprocess: rule isolation', () => {
       rules: {
         vocabulary: false,
         normalize: false,
-        'self-correction': false,
         filler: false,
         repetition: false,
         casing: false
@@ -325,7 +333,6 @@ describe('postprocess: sentence-initial casing', () => {
   it.each([
     ['You know, it is fine.', 'It is fine.'],
     ['um, we should go', 'We should go'],
-    ['I mean, tuesday.', 'Tuesday.'],
     ['嗯，我们开始吧。', '我们开始吧。']
   ])('restores the dropped capital in %j', (input, expected) => {
     expect(clean(input)).toBe(expected)
@@ -379,7 +386,6 @@ describe('postprocess: sentence-initial casing', () => {
     const rules: RuleSwitches = {
       vocabulary: false,
       normalize: false,
-      'self-correction': false,
       filler: true,
       repetition: false,
       casing: true

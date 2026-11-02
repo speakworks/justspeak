@@ -6,7 +6,7 @@ export interface VocabularyReplacement {
 
 /**
  * A local word list. `protect` entries are masked before any rule runs, so no
- * normalisation, filler, correction, or repetition rule can edit them.
+ * normalisation, filler, or repetition rule can edit them.
  */
 export interface Vocabulary {
   replace: VocabularyReplacement[]
@@ -17,7 +17,6 @@ export interface Vocabulary {
 export type PostprocessRule =
   | 'vocabulary'
   | 'normalize'
-  | 'self-correction'
   | 'filler'
   | 'repetition'
   | 'casing'
@@ -25,7 +24,6 @@ export type PostprocessRule =
 export const POSTPROCESS_RULES: readonly PostprocessRule[] = [
   'vocabulary',
   'normalize',
-  'self-correction',
   'filler',
   'repetition',
   'casing'

@@ -206,6 +206,15 @@ that makes each item checkable.
   `...` separator run, not the full-width-dot form, so a fix here starts by
   turning each case into a failing test.
 - **Done looks like:** each case pinned by a failing test first, then fixed.
+- **Decision (2026-11-03):** the rule-based self-correction is removed
+  entirely rather than patched again; the two other cases are independent
+  deterministic bugs (punctuation-run membership and dominant-script detection
+  ignoring mask placeholders) and are fixed in the same change. LLM correction
+  research is in
+  [ASR-CORRECTION-RESEARCH.md](ASR-CORRECTION-RESEARCH.md): the evidence supports
+  hotwords/vocabulary plus an evaluation set first, with an optional
+  constrained-decision LLM stage later — not free-form 1.5B/1.7B rewriting.
+  Product wording must distinguish 「智能清理」 from 「AI 重写」.
 
 ### 8. Real-speech evaluation has no data
 

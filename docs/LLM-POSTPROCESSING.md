@@ -2,6 +2,10 @@
 
 - Status: Accepted design baseline — rule-based baseline accepted; provider/model choice
   is **pending** the benchmark in this document.
+- Update 2026-11-03: the rule-based self-correction heuristic has been removed
+  (it mangled ellipses and reported speech); correction markers now pass through
+  unchanged until an opt-in LLM stage exists. See
+  [ASR-CORRECTION-RESEARCH.md](ASR-CORRECTION-RESEARCH.md).
 - Date: 2026-10-26
 - Decision owner: FD2008
 - Depends on: [ADR-0001](ADR-0001-core-boundary.md),
@@ -127,10 +131,11 @@ recorded for diagnostics.
 ### Option A — Rule-based only (no LLM)
 
 **Shape.** A deterministic pipeline in `src/core`: Unicode/whitespace normalization,
-language-specific filler and repetition lexicons, self-correction patterns ("no wait",
-"I mean", "sorry", "actually", "不对", "我是说"), punctuation/casing restoration,
+language-specific filler and repetition lexicons, punctuation/casing restoration,
 spoken-list and paragraph commands, number/date normalization, and a local personal
-dictionary. No model, no network, no API key.
+dictionary. Self-correction markers are left unchanged; deciding whether a marker is a
+correction or part of the content is deferred to the optional LLM stage. No model, no
+network, no API key.
 
 **Pros**
 
@@ -408,9 +413,10 @@ benchmark. Keep the personal dictionary local.**
 ### What ships in v0.1
 
 1. **Rule-based baseline on by default.** No network, no key, no account. It handles
-   fillers, repetitions, self-corrections that match known patterns, punctuation/casing,
-   spoken lists, conservative number/date normalization, and the local personal
-   dictionary. Budget ≤150 ms p95 [E2-2].
+   fillers, repetitions, punctuation/casing, spoken lists, conservative number/date
+   normalization, and the local personal dictionary. Correction markers pass through
+   unchanged; self-correction is an optional LLM-stage decision. Budget ≤150 ms p95
+   [E2-2].
 2. **Personal dictionary is local.** Stored with settings, applied by the rule stage with
    longest-match-first and case-aware replacement. Dictionary entries are never uploaded
    as a whole; if cloud cleanup is enabled, only matched terms may be sent as a glossary,

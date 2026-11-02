@@ -9,13 +9,13 @@
 ## 0. 结论摘要
 
 1. **不要用通用 LLM 替换全部后处理。** 规则仍负责确定性的填充词、重复、标点、词库保护；LLM 只处理规则做不好的语义级纠错（口语自纠、断句歧义、同音字）。
-2. **不要直接让 1.5B/3B 级模型自由重写整句。** 本机实测 `qwen2.5:1.5b` 把“下午三点”改成“两点”、把“下周”改成“下下周”、把英文 “this plan” 翻译成中文；`qwen2.5:3b` 仍会凭空补“了，然后”、翻译英文、漏清填充词。延迟可以达标，语义错误不可接受。
+2. **不要直接让 1.5B/3B 级模型自由重写整句。** 本机实测 `qwen2.5:1.5b` 把“下午三点”改成“两点”、把“下周”改成“下下周”、把英文 “this plan” 翻译成中文；`qwen2.5:3b` 仍会凭空补“了，然后”、翻译英文、漏清填充词。1.5B 短句延迟可达标；3B 的 0.9s 样本超 800ms、0.5s 样本在预算内、85 字样本 1.86s 超 1.5s 硬超时；语义错误与延迟都不可接受。
 3. **可行方向是“规则标记候选 + LLM 在受限动作空间内决策 + 确定性护栏 + 回退”。** 这既满足“用 LLM 纠错”，又把输出限制在可验证范围内。
-4. **正式产品内置运行时，模型按需下载；Ollama 只作开发/高级选项。** 1.5B 只适合“受限决策”，3B 自由改写仍不可靠；真正的自由改写需要更强模型或云端，并接受更高风险。默认关闭。
+4. **正式产品内置运行时，模型按需下载；Ollama 只作开发/高级选项。** 默认候选是 **Qwen2.5-1.5B-Instruct（Apache-2.0）**；**Qwen2.5-3B 是 Qwen Research License（仅非商业）**，不能作为商业默认，且长句延迟超预算。自由改写需要更强模型或云端，并接受更高风险。默认关闭。
 5. **专用中文纠错小模型（CSC/GEC）值得保留为可选增强，但不能替代自纠错。** 公开模型主要修拼写/语法，不覆盖“他说……不对，走了”这类口语自纠；专门面向中文 ASR 自纠的公开可下载模型没有找到。
 6. **Apple Foundation Models 是 macOS 26+ 的备选，不是默认。** 它离线、免下载、隐私好，但需要 Swift helper 接入、4096 token 上下文、依赖 Apple Intelligence 开关，且中文纠错质量缺少公开证据。
 7. **先建 100–300 条真实录音评测集，再决定默认开关。** 公开数据无法回答“JustSpeak 上能提升多少”，本机小样本已证明模型会改坏数字和语义。
-8. **先做热词/词库 + 评测集，LLM 以“受限决策”形态进入 v1.1。** 第 4 轮 DeepSeek 在实测证据前修正了建议：不支持 v1 直接上 1.5B 自由改写；LLM 只做封闭动作空间内的删/留决策，窗口外由规则拼接。若产品诉求是“AI 重写/润色”，则需要 ≥3B 或云端模型，并接受更高风险——这是产品定位问题，需要决策人明确。
+8. **先做热词/词库 + 评测集，LLM 以“受限决策”形态进入 v1.1。** 第 4 轮 DeepSeek 在实测证据前修正了建议：不支持 v1 直接上 1.5B 自由改写；LLM 只做封闭动作空间内的删/留决策，窗口外由规则拼接。若产品诉求是“AI 重写/润色”，需要许可证允许且实测达标的更强模型，或云端模型，并接受更高风险——这是产品定位问题，需要决策人明确。
 
 ## 1. 问题边界
 
@@ -38,7 +38,7 @@ JustSpeak 的现状：本地 ASR（SenseVoice / Qwen3-ASR）输出最终文本�
 | 规则式后处理 | 填充词、重复、基础标点、词库保护 | 同音字、语义自纠、断句歧义 | <5ms，确定性 | 现有实现；[事实] |
 | 专用 CSC/GEC 小模型 | 中文拼写/语法纠错，可离线、可控 | 口语自纠、丢字/重复、跨句语义 | 低–中 | [事实] ChineseErrorCorrector3-4B 在 SIGHAN/NaCGEC 报告 SOTA；[推断] 4B 在 1.5s 预算偏紧，且不覆盖自纠 |
 | 专用 ASR 纠错 seq2seq | 受控域内的 ASR 错误，参数少、幻觉低 | 开放域语义、口语自纠 | 低 | [事实] arXiv 2405.15216：比 LLM 少 15× 参数，LibriSpeech test-clean/other WER 1.5%/3.3%，作者明确指出 LLM 有延迟与幻觉问题 |
-| 通用本地 LLM | 语义纠错、自纠、断句、术语一致性 | 确定性、零幻觉、低配机型低延迟 | 中–高 | [事实] 本机实测见第 4 节；[推断] 自由改写 1.5B 不可靠，≥3B 或受限决策更现实 |
+| 通用本地 LLM | 语义纠错、自纠、断句、术语一致性 | 确定性、零幻觉、低配机型低延迟 | 中–高 | [事实] 本机实测见第 4 节；[推断] 自由改写 1.5B 不可靠，3B 仍会幻觉且许可证/延迟受限；受限决策更现实 |
 | 云端 LLM（BYOK） | 最高质量，可带上下文 | 隐私、离线、成本、网络抖动 | 中（网络） | [事实] arXiv 2505.24347：GPT-4o 三阶段 + 推理验证，AISHELL-1/2、LibriSpeech 相对 CER/WER 降 21%/11%/9%/11.4%；[推断] 不适合默认路径 |
 | N-best/约束解码 | 解码期降低专名/术语错误 | 语义自纠；需要 ASR 暴露 N-best | 低 | [事实] arXiv 2409.09554 用 N-best/格约束 LLM 纠错；本机 transcribe.cpp 只给 1-best，暂不可用 |
 | 上下文热词/偏置 | 专名、产品名、人名 | 自纠、语法、同音字 | 低 | [事实] arXiv 2410.18363（Whisper 上下文偏置）；[推断] 对 JustSpeak 是高 ROI 的独立项 |
@@ -59,10 +59,10 @@ JustSpeak 的现状：本地 ASR（SenseVoice / Qwen3-ASR）输出最终文本�
 
 | 项 | DeepSeek 主张 | 本机实测/一手资料 | 处置 |
 |---|---|---|---|
-| 1.5B 能否直接自由改写 | 【推断】Qwen3-1.7B 非思考模式 0.5–1.5s，可做 v1 | 实测 `qwen2.5:1.5b` 延迟达标（0.3–0.6s），但把“三点”改成“两点”、“下周”改成“下下周”、翻译英文，语义错误 | **不采信“1.5B 自由改写可上默认”**；1.5B 只能做受限决策，或换 ≥3B/云端 |
+| 1.5B 能否直接自由改写 | 【推断】Qwen3-1.7B 非思考模式 0.5–1.5s，可做 v1 | 实测 `qwen2.5:1.5b` 延迟达标（0.3–0.6s），但把“三点”改成“两点”、“下周”改成“下下周”、翻译英文，语义错误 | **不采信“1.5B 自由改写可上默认”**；1.5B 只能做受限决策，或换许可证允许且实测达标的更强模型/云端 |
 | v1 路线 | 第 3 轮：先做本地非推理 LLM + 规则候选标记 + 护栏；第 4 轮看到实测后改口：先热词/词库 + 评测集，LLM 受限决策进 v1.1 | 受限决策的 1.5B 仍把“这个不对。”判成 delete_before，把省略号案例判成删前句 | 采纳第 4 轮：v1 不直接上自由改写；LLM 以受限决策形态排在评测集之后 |
 | Apple Foundation Models | 不建议默认 | 官方文档确认可用，但需 Swift helper、4096 token、Apple Intelligence 开关；`fm` CLI 需 `sudo fm license` | 作为可选后端候选，非 v1 默认 |
-| 延迟数字 | 1.7B Q4 首 token 100–300ms、整段 0.8s 可行 | 本机首请求 2.1s（加载），热态 0.3–0.6s；50–150 字未测 | 延迟按实测 P50/P95 决策，不采信单点推断 |
+| 延迟数字 | 1.7B Q4 首 token 100–300ms、整段 0.8s 可行 | 本机首请求 2.1s（加载），热态 0.3–0.6s；50–150 字区间仅有一条 85 字样本 | 延迟按实测 P50/P95 决策，不采信单点推断 |
 
 ### 3.3 DeepSeek 的独有洞察
 
@@ -116,16 +116,22 @@ JustSpeak 的现状：本地 ASR（SenseVoice / Qwen3-ASR）输出最终文本�
 | 他说……不对，走了 | 他说了，然后走了（凭空补“了，然后”） | 4.8s（首请求） |
 | 嗯，那个，我们明天下午三点开会，不对，是四点，记得带上 JustSpeak 的测试报告。 | 我们明天下午**四点**开会，记得带上JustSpeak的测试报告。（数字正确，空格丢失） | 0.9s |
 | 我觉得 this this plan 可以，no wait，还是下周吧。 | 我觉得**这个计划**可以，不过还是下周吧。（仍翻译英文） | 0.5s |
-| 150 字长句（含“嗯，那个”和“三点→四点”） | 数字修正正确，但**“嗯，那个”未被清理** | 1.86s |
+| 85 字长句（含“嗯，那个”和“三点→四点”） | 数字修正正确，但**“嗯，那个”未被清理** | 1.86s |
 
 受限 JSON 决策（3B）：省略号案例正确选 `delete_marker`；但 `周一发，不对，周二发。` 也选 `delete_marker`（应为 `delete_before`），`这个不对。` 仍误判为 `delete_before`。耗时 0.35–0.67s。
 
-结论：3B 比 1.5B 好，但自由改写仍会幻觉/翻译/漏清理；受限决策也需要规则先验来限定合法动作。**没有模型档位能单独解决语义判断问题。**
+逐项对比：3B 在“省略号案例”和“三点→四点”上更好；1.5B 在“周一发→周二发”上正确，3B 反而错；两者都误判“这个不对。”；3B 仍翻译英文、漏清“嗯，那个”。**“3B 更好”只在部分案例成立，不是全面结论。**
+
+许可证：`Qwen2.5-3B-Instruct` 的上游元数据是 `license: other` / `license_name: qwen-research`，本机 `ollama show qwen2.5:3b --license` 也是 **Qwen Research License Agreement（仅非商业）**；`Qwen2.5-1.5B-Instruct` 和 `Qwen3-1.7B` 是 Apache-2.0。3B 不能作为商业默认分发，需先取得商业授权。
+
+延迟：3B 的 0.9s 样本超过 800ms p50 预算、0.5s 样本在预算内，85 字 1.86s 超过 1.5s 硬超时；受限 JSON 决策 0.35–0.67s 在预算内，自由改写只有 0.5s 短样本在预算内。
+
+85 字样本原文（总字符数）：`嗯，那个，我们下周三下午三点在新会议室跟产品、设计和后端一起过一遍这个季度的上线计划，不对，是周四下午四点，记得提前把 JustSpeak 的测试报告和风险清单发给大家。`
 
 ### 4.5 未能验证的项
 
-- `qwen3:1.7b` 无法在稳定版 Ollama 上测试。2026-11-03 检查时 Ollama 最新稳定版为 **0.40.13**（本机已是），但该模型 manifest 仍返回 412「requires a newer version of Ollama」；不是本机升级失败，而是该 tag 超出了当前稳定版能力。
-- 50–150 字长文本只有单条 150 字样本（3B 1.86s），P50/P95 仍需在评测阶段用目标机型补测。
+- `qwen3:1.7b` 无法在稳定版 Ollama 上测试。2026-11-03 检查时 Ollama 最新稳定版为 **0.40.13**（本机已是），执行 `ollama pull qwen3:1.7b` 返回 412「requires a newer version of Ollama」；这不是 manifest 端点本身的响应，也不是本机升级失败，而是该 tag 超出了当前稳定版客户端能力。
+- 50–150 字长文本只有单条 85 字样本（3B 1.86s），P50/P95 仍需在评测阶段用目标机型补测。
 
 ## 5. 推荐方案
 
@@ -135,24 +141,27 @@ JustSpeak 的现状：本地 ASR（SenseVoice / Qwen3-ASR）输出最终文本�
 ASR 最终文本
   → Normalizer（现有规则：填充词/重复/标点/词库保护；删除自纠错规则；<5ms，始终开）
   → SelfRepairCandidateMarker（规则：只标记“不对/我是说/改成/no wait/I mean”候选窗口，不删除）
-  → [可选] LLM Corrector（默认关；OpenAI 兼容端点，本机 Ollama 或 BYOK 云端）
+  → [可选] LocalLlmCorrector（默认关；内置 llama.cpp sidecar + 首次下载的 1.5B 模型）
+     或 CloudLlmCorrector（可选；BYOK OpenAI 兼容端点）
   → Guard（长度比/数字/专名/否定词保留/语言一致/diff 上限；失败回退 Normalizer）
   → 输出
 可选旁路：CSC 小模型（默认关）；Apple Foundation Models 适配器（后续）
+高级选项：自定义 OpenAI 兼容端点（Ollama / LM Studio / 云端），不是安装前提
 ```
 
 ### 5.2 接口与开关
 
-- 新增 `LlmCorrector` 端口：`correct(text, candidates, context) -> { text, changed, confidence }`；核心不碰 Electron/网络，主进程提供 fetch + 超时 + 取消。
-- 设置项：启用开关（默认关）、端点类型（OpenAI 兼容）、base URL、模型名、API key（可选，存 Keychain）、超时（默认 800ms）、失败回退提示。
-- 隐私：本地端点显示“文本不离开设备”；云端端点首次启用必须弹窗说明“转写文本将发送到你配置的服务”，不做静默回退到云端。
-- 失败策略：超时、非 2xx、JSON 解析失败、护栏不通过 → 一律使用 Normalizer 结果；连续失败 3 次自动关闭本次会话的 LLM 并提示。
+- 新增 `LlmCorrector` 端口：`correct(text, candidates, context) -> { text, changed, confidence }`；核心不碰 Electron/网络，主进程持有 sidecar 或 fetch，并负责超时/取消。
+- 设置项：启用开关（默认关）、后端类型（本地模型 / Apple 智能 / 自定义端点）、本地模型下载状态、自定义端点的 base URL/模型名/API key（可选，存 Keychain）、超时（默认 800ms）、失败回退提示。
+- 隐私：本地模型与 Apple 智能显示“文本不离开设备”；云端端点首次启用必须弹窗说明“转写文本将发送到你配置的服务”，不做静默回退到云端。
+- 失败策略：超时、非 2xx、JSON 解析失败、sidecar 崩溃、护栏不通过 → 一律使用 Normalizer 结果；连续失败 3 次自动关闭本次会话的 LLM 并提示。
 
 ### 5.3 模型与默认值
 
-- v1 **不打包模型**；用户自带端点。推荐本地：Qwen2.5-1.5B/3B-Instruct、Qwen3-1.7B（关闭 thinking）、Llama 3.2 3B；自由改写建议 ≥3B，1.5B 只用于受限决策。
-- **注意：DeepSeek 第 4 轮在看到本机实测后，不再推荐 1.5B/1.7B 自由改写；若坚持“LLM 输出文本”，3B 是下限、7B 较稳（但 1.5s 预算基本不可行，需实测）。**
-- 不默认启用；评测通过前不改变默认值。
+- **默认候选：Qwen2.5-1.5B-Instruct（Apache-2.0，Q4 约 1 GB）**，只用于受限决策；评测通过前不默认启用。
+- **许可证红线**：`Qwen2.5-3B-Instruct` 是 **Qwen Research License（仅非商业）**，不能作为商业默认分发；`Qwen3-1.7B` 是 Apache-2.0，但当前稳定版 Ollama 无法拉取（见 4.5）；`Llama 3.2 3B` 是社区许可证，商业分发需单独评估。商业默认池只放 Apache-2.0 模型。
+- **延迟红线**：1.5B 短句受限决策 0.3–0.7s 在 800ms 预算内；3B 短句 0.9s 已超预算、85 字样本 1.86s 超 1.5s 硬超时，自由改写不进入默认路径。
+- 交付形态：**内置 llama.cpp 运行时（约 10–30 MB），模型首次启用时下载到 `userData/models/llm/`**；不要求用户安装 Ollama，模型权重不放进安装包。
 - Apple Foundation Models 作为后续可选适配器（macOS 26+，Swift helper 或 `fm` CLI/Python SDK 桥接）。
 
 ### 5.4 护栏
@@ -199,7 +208,7 @@ LLM 不输出整句文本，只在一个封闭动作集合里选一个：
 
 - **Go（做受限 LLM 决策）**：评测集显示自纠/填充词类错误占比 ≥20%，且受限决策在危险样本上数字/否定/省略号保留 100%、盲评偏好 ≥55%。
 - **No-Go（暂不做 LLM）**：自纠类错误占比 <10%，或受限决策回退率 >25%，或危险样本保留率不达标——此时规则 + 热词已经足够。
-- **升级到 3B/7B/云端**：受限决策在评测集上 CER 降幅 <5% 且用户明确反馈“改得不够”，再考虑更大模型 + 更重的护栏。
+- **升级到许可证允许的更强模型/云端**：受限决策在评测集上 CER 降幅 <5% 且用户明确反馈“改得不够”，再考虑更大模型 + 更重的护栏。3B 需先解决 Qwen Research License 与长句超时，不能直接升级。
 - **产品文案**：v1 若采用受限决策，应叫“智能清理”，不要叫“AI 重写”；如果决策人要的是真正的 LLM 润色/重写，需要单独立项并接受更高风险。
 
 ### 5.8 正式产品的模型集成路径
@@ -208,7 +217,7 @@ LLM 不输出整句文本，只在一个封闭动作集合里选一个：
 
 | 方式 | 做法 | 安装包增量 | 首次使用 | 适用 |
 |---|---|---|---|---|
-| **内置运行时 + 按需下载模型（推荐）** | 把 `llama-server`/`llama-cli`（llama.cpp）作为 sidecar 放进 `Contents/Resources/llm/`；模型首次启用时下载到 `userData/models/llm/`，校验 SHA-256、进度、原子 rename | 10–30 MB | 下载 1–2 GB | 默认本地路径 |
+| **内置运行时 + 按需下载模型（推荐）** | 把 `llama-server`/`llama-cli`（llama.cpp）作为 sidecar 放进 `Contents/Resources/llm/`；模型首次启用时下载到 `userData/models/llm/`，校验 SHA-256、进度、原子 rename | 10–30 MB | 1.5B 约 1 GB | 默认本地路径 |
 | 安装包内置模型 | 权重也打进 DMG | 1–2 GB | 开箱即用 | 完全离线安装包 |
 | Apple Foundation Models | Swift helper 封装 macOS 26+ 端侧模型 | ~0 | 无下载 | 零下载选项，受系统资格/语言限制 |
 | 云端/BYOK | OpenAI 兼容端点或自有代理 | ~0 | 填 key | 低端机/高质量需求 |
@@ -216,21 +225,25 @@ LLM 不输出整句文本，只在一个封闭动作集合里选一个：
 工程要点（与现有 ASR 运行时同构）：
 
 - **sidecar 而不是 Node 原生插件**：避免 Electron ABI 重建、签名、崩溃隔离问题；主进程持有子进程，renderer 不直接调用。
-- **复用现有模型管理**：catalog（id/version/URL/SHA-256/size/license/quantization）+ `ModelManager` + `userData/models` + 校验/清理；LLM 条目可以放进同一 catalog 或独立的 `llm-models.json`。
-- **许可证**：默认模型优先 Apache-2.0 的 Qwen2.5/Qwen3；Llama 3.2 是社区许可证，商业分发需单独评估；模型和运行时都要进 `THIRD_PARTY_NOTICES.md` 与 `licenses/`。
-- **签名/公证**：sidecar 与 ASR runtime 一样随 app 签名；`@loader_path` 依赖；发布前用 `verify:mac` 检查。
+- **扩展现有模型管理**：catalog（id/version/URL/SHA-256/size/license/quantization）+ `ModelManager` + `userData/models` 已覆盖下载与校验，但 `ModelManager` 目前只有 `verify`/`download`，没有已安装模型的删除/列举 API；需要新增。LLM 条目建议放进同一 catalog，并扩展 `verify-mac-app.ts`、`notices.mjs` 与打包检查，否则 `verify:mac` 不会检查 LLM sidecar/模型，`THIRD_PARTY_NOTICES.md` 也不会列出它们。
+- **许可证（红线）**：商业默认池只用 Apache-2.0：`Qwen2.5-1.5B-Instruct`、`Qwen3-1.7B`。`Qwen2.5-3B-Instruct` 是 **Qwen Research License（仅非商业）**，不能作为商业默认；`Llama 3.2 3B` 是社区许可证，商业分发需单独评估。模型和运行时都要进 `THIRD_PARTY_NOTICES.md` 与 `licenses/`。
+- **签名/公证**：sidecar 与 ASR runtime 一样随 app 签名；`@loader_path` 依赖；但现有 `verify:mac` 只检查 `Contents/Resources/runtime` 与 ASR catalog，接入 LLM 后必须同步扩展。
 - **资源策略**：模型懒加载 + 空闲卸载，或录音开始时预热；800ms 超时回退；内存上限和低配机降级。
 - **设置项**：本地模型（推荐，显示下载大小/状态）、Apple 智能（macOS 26+）、自定义 OpenAI 兼容端点；默认关闭，首次启用弹隐私说明。
-- **更新**：模型版本由 catalog 固定；更新只改 URL/SHA，不动安装包；旧模型文件做清理。
+- **更新**：catalog 随应用打包，因此“只改 URL/SHA”仍需发版；若要做到不更新应用就换模型，需要额外的远程 catalog 机制（含签名/版本校验），当前设计没有该机制。
+- **体积预算**：仓库冻结目标是“默认模型下载 ≤1 GB；已安装模型总计 ≤2 GB”（`docs/ASR-RESEARCH.md` R5）。现有 ASR 两个模型合计约 1.03 GiB；再加 1.5B LLM 约 1 GB，总计约 2 GB，已在边界。**LLM 模型应作为 opt-in 下载、单独计量，或由决策人显式修订 R5 预算**；不能默默突破。
 
-推荐默认组合：**内置 llama.cpp sidecar + 首次下载 Qwen2.5-1.5B/3B Q4（Apache-2.0）+ 规则/热词/评测集先行**；Apple FM 与云端作为可选后端。默认模型档位由评测决定：1.5B 只用于受限决策，自由改写需要 3B 且仍要护栏。
+推荐默认组合：**内置 llama.cpp sidecar + 首次下载 Qwen2.5-1.5B-Instruct Q4（Apache-2.0）+ 规则/热词/评测集先行**；Apple FM 与云端作为可选后端。1.5B 只用于受限决策；自由改写需要许可证允许且实测达标的更强模型（3B 不是默认，且长句超时）。
 
 ## 6. 待决策项
 
+0. **是否 un-defer 本地 LLM？** 已接受设计把本地 LLM 运行时/模型列为 v0.1 deferred；5.8 提议重新开启（内置 sidecar + 按需模型）。这是决策变更，不是单纯交付方式选择，需要显式确认。
 1. **v1 是否只做接口 + 评测，不默认开启 LLM？**（建议：是）
-2. **本地模型如何交付？**（建议：内置 llama.cpp sidecar + 首次下载 1–3B 模型，不要求用户安装 Ollama；见 5.8）
+2. **本地模型如何交付？**（建议：内置 llama.cpp sidecar + 首次下载 **1.5B** 模型，不要求用户安装 Ollama；见 5.8）
 3. **Apple Foundation Models 是否纳入 v1？**（建议：后续可选适配器）
 4. **云端 BYOK 是否与本地同一端点抽象？**（建议：是，OpenAI 兼容一层覆盖）
+5. **体积预算是否修订？** LLM 1.5B 约 1 GB，现有 ASR 两模型约 1.03 GiB，总计约 2 GB；建议 LLM 作为 opt-in 单独计量，或显式修订 `ASR-RESEARCH.md` R5。
+6. **3B 是否排除在默认池之外？** Qwen2.5-3B 是 Qwen Research License（非商业），且长句 1.86s 超时；建议排除。若要商用，先取得商业授权并补测。
 
 ## 7. 来源与可信度
 
@@ -245,6 +258,7 @@ LLM 不输出整句文本，只在一个封闭动作集合里选一个：
 - Apple Foundation Models Python SDK — https://apple.github.io/python-apple-fm-sdk/
 - Superwhisper 模型列表（本地 llama.cpp 3B–8B、云端模型）— https://superwhisper.com/models
 - Ollama 文档 — https://docs.ollama.com ；llama.cpp — https://github.com/ggerganov/llama.cpp
+- 许可证核查（2026-11-03）：HuggingFace API `Qwen/Qwen2.5-3B-Instruct` → `license: other` / `license_name: qwen-research`；`Qwen/Qwen2.5-1.5B-Instruct` 与 `Qwen/Qwen3-1.7B` → `apache-2.0`；本机 `ollama show qwen2.5:3b --license` 显示 Qwen Research License Agreement。
 - 本机实测：`deepseek-r1:1.5b`、`qwen2.5:1.5b`、`qwen2.5:3b`（Ollama，2026-11-03），原始输出见第 4 节。
 
 ### 高共识（DeepSeek 与上述资料方向一致，无单篇直接对应）

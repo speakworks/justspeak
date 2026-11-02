@@ -57,6 +57,11 @@ pnpm bench:asr   # provider-driven benchmark; writes bench/reports/<date>-qwen3-
   selects Qwen3. An explicit value is always honoured — it is never remapped to the default.
   Use `JUSTSPEAK_ASR=fake pnpm dev` for the deterministic fake flow. An unknown value is an
   error, and a missing model is never silently replaced by fake or cloud.
+- `pnpm package:mac` builds an unpacked app and `pnpm package:mac:artifacts` builds the DMG
+  and ZIP. Both stage the ASR runtime into `resources/runtime/` first, so a packaged install
+  no longer needs a manual copy of `models/runtime`; model weights still download on first
+  run. Signing and notarisation are prepared but disabled until credentials exist — see
+  [Packaging](docs/PACKAGING-RELEASE.md).
 - Segmentation defaults to `auto`: an utterance inside the selected provider's own limit
   takes the unchanged one-shot path, and only a longer one is segmented. That is what makes
   SenseVoice's 30-second ceiling usable. `JUSTSPEAK_SEGMENTED=single` forces one-shot and

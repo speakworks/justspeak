@@ -38,7 +38,7 @@ import { consumePendingNotice } from '../core/session/state-notice'
 import { planPreferenceSet } from '../core/preferences/merge'
 import { summarizeProvider } from '../core/preferences/view'
 import { deliverTranscript } from '../core/shell/delivery'
-import { resolveModelsDir } from './asr/paths'
+import { packagedRuntimeDir, resolveModelsDir } from './asr/paths'
 import { createLevelThrottle, rmsOf } from '../core/overlay/level'
 import {
   completeOverlay,
@@ -463,13 +463,15 @@ async function initializeProvider(): Promise<void> {
   const built = buildProvider({
     mode: selection.mode,
     appRoot,
-    // Packaged: appRoot points inside the read-only app.asar, so the runtime and
-    // weights live in userData instead (see resolveModelsDir).
+    // Packaged: appRoot points inside the read-only app.asar, so weights live in
+    // userData (see resolveModelsDir) while the runtime ships in the bundle at
+    // Contents/Resources/runtime (see packagedRuntimeDir / scripts/package-runtime.ts).
     modelsDir: resolveModelsDir({
       appRoot,
       userDataDir: app.getPath('userData'),
       packaged: app.isPackaged
     }),
+    runtimeDir: app.isPackaged ? packagedRuntimeDir(process.resourcesPath) : undefined,
     catalog: MODEL_CATALOG,
     env: process.env
   })

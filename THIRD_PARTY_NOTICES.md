@@ -50,7 +50,7 @@ Pinned local ASR runtime used by the first-run model path.
 
 | Name | Version | License | Source | Notes |
 | --- | --- | --- | --- | --- |
-| transcribe.cpp | 0.4.1 | MIT | https://github.com/handy-computer/transcribe.cpp | Pinned runtime (tag v0.4.1, commit 4d7c1ccefd39e5a9ea36cca5f8fefc6dcc14b99b). |
+| transcribe.cpp | 0.4.1 | MIT | https://github.com/handy-computer/transcribe.cpp | Pinned runtime (tag v0.4.1, commit 4d7c1ccefd39e5a9ea36cca5f8fefc6dcc14b99b); binary and its dylibs ship in Contents/Resources/runtime, license texts under Contents/Resources/runtime/licenses. |
 ## License texts
 
 This file records license identifiers and sources; an identifier alone is not a license

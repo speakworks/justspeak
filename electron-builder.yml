@@ -30,6 +30,13 @@ asar: true
 extraResources:
   - from: resources/models.json
     to: resources/models.json
+  # The pinned ASR runtime (CLI + dylibs, ~9 MB) ships with the app; the weights
+  # do not. `scripts/package-runtime.ts` stages this directory with
+  # `@loader_path` rpaths and an ad-hoc signature, and `resolveAsrPaths` reads it
+  # from `process.resourcesPath/runtime`. Everything under resources/runtime is
+  # gitignored and rebuilt by the packaging scripts.
+  - from: resources/runtime
+    to: runtime
   # An identifier in the notices file is not a license grant: ship the texts the
   # identifiers point at, next to the notices, so a distributed copy carries
   # what THIRD_PARTY_NOTICES.md promises (see licenses/README.md).

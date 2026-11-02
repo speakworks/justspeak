@@ -149,7 +149,9 @@ export function collectCatalogEntries(catalog) {
       version: runtime.version ?? runtime.id,
       license: runtime.license ?? 'UNKNOWN',
       sourceUrl: runtime.sourceUrl,
-      note: provenance ? `Pinned runtime (${provenance}).` : 'Pinned runtime.'
+      note: provenance
+        ? `Pinned runtime (${provenance}); binary and its dylibs ship in Contents/Resources/runtime, license texts under Contents/Resources/runtime/licenses.`
+        : 'Pinned runtime; binary and its dylibs ship in Contents/Resources/runtime.'
     })
   }
 

@@ -18,8 +18,11 @@
     "setup:asr": "node scripts/setup-asr.mjs",
     "bench:asr": "tsx scripts/bench-asr.ts",
     "notices": "node scripts/notices.mjs",
-    "package:mac": "electron-vite build && electron-builder --mac --arm64 --dir",
-    "package:mac:artifacts": "electron-vite build && electron-builder --mac --arm64",
+    "package:runtime": "tsx scripts/package-runtime.ts",
+    "package:mac": "tsx scripts/package-runtime.ts && electron-vite build && electron-builder --mac --arm64 --dir",
+    "package:mac:artifacts": "tsx scripts/package-runtime.ts && electron-vite build && electron-builder --mac --arm64",
+    "package:mac:signed": "tsx scripts/package-runtime.ts && electron-vite build && tsx scripts/package-mac-signed.ts",
+    "verify:mac": "tsx scripts/verify-mac-app.ts",
     "postinstall": "node node_modules/electron/install.js"
   },
   "dependencies": {

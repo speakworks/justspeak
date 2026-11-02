@@ -123,3 +123,27 @@ describe('license texts travel with the app', () => {
     for (const source of ELECTRON_TEXTS) expect(config).toContain(source)
   })
 })
+
+describe('the packaged app carries its ASR runtime', () => {
+  const config = readFileSync(path.join(ROOT, 'electron-builder.yml'), 'utf8')
+
+  it('copies the staged runtime to Contents/Resources/runtime', () => {
+    expect(config).toContain('from: resources/runtime')
+    expect(config).toContain('to: runtime')
+  })
+
+  it('keeps the staged binary name aligned with the catalog', () => {
+    // Packaged resolution derives the executable from the catalog's
+    // `binary` basename; staging hard-codes the same name.
+    expect(path.basename(catalog.runtimes[0].binary)).toBe('transcribe-cli')
+  })
+
+  it('keeps the signed build’s entitlements file in a tracked directory', () => {
+    // `build/` is gitignored, so an entitlements file there would exist only on
+    // the machine that created it.
+    const entitlements = path.join(ROOT, 'resources/entitlements.mac.plist')
+    expect(existsSync(entitlements)).toBe(true)
+    const script = readFileSync(path.join(ROOT, 'scripts/package-mac-signed.ts'), 'utf8')
+    expect(script).toContain('resources/entitlements.mac.plist')
+  })
+})

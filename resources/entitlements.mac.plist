@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Minimal hardened-runtime entitlements for a Developer ID build.
+
+  `com.apple.security.cs.allow-jit` is required because V8 compiles JavaScript
+  at runtime. Every other entitlement in docs/PACKAGING-RELEASE.md is
+  deliberately omitted: the app is not sandboxed, the ASR runtime is a separate
+  process signed by the same team, and get-task-allow must never appear in a
+  distribution build.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>

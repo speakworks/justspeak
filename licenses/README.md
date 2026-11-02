@@ -25,6 +25,23 @@ only duplicate what the Electron distribution already contains.
 | `Electron-LICENSE.txt` | MIT | Electron (copied at build time) |
 | `Electron-LICENSES.chromium.html` | Chromium's component licenses | Chromium and Node.js inside Electron (copied at build time) |
 
+## ASR runtime binaries
+
+The pinned transcribe.cpp CLI and its ggml dylibs are bundled under
+`Contents/Resources/runtime/`. `scripts/package-runtime.ts` copies their license
+texts from the pinned checkout into `resources/runtime/licenses/`:
+
+| File | License | Applies to |
+| --- | --- | --- |
+| `transcribe.cpp-LICENSE` | MIT | transcribe.cpp |
+| `ggml-LICENSE` | MIT | ggml and its CPU backend |
+| `miniz-LICENSE` | MIT | miniz (ggml dependency) |
+| `silero-vad-LICENSE` | MIT | Silero VAD (transcribe.cpp dependency) |
+
+The runtime directory is gitignored and rebuilt by `pnpm package:runtime`, so
+these texts are never committed twice — the staged copies travel inside the app
+bundle next to the binaries they cover.
+
 ## Weights are not redistributed
 
 Neither model's weights are bundled. `resources/models.json` pins each artifact's

@@ -1,7 +1,13 @@
 # llm-cleanup Specification
 
 ## Purpose
-TBD - created by archiving change llm-cleanup. Update Purpose after archive.
+
+Provide an optional, off-by-default correction stage for dictated
+self-corrections. Rules own the candidate and the guard; a local or BYOK
+endpoint model only chooses one closed action, and any failure returns the
+rule-cleaned text. The local backend ships a bundled llama.cpp runtime and
+downloads Qwen2.5-1.5B-Instruct on demand; the endpoint backend sends text only
+when the user explicitly selects it.
 
 ## Requirements
 

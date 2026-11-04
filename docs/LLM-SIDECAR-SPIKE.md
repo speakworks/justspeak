@@ -1,7 +1,7 @@
 # LLM sidecar 技术原型（spike）
 
 - 日期：2026-11-04
-- 状态：历史技术验证记录；其 sidecar 代码已由 `openspec/changes/llm-cleanup` 接入产品（默认关闭、opt-in）
+- 状态：历史技术验证记录；其 sidecar 代码已由 `openspec/specs/llm-cleanup/spec.md`（归档于 `openspec/changes/archive/2026-11-05-llm-cleanup/`）接入产品（默认关闭、opt-in）
 - 背景：[ASR-CORRECTION-RESEARCH.md](ASR-CORRECTION-RESEARCH.md)
 - 目标：回答“内置 llama.cpp sidecar + 1.5B 模型在 macOS 上能不能稳定、够快、可打包”，而不是交付功能
 

@@ -26,13 +26,13 @@ JUSTSPEAK_ASR=qwen3 JUSTSPEAK_LLM_EVAL_DIR=bench/llm/smoke \
 | SenseVoice | 10 | 10 | 0 | 0 | 1.50 / 1.50 / 1.50 |
 | Qwen3-ASR 0.6B | 10 | 7 | 3 | 0 | 1.39 / 1.39 / 0.83 |
 
-Qwen3 实际纠正的 3 条（全部正确）：
+Qwen3 实际纠正的 3 条（候选均被应用；2 条与 reference 完全一致，1 条保留了 ASR 的同音名）：
 
-| 输入（ASR） | 输出 |
-|---|---|
-| 我不会签，不对，我会签。 | 我会签。 |
-| 用Just Speak记一下。No wait，用Notion记一下。 | 用Notion记一下。 |
-| 找张伟，不对，找张威。 | 找张威。 |
+| 输入（ASR） | 输出 | 参考 |
+|---|---|---|
+| 我不会签，不对，我会签。 | 我会签。 | 我会签。 |
+| 用Just Speak记一下。No wait，用Notion记一下。 | 用Notion记一下。 | 用Notion记一下。 |
+| 找张伟，不对，找张威。 | 找张威。 | 找张薇。 |
 
 ## 关键发现
 

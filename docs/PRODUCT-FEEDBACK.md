@@ -27,13 +27,16 @@ that makes each item checkable.
     timeout, digit/length guard, fallback to the rule text on any failure.
 - **Not default-on:** the 1.5B quality is marginal; the Go/No-Go evaluation
   gates any future default change.
-- **Contract:** `openspec/changes/llm-cleanup`.
+- **Contract:** `openspec/specs/llm-cleanup/spec.md` (archived change:
+  `openspec/changes/archive/2026-11-05-llm-cleanup/`).
 
 ### 2. Evaluation set is ready but has no recordings
 
 - `scripts/llm-eval.ts` + `docs/LLM-EVAL-SOP.md` implement the comparison
-  (CER, digit preservation, change count, latency) and refuse to invent a
-  dataset. The owner needs to record 20–30 real samples.
+  (CER, digit preservation, change count, latency, candidate/fallback rates)
+  and refuse to invent a dataset. The owner still needs to record 20–30 real
+  samples; a synthetic TTS smoke (`docs/LLM-EVAL-SMOKE.md`) validates the chain
+  but is not Go/No-Go.
 - Go condition: self-correction/filler errors ≥20%, dangerous-sample retention
   100%, blind preference ≥55%. Below that, keep the default off and invest in
   hotwords/vocabulary.

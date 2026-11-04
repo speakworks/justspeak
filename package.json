@@ -19,11 +19,15 @@
     "bench:asr": "tsx scripts/bench-asr.ts",
     "notices": "node scripts/notices.mjs",
     "package:runtime": "tsx scripts/package-runtime.ts",
-    "package:mac": "tsx scripts/package-runtime.ts && electron-vite build && electron-builder --mac --arm64 --dir",
-    "package:mac:artifacts": "tsx scripts/package-runtime.ts && electron-vite build && electron-builder --mac --arm64",
-    "package:mac:signed": "tsx scripts/package-runtime.ts && electron-vite build && tsx scripts/package-mac-signed.ts",
+    "package:llm": "tsx scripts/package-llm-runtime.ts",
+    "llm:probe": "tsx scripts/llm-probe.ts",
+    "package:mac": "tsx scripts/package-runtime.ts && tsx scripts/package-llm-runtime.ts && electron-vite build && electron-builder --mac --arm64 --dir",
+    "package:mac:artifacts": "tsx scripts/package-runtime.ts && tsx scripts/package-llm-runtime.ts && electron-vite build && electron-builder --mac --arm64",
+    "package:mac:signed": "tsx scripts/package-runtime.ts && tsx scripts/package-llm-runtime.ts && electron-vite build && tsx scripts/package-mac-signed.ts",
     "verify:mac": "tsx scripts/verify-mac-app.ts",
-    "postinstall": "node node_modules/electron/install.js"
+    "postinstall": "node node_modules/electron/install.js",
+    "llm:eval": "tsx scripts/llm-eval.ts",
+    "llm:eval:smoke": "tsx scripts/llm-eval-smoke.ts"
   },
   "dependencies": {
     "react": "^19.3.1",

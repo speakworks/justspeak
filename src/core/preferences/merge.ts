@@ -9,18 +9,36 @@
 
 import { parseAccelerator } from '../hotkey/accelerator'
 import { isThemePreference } from '../theme/theme'
-import type { ThemePreference } from '../../shared/ipc'
+import type { LlmBackend, ThemePreference } from '../../shared/ipc'
 
 /** Everything this module knows how to read from `preferences.json`. */
 export interface StoredPreferences {
   theme: ThemePreference
   hotkey: string
+  llmBackend: LlmBackend
+  llmBaseUrl: string
+  llmModel: string
 }
 
 /** The validated subset a write may apply. */
 export interface PreferenceUpdate {
   theme?: ThemePreference
   hotkey?: string
+  llmBackend?: LlmBackend
+  llmBaseUrl?: string
+  llmModel?: string
+}
+
+export function parseLlmBackend(value: unknown): LlmBackend {
+  return value === 'local' || value === 'endpoint' ? value : 'off'
+}
+
+export function parseLlmBaseUrl(value: unknown): string {
+  return typeof value === 'string' ? value.trim().slice(0, 500) : ''
+}
+
+export function parseLlmModel(value: unknown): string {
+  return typeof value === 'string' ? value.trim().slice(0, 200) : ''
 }
 
 export interface RejectedPreference {
@@ -37,7 +55,7 @@ export interface MergeResult {
   ok: boolean
 }
 
-const WRITABLE_KEYS = new Set(['theme', 'hotkey'])
+const WRITABLE_KEYS = new Set(['theme', 'hotkey', 'llmBackend', 'llmBaseUrl', 'llmModel'])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -47,7 +65,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * Merge `patch` over `existing`.
  *
  * - Unknown keys already in `existing` (including non-object input) are kept.
- * - Only `theme` and `hotkey` are writable; any other patch key is rejected.
+ * - Only `theme`, `hotkey` and the three LLM settings are writable; any other
+ *   patch key is rejected.
  * - An invalid theme or hotkey rejects the whole patch: nothing is partially
  *   applied, so a typo can never leave the file in a half-updated state.
  */
@@ -88,6 +107,35 @@ export function mergePreferences(existing: unknown, patch: unknown): MergeResult
     }
   }
 
+  if ('llmBackend' in patch) {
+    if (patch.llmBackend === 'off' || patch.llmBackend === 'local' || patch.llmBackend === 'endpoint') {
+      accepted.llmBackend = patch.llmBackend
+    } else {
+      rejected.push({ key: 'llmBackend', reason: '智能清理后端无效。' })
+    }
+  }
+
+  if ('llmBaseUrl' in patch) {
+    if (typeof patch.llmBaseUrl !== 'string' || patch.llmBaseUrl.length > 500) {
+      rejected.push({ key: 'llmBaseUrl', reason: '服务地址无效。' })
+    } else {
+      const value = patch.llmBaseUrl.trim()
+      if (value !== '' && !/^https?:\/\/[^\s]+$/i.test(value)) {
+        rejected.push({ key: 'llmBaseUrl', reason: '服务地址必须以 http:// 或 https:// 开头。' })
+      } else {
+        accepted.llmBaseUrl = value
+      }
+    }
+  }
+
+  if ('llmModel' in patch) {
+    if (typeof patch.llmModel !== 'string' || patch.llmModel.length > 200) {
+      rejected.push({ key: 'llmModel', reason: '模型名称无效。' })
+    } else {
+      accepted.llmModel = patch.llmModel.trim()
+    }
+  }
+
   // Atomic: one rejected value rejects the patch, so `accepted` is empty and
   // the file keeps every previous value instead of a half-applied mix.
   if (rejected.length > 0) {
@@ -120,7 +168,7 @@ export function planPreferenceSet(patch: unknown): PreferenceSetPlan {
   return { ok: true, update: result.accepted }
 }
 
-/** True when the merge accepted at least one of the two writable values. */
+/** True when the merge accepted at least one writable value. */
 export function hasAcceptedChange(result: MergeResult): boolean {
-  return result.accepted.theme !== undefined || result.accepted.hotkey !== undefined
+  return Object.keys(result.accepted).length > 0
 }

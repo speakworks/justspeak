@@ -35,7 +35,12 @@ import type { HotkeySource } from '../core/hotkey/types'
 import { postprocess, type PostprocessOptions } from '../core/postprocess'
 import { SessionController } from '../core/session/session-controller'
 import { consumePendingNotice } from '../core/session/state-notice'
-import { planPreferenceSet } from '../core/preferences/merge'
+import {
+  parseLlmBackend,
+  parseLlmBaseUrl,
+  parseLlmModel,
+  planPreferenceSet
+} from '../core/preferences/merge'
 import { summarizeProvider } from '../core/preferences/view'
 import { deliverTranscript } from '../core/shell/delivery'
 import { packagedRuntimeDir, resolveModelsDir } from './asr/paths'
@@ -87,6 +92,7 @@ import {
 import { createFocusProbe } from './focus-probe'
 import { ElectronGlobalShortcutSource } from './hotkey-source'
 import { HistoryStore } from './history-store'
+import { LlmManager } from './llm/manager'
 import { pasteText } from './injection'
 import {
   copyResultPanelText,
@@ -126,6 +132,15 @@ let themePreference: ThemePreference = 'system'
 let themeStore: ThemeStore
 let vocabularyStore: VocabularyStore
 let historyStore: HistoryStore | undefined
+/**
+ * Route main-process HTTP through Chromium's stack, so the system proxy and
+ * custom CAs that apply to ASR downloads also apply to LLM downloads and
+ * OpenAI-compatible endpoints.
+ */
+const electronFetch = ((input: string | URL | Request, init?: RequestInit) =>
+  net.fetch(input as string, init)) as typeof fetch
+
+let llmManager: LlmManager | undefined
 
 /** History is created in `whenReady`; IPC handlers only run after the window loads. */
 function requireHistoryStore(): HistoryStore {
@@ -283,13 +298,55 @@ async function readPreferencesView(): Promise<PreferencesView> {
   }
   const vocabulary = await vocabularyStore.loadDetailed()
   postprocessOptions = vocabulary.options
+  const llmConfig = {
+    backend: stored.llmBackend,
+    baseUrl: stored.llmBaseUrl,
+    model: stored.llmModel
+  }
+  // Reads are side-effect free: reconfiguring the corrector here let a stale
+  // read re-apply an old backend after a newer write. Wiring happens at startup
+  // and after a successful write instead.
+  const llm = llmManager
+    ? await llmManager.status(llmConfig)
+    : {
+        backend: stored.llmBackend,
+        endpoint: { baseUrl: stored.llmBaseUrl, model: stored.llmModel, hasKey: false },
+        local: {
+          runtimeReady: false,
+          modelReady: false,
+          modelName: '',
+          modelPath: '',
+          state: 'idle' as const
+        },
+        message: '智能清理尚未初始化。'
+      }
   return {
     theme: themePreference,
     hotkey: activeHotkey,
     hotkeyMessage: hotkeyNotice,
     vocabulary: summarizeVocabulary(vocabulary),
-    provider: describeProvider()
+    provider: describeProvider(),
+    llm
   }
+}
+
+let llmStatusPushTimer: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * Sidecar lifecycle changes are not preference writes, but the settings row
+ * renders them. Push a fresh view on transitions (debounced so the
+ * starting→ready pair does not spam the renderer); without this the panel
+ * would keep showing "正在启动…" forever or "已就绪" after a crash.
+ */
+function schedulePreferencesPush(): void {
+  if (llmStatusPushTimer) return
+  llmStatusPushTimer = setTimeout(() => {
+    llmStatusPushTimer = undefined
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    void readPreferencesView()
+      .then((view) => mainWindow?.webContents.send('preferences:changed', view))
+      .catch((error) => console.warn('[llm] status push failed', error))
+  }, 250)
 }
 
 /**
@@ -366,6 +423,7 @@ function makeSession(provider: AsrProvider, fake: boolean): SessionController {
     // The stage sits between the provider result and paste, so the fake and
     // the local provider both go through it.
     postprocess: (text) => postprocess(text, postprocessOptions),
+    refine: (text) => llmManager?.corrector.refine(text) ?? Promise.resolve(undefined),
     getAudio,
     transcribeTimeoutMs: 120_000
   })
@@ -517,9 +575,7 @@ async function initializeProvider(): Promise<void> {
     )
     let lastPercent = 0
     try {
-      const fetchImpl = ((input: string | URL | Request, init?: RequestInit) =>
-        net.fetch(input as string, init)) as typeof fetch
-      const manager = new ModelManager({ fetch: fetchImpl })
+      const manager = new ModelManager({ fetch: electronFetch })
       const file = model.files[0]
       if (!file) throw new Error('model catalog has no file')
       await manager.download(file, paths.modelPath, {
@@ -864,6 +920,23 @@ app.whenReady().then(async () => {
     .catch((error) => console.warn('[history] startup sweep failed', error))
   const preferences = await themeStore.loadPreferences()
   themePreference = preferences.theme
+  try {
+    llmManager = await LlmManager.create({
+      appRoot: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged,
+      userDataDir: app.getPath('userData'),
+      fetch: electronFetch,
+      onLocalStatusChange: () => schedulePreferencesPush()
+    })
+    llmManager.configure({
+      backend: preferences.llmBackend,
+      baseUrl: preferences.llmBaseUrl,
+      model: preferences.llmModel
+    })
+  } catch (error) {
+    console.warn('[llm] optional correction backend unavailable', error)
+  }
   providerPreference = new ProviderPreferenceStore(app.getPath('userData'))
   preferredProvider = await providerPreference.load()
   applyTheme()
@@ -981,19 +1054,43 @@ app.whenReady().then(async () => {
       }
 
       if (ok) {
-        const update: { theme?: ThemePreference; hotkey?: string } = {}
+        const update: {
+          theme?: ThemePreference
+          hotkey?: string
+          llmBackend?: PreferencesView['llm']['backend']
+          llmBaseUrl?: string
+          llmModel?: string
+        } = {}
         if (plan.update.theme !== undefined) update.theme = plan.update.theme
         if (hotkeyResult?.ok) update.hotkey = hotkeyResult.accelerator
+        if (plan.update.llmBackend !== undefined) update.llmBackend = plan.update.llmBackend
+        if (plan.update.llmBaseUrl !== undefined) update.llmBaseUrl = plan.update.llmBaseUrl
+        if (plan.update.llmModel !== undefined) update.llmModel = plan.update.llmModel
         if (Object.keys(update).length > 0) {
           try {
             const merged = await themeStore.update(update)
             if (!merged.ok) {
               ok = false
               message = merged.rejected[0]?.reason ?? '设置值无效。'
-            } else if (update.theme !== undefined) {
-              // Persist before painting so disk and the window cannot disagree.
-              themePreference = update.theme
-              applyTheme()
+            } else {
+              if (update.theme !== undefined) {
+                // Persist before painting so disk and the window cannot disagree.
+                themePreference = update.theme
+                applyTheme()
+              }
+              if (
+                update.llmBackend !== undefined ||
+                update.llmBaseUrl !== undefined ||
+                update.llmModel !== undefined
+              ) {
+                // Configure from the merged record, which is fresher than any
+                // concurrent read and contains all three LLM fields.
+                llmManager?.configure({
+                  backend: parseLlmBackend(merged.record.llmBackend),
+                  baseUrl: parseLlmBaseUrl(merged.record.llmBaseUrl),
+                  model: parseLlmModel(merged.record.llmModel)
+                })
+              }
             }
           } catch (error) {
             ok = false
@@ -1008,6 +1105,64 @@ app.whenReady().then(async () => {
       return { ok, preferences: view, hotkey: hotkeyResult, message }
     }
   )
+  ipcMain.handle('llm:set-key', async (event, key: unknown) => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      return { ok: false, message: '未授权的设置请求。' }
+    }
+    if (!llmManager) return { ok: false, message: '智能清理尚未初始化。' }
+    if (typeof key !== 'string' || key.trim().length === 0 || key.length > 4096) {
+      return { ok: false, message: 'API Key 无效。' }
+    }
+    try {
+      await llmManager.keyStore.save(key.trim())
+      const view = await readPreferencesView()
+      mainWindow?.webContents.send('preferences:changed', view)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('llm:clear-key', async (event) => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      return { ok: false, message: '未授权的设置请求。' }
+    }
+    if (!llmManager) return { ok: false, message: '智能清理尚未初始化。' }
+    try {
+      await llmManager.keyStore.clear()
+      const view = await readPreferencesView()
+      mainWindow?.webContents.send('preferences:changed', view)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('llm:download-model', async (event) => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      return { ok: false, message: '未授权的设置请求。' }
+    }
+    if (!llmManager) return { ok: false, message: '智能清理尚未初始化。' }
+    try {
+      await llmManager.download((percent) => {
+        mainWindow?.webContents.send('llm:download', {
+          state: 'downloading',
+          percent
+        })
+      })
+      const view = await readPreferencesView()
+      mainWindow?.webContents.send('preferences:changed', view)
+      mainWindow?.webContents.send('llm:download', { state: 'ready' })
+      // Warm the newly downloaded model while the success message is shown.
+      void llmManager.corrector.warmup()
+      return { ok: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      mainWindow?.webContents.send('llm:download', { state: 'error', message })
+      return { ok: false, message }
+    }
+  })
+
   ipcMain.handle('permissions:get', (event): PermissionStatus => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
       throw new Error('未授权的权限查询。')
@@ -1089,15 +1244,19 @@ let flushingHistoryForQuit = false
 
 app.on('will-quit', (event) => {
   void hotkeySource?.stop()
-  if (flushingHistoryForQuit || !historyStore) return
-  // A transcript appended just before Cmd+Q must reach disk: the append is
-  // fire-and-forget, and `app.quit()` does not wait for pending fs promises.
-  const store = historyStore
+  if (flushingHistoryForQuit) return
+  // A transcript appended just before Cmd+Q must reach disk, and the optional
+  // LLM sidecar must not survive the parent process. `app.quit()` does not wait
+  // for pending promises, so hold the quit until both are done or bounded.
   event.preventDefault()
   flushingHistoryForQuit = true
-  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 2000))
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 3500))
+  const history = historyStore
+    ? historyStore.flush().catch((error) => console.warn('[history] flush on quit failed', error))
+    : Promise.resolve()
+  const llm = llmManager?.dispose(true) ?? Promise.resolve()
   void Promise.race([
-    store.flush().catch((error) => console.warn('[history] flush on quit failed', error)),
+    Promise.all([history, llm]),
     timeout
     // `app.exit` skips another `will-quit` pass; re-entering `quit()` while the
     // first quit is suspended is what wedges Electron's shutdown.

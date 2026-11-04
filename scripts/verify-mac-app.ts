@@ -20,6 +20,7 @@ import {
   parseRpaths,
   planRuntimeLinks
 } from '../src/core/asr/runtime-package'
+import { parseLlmModelCatalog } from '../src/core/llm/model-catalog'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -151,6 +152,111 @@ function checkBundledRuntime(): Result {
       }
 }
 
+interface LlmRuntimeManifest {
+  runtime: string
+  version: string
+  commit: string
+  binary: string
+  files: string[]
+}
+
+/**
+ * The optional local-cleanup backend ships its own signed llama.cpp runtime.
+ * A packaging regression there would otherwise only surface when a user opts
+ * into the feature, so the release gate checks the same invariants as the ASR
+ * runtime: manifest, link closure, `@loader_path`, arm64 and signatures.
+ */
+function checkBundledLlmRuntime(): Result {
+  const label = 'bundled LLM runtime'
+  const resources = path.join(app, 'Contents/Resources')
+  const runtimeDir = path.join(resources, 'llm')
+
+  if (!existsSync(runtimeDir)) {
+    return { label, ok: false, detail: `missing ${runtimeDir}` }
+  }
+
+  let manifest: LlmRuntimeManifest
+  try {
+    const parsed = JSON.parse(
+      readFileSync(path.join(runtimeDir, 'manifest.json'), 'utf8')
+    ) as Partial<LlmRuntimeManifest>
+    if (
+      parsed.runtime !== 'llama.cpp' ||
+      typeof parsed.version !== 'string' ||
+      typeof parsed.commit !== 'string' ||
+      typeof parsed.binary !== 'string' ||
+      !Array.isArray(parsed.files) ||
+      parsed.files.length === 0 ||
+      !parsed.files.every((file) => typeof file === 'string')
+    ) {
+      throw new Error('manifest.json is missing runtime, version, commit, binary or files')
+    }
+    manifest = parsed as LlmRuntimeManifest
+  } catch (error) {
+    return {
+      label,
+      ok: false,
+      detail: `${path.join(runtimeDir, 'manifest.json')}: ${error instanceof Error ? error.message : String(error)}`
+    }
+  }
+
+  const problems: string[] = []
+  const files = manifest.files
+  if (!files.includes(manifest.binary)) problems.push(`manifest does not list ${manifest.binary}`)
+  for (const file of files) {
+    if (!existsSync(path.join(runtimeDir, file))) problems.push(`${file} is missing`)
+  }
+  if (problems.length > 0) return { label, ok: false, detail: problems.join('; ') }
+
+  const links = files.map((file) => ({
+    file,
+    dependencies: parseOtoolDependencies(capture('otool', ['-L', path.join(runtimeDir, file)]).output)
+  }))
+  problems.push(...planRuntimeLinks(links).problems)
+
+  for (const file of files) {
+    const target = path.join(runtimeDir, file)
+    const architectures = capture('lipo', ['-archs', target]).output
+    if (!architectures.split(/\s+/).includes('arm64')) {
+      problems.push(`${file} is not arm64 (${architectures || 'no architecture output'})`)
+    }
+    for (const rpath of parseRpaths(capture('otool', ['-l', target]).output)) {
+      if (!isRelocatableRpath(rpath)) problems.push(`${file} keeps absolute rpath ${rpath}`)
+    }
+    if (capture('codesign', ['--verify', '--strict', target]).status !== 0) {
+      problems.push(`${file} has no valid signature`)
+    }
+  }
+
+  for (const license of ['llama.cpp-LICENSE', 'jsonhpp-LICENSE', 'cpp-httplib-LICENSE']) {
+    if (!existsSync(path.join(runtimeDir, 'licenses', license))) {
+      problems.push(`licenses/${license} is missing`)
+    }
+  }
+
+  const catalogPath = path.join(resources, 'resources/llm-models.json')
+  if (!existsSync(catalogPath)) {
+    problems.push('resources/llm-models.json is missing from the bundle')
+  } else {
+    try {
+      const catalog = parseLlmModelCatalog(JSON.parse(readFileSync(catalogPath, 'utf8')))
+      if (!catalog.models.some((model) => model.id.length > 0)) {
+        problems.push('LLM catalog has no usable model')
+      }
+    } catch (error) {
+      problems.push(`LLM catalog is unreadable: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  return problems.length > 0
+    ? { label, ok: false, detail: problems.join('; ') }
+    : {
+        label,
+        ok: true,
+        detail: `${files.length} binaries (llama.cpp ${manifest.version}), @loader_path rpaths, arm64, signatures valid`
+      }
+}
+
 function main(): void {
   if (!existsSync(app)) {
     console.error(`verify-mac-app: app not found at ${app}`)
@@ -197,7 +303,8 @@ function main(): void {
       ok: stapler.status === 0,
       detail: firstLine(stapler.output) || 'not stapled'
     },
-    checkBundledRuntime()
+    checkBundledRuntime(),
+    checkBundledLlmRuntime()
   ]
 
   for (const result of results) {

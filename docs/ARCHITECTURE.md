@@ -234,6 +234,12 @@ runs it from `Contents/Resources/runtime/`: the CLI and its dylibs are staged fl
 `@loader_path` rpaths, because the CMake build bakes absolute build-machine paths into
 `LC_RPATH`. Model weights stay in `userData/models` and are downloaded on first run.
 
+Optional LLM cleanup follows the same shape: `llama-server` ships in
+`Contents/Resources/llm`, the Qwen2.5-1.5B-Instruct GGUF is downloaded on demand into
+`userData/models/llm`, and an OpenAI-compatible endpoint can replace the local backend. The
+model only chooses a closed correction action inside a rule-marked candidate; a deterministic
+guard and an 800 ms fallback keep the rule text on failure.
+
 ### Storage
 
 Settings are stored locally as validated JSON (or SQLite if history grows). Transcript

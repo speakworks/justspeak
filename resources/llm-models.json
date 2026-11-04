@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "id": "qwen2.5-1.5b-instruct-q4-k-m",
+      "name": "Qwen2.5-1.5B-Instruct (Q4_K_M)",
+      "version": "2026-11",
+      "file": {
+        "path": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+        "sizeBytes": 1117320736
+      },
+      "license": "Apache-2.0",
+      "sourceUrl": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+      "quantization": "Q4_K_M"
+    }
+  ]
+}

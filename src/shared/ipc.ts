@@ -83,6 +83,43 @@ export interface ProviderSummary {
   reason: string
 }
 
+/** Optional LLM cleanup. `off` is the default and the only safe first run. */
+export type LlmBackend = 'off' | 'local' | 'endpoint'
+
+export interface LlmEndpointView {
+  baseUrl: string
+  model: string
+  /** True when a key is stored; the key itself never reaches the renderer. */
+  hasKey: boolean
+}
+
+/** Lifecycle of the local llama.cpp sidecar, as reported to the settings row. */
+export type LlmLocalState = 'idle' | 'starting' | 'ready' | 'failed'
+
+export interface LlmLocalView {
+  runtimeReady: boolean
+  modelReady: boolean
+  modelName: string
+  modelPath: string
+  state: LlmLocalState
+  /** Why the sidecar failed, when `state` is `failed`. */
+  error?: string
+}
+
+export interface LlmPreferencesView {
+  backend: LlmBackend
+  endpoint: LlmEndpointView
+  local: LlmLocalView
+  /** Why the current backend cannot run, or a download/loading notice. */
+  message?: string
+}
+
+export interface LlmDownloadEvent {
+  state: 'downloading' | 'ready' | 'error'
+  percent?: number
+  message?: string
+}
+
 /** Everything the settings panel renders, read from one place in main. */
 export interface PreferencesView {
   theme: ThemePreference
@@ -92,6 +129,7 @@ export interface PreferencesView {
   hotkeyMessage?: string
   vocabulary: VocabularySummary
   provider: ProviderSummary
+  llm: LlmPreferencesView
 }
 
 /** `systemPreferences.getMediaAccessStatus` on macOS. */
@@ -112,6 +150,9 @@ export interface PermissionStatus {
 export interface PreferencesPatch {
   theme?: ThemePreference
   hotkey?: string
+  llmBackend?: LlmBackend
+  llmBaseUrl?: string
+  llmModel?: string
 }
 
 export interface PreferencesSetResult {
@@ -191,6 +232,12 @@ export interface JustSpeakApi {
   getPreferences: () => Promise<PreferencesView>
   /** Writes one or more preferences through the single preferences surface. */
   setPreferences: (patch: PreferencesPatch) => Promise<PreferencesSetResult>
+  /** Stores an endpoint key encrypted; the key never returns to the renderer. */
+  setLlmKey: (key: string) => Promise<{ ok: boolean; message?: string }>
+  clearLlmKey: () => Promise<{ ok: boolean; message?: string }>
+  /** Downloads the pinned local correction model with SHA-256 verification. */
+  downloadLlmModel: () => Promise<{ ok: boolean; message?: string }>
+  onLlmDownload: (listener: (event: LlmDownloadEvent) => void) => () => void
   /** Reads the two permissions the dictation path needs. Never prompts. */
   getPermissions: () => Promise<PermissionStatus>
   /** Opens System Settings → Privacy & Security → Accessibility. */

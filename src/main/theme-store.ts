@@ -1,9 +1,12 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises'
 import path from 'node:path'
 import { parseHotkeyPreference } from '../core/hotkey/accelerator'
 import {
   hasAcceptedChange,
   mergePreferences,
+  parseLlmBackend,
+  parseLlmBaseUrl,
+  parseLlmModel,
   type MergeResult,
   type StoredPreferences
 } from '../core/preferences/merge'
@@ -14,11 +17,12 @@ export interface ThemeStoreDeps {
   readFile: typeof readFile
   writeFile: typeof writeFile
   mkdir: typeof mkdir
+  rename: typeof rename
 }
 
 export type { StoredPreferences } from '../core/preferences/merge'
 
-const DEFAULT_DEPS: ThemeStoreDeps = { readFile, writeFile, mkdir }
+const DEFAULT_DEPS: ThemeStoreDeps = { readFile, writeFile, mkdir, rename }
 
 /**
  * Persists preferences as one small JSON file under userData.
@@ -42,10 +46,16 @@ export class ThemeStore {
   }
 
   async loadPreferences(): Promise<StoredPreferences> {
+    // Reads must not observe a half-written file (writeRecord truncates before
+    // writing) or raced ahead of a queued update.
+    await this.writeQueue
     const record = await this.readRecord()
     return {
       theme: parseThemePreference(record.theme),
-      hotkey: parseHotkeyPreference(record.hotkey)
+      hotkey: parseHotkeyPreference(record.hotkey),
+      llmBackend: parseLlmBackend(record.llmBackend),
+      llmBaseUrl: parseLlmBaseUrl(record.llmBaseUrl),
+      llmModel: parseLlmModel(record.llmModel)
     }
   }
 
@@ -95,7 +105,11 @@ export class ThemeStore {
   private async writeRecord(record: Record<string, unknown>): Promise<void> {
     const payload = JSON.stringify(record, null, 2)
     await this.deps.mkdir(path.dirname(this.file), { recursive: true })
-    await this.deps.writeFile(this.file, payload, 'utf8')
+    // Write-then-rename: a crash or a concurrent reader never sees a truncated
+    // preferences.json.
+    const temporary = `${this.file}.tmp-${process.pid}`
+    await this.deps.writeFile(temporary, payload, 'utf8')
+    await this.deps.rename(temporary, this.file)
   }
 
   private async readRecord(): Promise<Record<string, unknown>> {

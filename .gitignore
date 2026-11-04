@@ -52,3 +52,10 @@ resources/runtime.tmp-*
 bench/real/
 bench/results/*-real.json
 bench/reports/*-real.md
+
+# Staged LLM runtime for the sidecar spike (rebuilt by `pnpm package:llm`)
+resources/llm/
+resources/llm.tmp-*
+
+# Real LLM evaluation recordings and reports (never commit audio)
+bench/llm/

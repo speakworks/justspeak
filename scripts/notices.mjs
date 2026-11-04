@@ -20,6 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const CATALOG_PATH = path.join(ROOT, 'resources', 'models.json')
+const LLM_CATALOG_PATH = path.join(ROOT, 'resources', 'llm-models.json')
 const OUTPUT_PATH = path.join(ROOT, 'THIRD_PARTY_NOTICES.md')
 
 const KIND_SECTIONS = [
@@ -110,7 +111,7 @@ export function createDependencyEntry(name, version, manifest, options = {}) {
   }
 }
 
-export function collectCatalogEntries(catalog) {
+export function collectCatalogEntries(catalog, llmCatalog) {
   const entries = []
 
   for (const model of catalog?.models ?? []) {
@@ -152,6 +153,31 @@ export function collectCatalogEntries(catalog) {
       note: provenance
         ? `Pinned runtime (${provenance}); binary and its dylibs ship in Contents/Resources/runtime, license texts under Contents/Resources/runtime/licenses.`
         : 'Pinned runtime; binary and its dylibs ship in Contents/Resources/runtime.'
+    })
+  }
+
+  for (const model of llmCatalog?.models ?? []) {
+    if (typeof model.sourceUrl !== 'string' || model.sourceUrl.trim() === '') {
+      throw new Error(`LLM model ${model.id ?? '<unknown>'} is missing sourceUrl`)
+    }
+    entries.push({
+      kind: 'model',
+      name: model.name ?? model.id,
+      version: model.version ?? model.id,
+      license: model.license ?? 'UNKNOWN',
+      sourceUrl: model.sourceUrl,
+      note: `LLM cleanup weights (${model.quantization ?? 'unknown'}); downloaded on first use, not bundled with the app.`
+    })
+  }
+
+  if (llmCatalog?.models?.length) {
+    entries.push({
+      kind: 'runtime',
+      name: 'llama.cpp',
+      version: 'v0.8.0',
+      license: 'MIT',
+      sourceUrl: 'https://github.com/ggml-org/llama.cpp',
+      note: 'LLM cleanup sidecar; binary and dylibs ship in Contents/Resources/llm.'
     })
   }
 
@@ -306,7 +332,7 @@ both this file and \`licenses/\` under \`Contents/Resources/\`.
 async function main() {
   const catalog = readJson(CATALOG_PATH)
   const dependencyEntries = [...collectNpmEntries(ROOT), ...collectElectronEntry(ROOT)]
-  const catalogEntries = collectCatalogEntries(catalog)
+  const catalogEntries = collectCatalogEntries(catalog, readJson(LLM_CATALOG_PATH))
   const markdown = renderNotices({ dependencyEntries, catalogEntries })
   await writeFile(OUTPUT_PATH, markdown, 'utf8')
   console.log(

@@ -73,7 +73,8 @@ pnpm bench:asr   # provider-driven benchmark; writes bench/reports/<date>-qwen3-
   status, recent redacted main-process logs, and crash dumps. Nothing is uploaded. The
   summary and logs exclude transcripts, audio, history text, vocabulary entries, API keys,
   and endpoint URLs; crash dumps are OS-generated process memory and may contain transient
-  content, so inspect the zip before sharing it.
+  content or in-memory secrets (including a local sidecar API key or a decrypted endpoint
+  key), so inspect the zip before sharing it.
 - Segmentation defaults to `auto`: an utterance inside the selected provider's own limit
   takes the unchanged one-shot path, and only a longer one is segmented. That is what makes
   SenseVoice's 30-second ceiling usable. `JUSTSPEAK_SEGMENTED=single` forces one-shot and

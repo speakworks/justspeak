@@ -31,9 +31,10 @@ platform, provider health, permission status, runtime/model presence, and a
 preference summary without secrets. `summary.json`, the logs, and `README.txt`
 SHALL NOT contain transcripts, clipboard contents, history text, audio,
 vocabulary entries, API keys, or raw endpoint URLs. Crash dumps are separately
-OS-generated process memory and MAY contain transient content; the README and
-the settings copy SHALL disclose that and tell the user to inspect the zip
-before sharing.
+OS-generated process memory and MAY contain transient content or in-memory
+secrets (including a local sidecar API key or a decrypted endpoint key); the
+README and the settings copy SHALL disclose that and tell the user to inspect
+the zip before sharing.
 
 #### Scenario: Sensitive files are excluded
 

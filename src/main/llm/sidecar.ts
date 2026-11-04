@@ -1,7 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
+import path from 'node:path'
 import {
   buildDecisionPrompt,
   decisionOrFallback,
@@ -23,6 +26,8 @@ export interface LlamaSidecarOptions {
   onLog?: (line: string) => void
   /** The child exited on its own (not because the owner called stop). */
   onExit?: () => void
+  /** Fixed token for tests; production generates one per start. */
+  apiKey?: string
 }
 
 export interface DecisionResult {
@@ -57,6 +62,9 @@ export class LlamaSidecar {
   /** The child captured by the in-flight stop, so a later force stop can escalate. */
   private stoppingChild?: ChildProcess
   private generation = 0
+  private apiKey?: string
+  private keyFilePath?: string
+  private keyDir?: string
 
   constructor(options: LlamaSidecarOptions) {
     this.options = {
@@ -74,6 +82,11 @@ export class LlamaSidecar {
   /** False once the child exited or was stopped; callers use it to recover. */
   get alive(): boolean {
     return this.child !== undefined
+  }
+
+  /** The temporary key file, exposed for cleanup tests; never the key. */
+  get apiKeyFilePath(): string | undefined {
+    return this.keyFilePath
   }
 
   get baseUrl(): string | undefined {
@@ -115,6 +128,21 @@ export class LlamaSidecar {
       throw new Error('sidecar start cancelled by stop')
     }
 
+    // llama-server can require an API key. Generate one per start, write it to
+    // a private file (not argv, so `ps` cannot read it), and delete the file
+    // once the server has loaded it.
+    this.cleanupKeyFile()
+    try {
+      const apiKey = this.options.apiKey ?? randomBytes(32).toString('hex')
+      this.apiKey = apiKey
+      this.keyDir = mkdtempSync(path.join(os.tmpdir(), 'justspeak-llama-key-'))
+      this.keyFilePath = path.join(this.keyDir, 'key.txt')
+      writeFileSync(this.keyFilePath, `${apiKey}\n`, { mode: 0o600 })
+    } catch (error) {
+      this.cleanupKeyFile()
+      throw error
+    }
+
     const args = [
       '-m',
       this.options.modelPath,
@@ -130,12 +158,27 @@ export class LlamaSidecar {
       String(this.options.threads),
       '--parallel',
       '1',
-      '--no-webui'
+      '--no-webui',
+      '--api-key-file',
+      this.keyFilePath
     ]
-    this.options.onLog?.(`starting ${this.options.binaryPath} ${args.join(' ')}`)
-    const child = spawn(this.options.binaryPath, args, {
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
+    try {
+      this.options.onLog?.(`starting ${this.options.binaryPath} ${args.join(' ')}`)
+    } catch (error) {
+      // A caller-supplied logger must not strand the temp key.
+      await this.stop()
+      throw error
+    }
+    let child: ChildProcess
+    try {
+      child = spawn(this.options.binaryPath, args, {
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+    } catch (error) {
+      // A synchronous spawn failure must not leave the temp key behind.
+      await this.stop()
+      throw error
+    }
     this.child = child
     child.once('error', (error) => {
       this.spawnError = error
@@ -162,12 +205,47 @@ export class LlamaSidecar {
 
     try {
       await this.waitForHealth()
+      // The pinned runtime supports --api-key-file, but a runtime that silently
+      // ignored it would leave the port open. Fail closed unless a request
+      // without the key is rejected.
+      await this.verifyAuth()
+      // The server has read the key into memory; leave nothing on disk.
+      this.cleanupKeyFile()
     } catch (error) {
       // A failed start must not leave a live ~1 GB process behind, and a retry
       // must be able to spawn a fresh one.
       await this.stop()
       throw error
     }
+  }
+
+  private async verifyAuth(): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(1000)
+    })
+    if (response.status !== 401) {
+      throw new Error(
+        `llama-server did not enforce the API key (HTTP ${response.status})`
+      )
+    }
+  }
+
+  private cleanupKeyFile(): void {
+    try {
+      if (this.keyFilePath) rmSync(this.keyFilePath, { force: true })
+    } catch {
+      // A leftover temp key is less important than a working stop/quit path.
+    }
+    try {
+      if (this.keyDir) rmSync(this.keyDir, { recursive: true, force: true })
+    } catch {
+      // Same as above.
+    }
+    this.keyFilePath = undefined
+    this.keyDir = undefined
   }
 
   private async waitForHealth(): Promise<void> {
@@ -214,7 +292,12 @@ export class LlamaSidecar {
     try {
       const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          ...(this.apiKey === undefined
+            ? {}
+            : { authorization: `Bearer ${this.apiKey}` })
+        },
         signal: controller.signal,
         body: JSON.stringify({
           model: 'local',
@@ -272,6 +355,8 @@ export class LlamaSidecar {
   private async stopInternal(force: boolean): Promise<void> {
     this.stopped = true
     this.generation += 1
+    this.cleanupKeyFile()
+    this.apiKey = undefined
     const child = this.child
     this.child = undefined
     this.port = undefined

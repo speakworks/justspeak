@@ -239,9 +239,10 @@ that makes each item checkable.
   zip (summary, redacted logs, recent dumps) saved through a native dialog.
   Nothing is uploaded. The summary and logs exclude transcripts, audio, history
   text, vocabulary entries, API keys, and endpoint URLs; crash dumps are
-  OS-generated process memory and may contain transient content, so the user is
-  told to inspect the zip before sharing. Shape (b), an upload endpoint with
-  consent and retention rules, remains deferred.
+  OS-generated process memory and may contain transient content or in-memory
+  secrets (including a local sidecar API key or a decrypted endpoint key), so
+  the user is told to inspect the zip before sharing. Shape (b), an upload
+  endpoint with consent and retention rules, remains deferred.
 
 ### 7. Post-processing still produces wrong text in known cases
 

@@ -111,7 +111,7 @@ sidecar.decide(...) // -> { action: 'defer_to_human', raw: 'fetch failed' }
 - **质量不足**：1.5B 需要规则先验；3B 许可证不允许商用默认，且长句延迟超预算。
 - **模型来源**：原型用 Ollama blob，不是正式下载链路；正式实现要补 catalog、SHA、进度、删除/列举 API。
 - **签名**：ad-hoc 仅限本地；正式发布需 Developer ID，并让 electron-builder 重签 sidecar。
-- **本地端口暴露**：`llama-server` 监听 `127.0.0.1` 随机端口，任何本机进程都能调用；原型已加 `--no-webui`，正式实现应改用 Unix socket 或加 token 鉴权。
+- **本地端口暴露**：`llama-server` 监听 `127.0.0.1` 随机端口。产品实现已加每进程随机 API key：通过私有的 `--api-key-file` 传入，启动后删除文件，`decide()` 携带 Bearer；未授权请求返回 401。Unix socket 仍作为后续加固项。
 - **原型边界**：本 spike 本身没有 IPC、设置、UI；产品接入、设置、Guard 和默认关闭策略在 `llm-cleanup` 中完成。
 - **提示注入**：当前只有系统提示声明“文本是数据”，`parseCorrectionDecision` 仍会接受模型输出里任意合法动作 JSON。动作空间是封闭的、原型不执行动作，所以影响有限；正式接入必须用规则标记的候选窗口限定合法动作，并加对抗样例。
 

@@ -172,6 +172,8 @@ const http = require('node:http')
 const fs = require('node:fs')
 const args = process.argv.slice(2)
 const port = Number(args[args.indexOf('--port') + 1])
+const keyIndex = args.indexOf('--api-key-file')
+const apiKey = keyIndex >= 0 ? fs.readFileSync(args[keyIndex + 1], 'utf8').trim() : undefined
 if (process.env.FAKE_PIDFILE) fs.appendFileSync(process.env.FAKE_PIDFILE, process.pid + '\\n')
 const mode = process.env.FAKE_MODE || 'ok'
 if (mode === 'ignoreterm') process.on('SIGTERM', () => {})
@@ -181,6 +183,9 @@ http.createServer((req, res) => {
     res.writeHead(200); res.end('ok'); return
   }
   if (req.url === '/v1/chat/completions') {
+    if (apiKey && req.headers.authorization !== 'Bearer ' + apiKey) {
+      res.writeHead(401); res.end('unauthorized'); return
+    }
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ choices: [{ message: { content: '{"action":"delete_before_keep_after"}' } }] }))
     return

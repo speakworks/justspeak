@@ -31,6 +31,30 @@ export interface LlmLocalStatus {
   error?: string
 }
 
+/**
+ * Fetch errors carry the request URL and, for DNS failures, the hostname in
+ * their message/stack. Diagnostics logs must not learn the configured endpoint,
+ * so only the error name and a stable code are logged.
+ */
+function safeFetchError(error: unknown): string {
+  if (typeof error === 'object' && error !== null) {
+    const name = 'name' in error ? String((error as { name: unknown }).name) : 'Error'
+    const direct = (error as { code?: unknown }).code
+    let code = typeof direct === 'string' ? direct : undefined
+    if (code === undefined) {
+      // Node's fetch wraps DNS failures: the stable code lives on `cause`,
+      // whose message contains the hostname and must not be logged.
+      const cause = (error as { cause?: unknown }).cause
+      if (typeof cause === 'object' && cause !== null) {
+        const causeCode = (cause as { code?: unknown }).code
+        if (typeof causeCode === 'string') code = causeCode
+      }
+    }
+    return code === undefined ? name : `${name} (${code})`
+  }
+  return 'unknown error'
+}
+
 /** Calls one OpenAI-compatible endpoint with a hard timeout. */
 async function endpointDecision(
   config: LlmCorrectorConfig,
@@ -74,7 +98,7 @@ async function endpointDecision(
     const content = payload.choices?.[0]?.message?.content
     return typeof content === 'string' ? parseCorrectionDecision(content) : null
   } catch (error) {
-    console.warn('[llm] endpoint decision failed', error)
+    console.warn('[llm] endpoint decision failed', safeFetchError(error))
     return null
   }
 }

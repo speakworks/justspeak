@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AppState,
   AppStatus,
+  DiagnosticsExportResult,
   HistoryEntry,
   JustSpeakApi,
   LlmDownloadEvent,
@@ -40,6 +41,8 @@ const api: JustSpeakApi = {
     ipcRenderer.on('llm:download', handler)
     return () => ipcRenderer.removeListener('llm:download', handler)
   },
+  exportDiagnostics: () =>
+    ipcRenderer.invoke('diagnostics:export') as Promise<DiagnosticsExportResult>,
   getPermissions: () => ipcRenderer.invoke('permissions:get') as Promise<PermissionStatus>,
   openAccessibilitySettings: () =>
     ipcRenderer.invoke('permissions:open-accessibility') as Promise<void>,

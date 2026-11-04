@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  crashReporter,
   dialog,
   globalShortcut,
   ipcMain,
@@ -11,7 +12,7 @@ import {
   shell,
   systemPreferences
 } from 'electron'
-import { existsSync } from 'node:fs'
+import { existsSync, lstatSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { QWEN3_CAPABILITIES } from '../core/asr/qwen3-provider'
@@ -42,6 +43,7 @@ import {
   planPreferenceSet
 } from '../core/preferences/merge'
 import { summarizeProvider } from '../core/preferences/view'
+import { buildDiagnosticsSummary } from '../core/diagnostics/summary'
 import { deliverTranscript } from '../core/shell/delivery'
 import { packagedRuntimeDir, resolveModelsDir } from './asr/paths'
 import { createLevelThrottle, rmsOf } from '../core/overlay/level'
@@ -59,6 +61,7 @@ import {
 import type {
   AppStatus,
   AsrProviderSelection,
+  DiagnosticsExportResult,
   HistoryEntry,
   HistoryOutcome,
   HotkeySetResult,
@@ -91,6 +94,14 @@ import {
 } from './asr/segmentation-mode'
 import { createFocusProbe } from './focus-probe'
 import { ElectronGlobalShortcutSource } from './hotkey-source'
+import { collectCrashDumps } from './diagnostics/crash-dumps'
+import {
+  diagnosticsFileName,
+  writeDiagnosticsBundle,
+  type DiagnosticsBundleContents
+} from './diagnostics/export'
+import { DiagnosticsLog } from './diagnostics/log'
+import { resolveDiagnosticsTarget } from './diagnostics/target'
 import { HistoryStore } from './history-store'
 import { LlmManager } from './llm/manager'
 import { pasteText } from './injection'
@@ -141,6 +152,22 @@ const electronFetch = ((input: string | URL | Request, init?: RequestInit) =>
   net.fetch(input as string, init)) as typeof fetch
 
 let llmManager: LlmManager | undefined
+let diagnosticsExporting = false
+
+// Crashpad runs before app readiness and never uploads; the dump is only
+// collected when the user explicitly exports diagnostics.
+crashReporter.start({
+  productName: 'JustSpeak',
+  companyName: 'speakworks',
+  uploadToServer: false,
+  compress: false
+})
+
+const diagnosticsLog = new DiagnosticsLog({
+  file: path.join(app.getPath('logs'), 'justspeak.log'),
+  redaction: { homeDir: app.getPath('home'), userDataDir: app.getPath('userData') }
+})
+diagnosticsLog.installConsoleTee()
 
 /** History is created in `whenReady`; IPC handlers only run after the window loads. */
 function requireHistoryStore(): HistoryStore {
@@ -347,6 +374,67 @@ function schedulePreferencesPush(): void {
       .then((view) => mainWindow?.webContents.send('preferences:changed', view))
       .catch((error) => console.warn('[llm] status push failed', error))
   }, 250)
+}
+
+function readPermissions(): PermissionStatus {
+  return {
+    accessibility: systemPreferences.isTrustedAccessibilityClient(false),
+    microphone: systemPreferences.getMediaAccessStatus('microphone')
+  }
+}
+
+/**
+ * Assemble the local-only diagnostics contents. Every field is explicit; the
+ * bundle never copies userData, history text, audio, vocabulary entries, or
+ * secrets.
+ */
+async function collectDiagnosticsBundle(): Promise<DiagnosticsBundleContents> {
+  const preferences = await readPreferencesView()
+  let historyEntries = 0
+  if (historyStore) {
+    try {
+      historyEntries = (await historyStore.list()).length
+    } catch {
+      historyEntries = 0
+    }
+  }
+  const summary = buildDiagnosticsSummary({
+    generatedAt: new Date().toISOString(),
+    app: {
+      name: app.getName(),
+      version: app.getVersion(),
+      electron: process.versions.electron ?? '',
+      chrome: process.versions.chrome ?? '',
+      node: process.versions.node,
+      platform: process.platform,
+      arch: process.arch,
+      locale: app.getLocale()
+    },
+    preferences,
+    permissions: readPermissions(),
+    historyEntries,
+    redaction: { homeDir: app.getPath('home'), userDataDir: app.getPath('userData') }
+  })
+
+  const logBase = path.join(app.getPath('logs'), 'justspeak.log')
+  const logs = [logBase, `${logBase}.1`, `${logBase}.2`]
+    .filter((file) => {
+      try {
+        // The log path is predictable; never export a symlink planted there.
+        const info = lstatSync(file)
+        return info.isFile() && !info.isSymbolicLink()
+      } catch {
+        return false
+      }
+    })
+    .map((file) => ({ name: path.basename(file), path: file }))
+  const dumps = await collectCrashDumps(app.getPath('crashDumps'))
+
+  return {
+    summary,
+    logs,
+    crashDumps: dumps.map((dump) => ({ name: path.basename(dump.path), path: dump.path }))
+  }
 }
 
 /**
@@ -1169,9 +1257,42 @@ app.whenReady().then(async () => {
     }
     // `false` asks without prompting: the first-run screen must explain the
     // permission before macOS can show its own dialog.
-    return {
-      accessibility: systemPreferences.isTrustedAccessibilityClient(false),
-      microphone: systemPreferences.getMediaAccessStatus('microphone')
+    return readPermissions()
+  })
+
+  ipcMain.handle('diagnostics:export', async (event): Promise<DiagnosticsExportResult> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      return { ok: false, message: '未授权的诊断请求。' }
+    }
+    if (diagnosticsExporting) return { ok: false, message: '诊断导出正在进行。' }
+    diagnosticsExporting = true
+    try {
+      // Include the lines generated up to the click, including any immediately
+      // preceding failure the user is reporting.
+      await diagnosticsLog.flush()
+      const contents = await collectDiagnosticsBundle()
+      const options = {
+        title: '导出诊断',
+        defaultPath: path.join(app.getPath('downloads'), diagnosticsFileName()),
+        filters: [{ name: 'Zip', extensions: ['zip'] }]
+      }
+      // A dev-only path keeps the Playwright export test out of a native dialog.
+      const resolved = await resolveDiagnosticsTarget({
+        devTarget: app.isPackaged ? undefined : process.env.JUSTSPEAK_DIAGNOSTICS_EXPORT,
+        showSaveDialog: () =>
+          mainWindow
+            ? dialog.showSaveDialog(mainWindow, options)
+            : dialog.showSaveDialog(options)
+      })
+      if (resolved.canceled) return { ok: false, canceled: true }
+      await writeDiagnosticsBundle(contents, resolved.target, {
+        stagingRoot: app.getPath('temp')
+      })
+      return { ok: true, path: resolved.target }
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) }
+    } finally {
+      diagnosticsExporting = false
     }
   })
   ipcMain.handle('permissions:open-accessibility', async (event): Promise<void> => {
@@ -1255,8 +1376,9 @@ app.on('will-quit', (event) => {
     ? historyStore.flush().catch((error) => console.warn('[history] flush on quit failed', error))
     : Promise.resolve()
   const llm = llmManager?.dispose(true) ?? Promise.resolve()
+  const logs = diagnosticsLog.flush()
   void Promise.race([
-    Promise.all([history, llm]),
+    Promise.all([history, llm, logs]),
     timeout
     // `app.exit` skips another `will-quit` pass; re-entering `quit()` while the
     // first quit is suspended is what wedges Electron's shutdown.

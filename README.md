@@ -69,6 +69,11 @@ pnpm bench:asr   # provider-driven benchmark; writes bench/reports/<date>-qwen3-
   and an 800 ms fallback keep the rule text when anything fails. See
   [ASR correction research](docs/ASR-CORRECTION-RESEARCH.md) and
   [LLM eval SOP](docs/LLM-EVAL-SOP.md).
+- **导出诊断** is local-only: Settings writes a zip with versions, permissions, runtime
+  status, recent redacted main-process logs, and crash dumps. Nothing is uploaded. The
+  summary and logs exclude transcripts, audio, history text, vocabulary entries, API keys,
+  and endpoint URLs; crash dumps are OS-generated process memory and may contain transient
+  content, so inspect the zip before sharing it.
 - Segmentation defaults to `auto`: an utterance inside the selected provider's own limit
   takes the unchanged one-shot path, and only a longer one is segmented. That is what makes
   SenseVoice's 30-second ceiling usable. `JUSTSPEAK_SEGMENTED=single` forces one-shot and

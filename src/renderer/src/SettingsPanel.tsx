@@ -26,6 +26,10 @@ export interface SettingsPanelProps {
   llmDownloadPercent?: number
   llmFeedback?: string
   llmFeedbackIsError: boolean
+  onExportDiagnostics: () => void
+  diagnosticsBusy: boolean
+  diagnosticsFeedback?: string
+  diagnosticsFeedbackIsError: boolean
   /**
    * Which half of the surface to render: the sidebar gear shows the editable
    * settings, the 词典 destination shows the vocabulary editor. One component so
@@ -78,6 +82,10 @@ export function SettingsPanel({
   llmDownloadPercent,
   llmFeedback,
   llmFeedbackIsError,
+  onExportDiagnostics,
+  diagnosticsBusy,
+  diagnosticsFeedback,
+  diagnosticsFeedbackIsError,
   section = 'settings'
 }: SettingsPanelProps): React.JSX.Element {
   const vocabularyOnly = section === 'vocabulary'
@@ -329,6 +337,34 @@ export function SettingsPanel({
                 }
               >
                 {llmFeedback}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="settings-row">
+            <div className="settings-row-head">
+              <span className="settings-label">诊断</span>
+            </div>
+            <p className="settings-detail">
+              导出本机诊断包：版本、权限、运行时状态、最近日志和崩溃转储。不会上传；摘要与日志不含转写、录音、词汇表或 API Key。崩溃转储可能含进程内存，分享前请检查。
+            </p>
+            <div className="settings-control">
+              <button
+                type="button"
+                className="hotkey-apply"
+                onClick={onExportDiagnostics}
+                disabled={diagnosticsBusy}
+              >
+                {diagnosticsBusy ? '正在导出…' : '导出诊断'}
+              </button>
+            </div>
+            {diagnosticsFeedback ? (
+              <p
+                className={
+                  diagnosticsFeedbackIsError ? 'settings-detail error' : 'settings-detail'
+                }
+              >
+                {diagnosticsFeedback}
               </p>
             ) : null}
           </div>

@@ -234,12 +234,14 @@ that makes each item checkable.
 
 - A failure reaches the user as one status line and reaches the maintainer
   nowhere. There is no bundled log bundle to ask for.
-- **Decision deferred (2026-11-02):** two shapes are feasible without a vendor
-  account — (a) local crash dumps plus a "导出诊断" bundle (app logs, catalog
-  state, version, crash dumps) saved through a native dialog, or (b) an upload
-  endpoint with consent and retention rules. Neither is implemented; (a) needs a
-  persistent log writer that does not exist yet, and (b) needs a privacy
-  decision. Recorded rather than half-built.
+- **Now (2026-11-05):** shape (a) is implemented: a persistent, rotated
+  main-process log, local `crashReporter` dumps, and a user-initiated **导出诊断**
+  zip (summary, redacted logs, recent dumps) saved through a native dialog.
+  Nothing is uploaded. The summary and logs exclude transcripts, audio, history
+  text, vocabulary entries, API keys, and endpoint URLs; crash dumps are
+  OS-generated process memory and may contain transient content, so the user is
+  told to inspect the zip before sharing. Shape (b), an upload endpoint with
+  consent and retention rules, remains deferred.
 
 ### 7. Post-processing still produces wrong text in known cases
 

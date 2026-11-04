@@ -70,7 +70,8 @@ gap.
 | **Telemetry / metrics** | Main process counters | **Off by default**; if enabled, content-free fields only (duration, provider id, model id, latency, error class, app version, OS version) | Exact provider is a later decision; no provider in v0.1 | Opt-in; short retention, defined in policy | Low |
 | **Crash reports** | OS crash reporter / app crash handler | Local-only by default; no automatic upload; upload requires explicit consent and preview | Local diagnostics directory; optional provider later | Until user deletes or opts in | High (memory can contain transcript/audio) |
 | **Settings, dictionary, API keys** | User input | Settings and dictionary local; API keys in Keychain / `safeStorage` | Local app-support directory; Keychain | Until deleted by user | Low (settings) / High (keys, dictionary) |
-| **Logs** | Main process structured logger | Content-redacted; no transcript, audio, selection, URL, or app content | Local log file; rotation and deletion | Bounded; user-deletable | Low by design |
+| **Logs** | Main-process logger | Content-redacted; no transcript, audio, selection, URL, or app content | Local log file; rotation and deletion | Bounded; user-deletable | Low by design |
+| **Diagnostics bundle** | User action (**导出诊断**); main logger + `crashReporter` | Versions, permissions, runtime/model presence, preference summary, recent redacted logs, local crash dumps; no transcript, audio, history text, vocabulary entries, API keys, or endpoint URLs | User-chosen local zip; never uploaded | Until the user deletes it | Medium for summary/logs; **High for crash dumps** (process memory may contain transient transcript/audio). The README tells the user to inspect before sharing. |
 | **Downloaded models** | Model catalog | Public model weights; SHA-256 verified before load | Local model directory with least-privilege permissions | Until deleted or re-downloaded | Low (integrity-sensitive) |
 
 ### Inventory notes

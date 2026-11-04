@@ -120,6 +120,14 @@ export interface LlmDownloadEvent {
   message?: string
 }
 
+/** Result of the user-initiated, local-only diagnostics export. */
+export interface DiagnosticsExportResult {
+  ok: boolean
+  canceled?: boolean
+  path?: string
+  message?: string
+}
+
 /** Everything the settings panel renders, read from one place in main. */
 export interface PreferencesView {
   theme: ThemePreference
@@ -238,6 +246,8 @@ export interface JustSpeakApi {
   /** Downloads the pinned local correction model with SHA-256 verification. */
   downloadLlmModel: () => Promise<{ ok: boolean; message?: string }>
   onLlmDownload: (listener: (event: LlmDownloadEvent) => void) => () => void
+  /** Writes a local zip of versions, logs, and crash dumps; never uploads. */
+  exportDiagnostics: () => Promise<DiagnosticsExportResult>
   /** Reads the two permissions the dictation path needs. Never prompts. */
   getPermissions: () => Promise<PermissionStatus>
   /** Opens System Settings → Privacy & Security → Accessibility. */

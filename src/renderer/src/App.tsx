@@ -134,6 +134,9 @@ export function App(): React.JSX.Element {
   const [llmDownloadPercent, setLlmDownloadPercent] = useState<number | undefined>()
   const [llmFeedback, setLlmFeedback] = useState<string | undefined>()
   const [llmFeedbackIsError, setLlmFeedbackIsError] = useState(false)
+  const [diagnosticsBusy, setDiagnosticsBusy] = useState(false)
+  const [diagnosticsFeedback, setDiagnosticsFeedback] = useState<string | undefined>()
+  const [diagnosticsFeedbackIsError, setDiagnosticsFeedbackIsError] = useState(false)
   const [view, setView] = useState<View>('home')
   // The dictated text lives above the destination switch so a transcript that
   // lands while another destination is shown is not lost.
@@ -367,6 +370,25 @@ export function App(): React.JSX.Element {
       })
   }, [])
 
+  const exportDiagnostics = useCallback((): void => {
+    setDiagnosticsBusy(true)
+    setDiagnosticsFeedback(undefined)
+    void window.justspeak
+      .exportDiagnostics()
+      .then((result) => {
+        if (result.canceled) return
+        setDiagnosticsFeedbackIsError(!result.ok)
+        setDiagnosticsFeedback(
+          result.ok ? `诊断包已保存：${result.path ?? ''}` : (result.message ?? '诊断导出失败。')
+        )
+      })
+      .catch((error: unknown) => {
+        setDiagnosticsFeedbackIsError(true)
+        setDiagnosticsFeedback(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => setDiagnosticsBusy(false))
+  }, [])
+
   useEffect(() => {
     return window.justspeak.onLlmDownload((event) => {
       if (event.state === 'downloading') {
@@ -521,7 +543,11 @@ export function App(): React.JSX.Element {
     llmBusy,
     llmDownloadPercent,
     llmFeedback,
-    llmFeedbackIsError
+    llmFeedbackIsError,
+    onExportDiagnostics: exportDiagnostics,
+    diagnosticsBusy,
+    diagnosticsFeedback,
+    diagnosticsFeedbackIsError
   }
 
   const subtitle =

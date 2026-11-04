@@ -4,6 +4,7 @@ import type {
   AppStatus,
   HistoryEntry,
   JustSpeakApi,
+  LlmDownloadEvent,
   OverlayState,
   PcmBatch,
   PermissionStatus,
@@ -28,6 +29,17 @@ const api: JustSpeakApi = {
   getPreferences: () => ipcRenderer.invoke('preferences:get') as Promise<PreferencesView>,
   setPreferences: (patch: PreferencesPatch) =>
     ipcRenderer.invoke('preferences:set', patch) as Promise<PreferencesSetResult>,
+  setLlmKey: (key: string) =>
+    ipcRenderer.invoke('llm:set-key', key) as Promise<{ ok: boolean; message?: string }>,
+  clearLlmKey: () =>
+    ipcRenderer.invoke('llm:clear-key') as Promise<{ ok: boolean; message?: string }>,
+  downloadLlmModel: () =>
+    ipcRenderer.invoke('llm:download-model') as Promise<{ ok: boolean; message?: string }>,
+  onLlmDownload: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, next: LlmDownloadEvent) => listener(next)
+    ipcRenderer.on('llm:download', handler)
+    return () => ipcRenderer.removeListener('llm:download', handler)
+  },
   getPermissions: () => ipcRenderer.invoke('permissions:get') as Promise<PermissionStatus>,
   openAccessibilitySettings: () =>
     ipcRenderer.invoke('permissions:open-accessibility') as Promise<void>,

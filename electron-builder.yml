@@ -30,6 +30,9 @@ asar: true
 extraResources:
   - from: resources/models.json
     to: resources/models.json
+  # Optional LLM cleanup catalog (weights are downloaded on demand).
+  - from: resources/llm-models.json
+    to: resources/llm-models.json
   # The pinned ASR runtime (CLI + dylibs, ~9 MB) ships with the app; the weights
   # do not. `scripts/package-runtime.ts` stages this directory with
   # `@loader_path` rpaths and an ad-hoc signature, and `resolveAsrPaths` reads it
@@ -37,6 +40,9 @@ extraResources:
   # gitignored and rebuilt by the packaging scripts.
   - from: resources/runtime
     to: runtime
+  # OPTIONAL local LLM cleanup runtime; staged by `pnpm package:llm`.
+  - from: resources/llm
+    to: llm
   # An identifier in the notices file is not a license grant: ship the texts the
   # identifiers point at, next to the notices, so a distributed copy carries
   # what THIRD_PARTY_NOTICES.md promises (see licenses/README.md).

@@ -152,12 +152,43 @@ export function describeProvider(provider: ProviderSummary): SettingState {
   }
 }
 
+export function describeLlm(preferences: PreferencesView['llm']): SettingState {
+  if (preferences.backend === 'off') {
+    return { status: 'default', statusLabel: STATUS_LABEL.default, detail: '关闭。' }
+  }
+  if (preferences.backend === 'local') {
+    const filesReady = preferences.local.runtimeReady && preferences.local.modelReady
+    // Files existing is not the same as the sidecar running: a crash must not
+    // keep the row claiming the local model is ready.
+    const ready = filesReady && preferences.local.state !== 'failed'
+    return {
+      status: ready ? 'override' : 'unavailable',
+      statusLabel: ready ? STATUS_LABEL.override : STATUS_LABEL.unavailable,
+      detail:
+        preferences.message ??
+        (ready ? `本地模型 ${preferences.local.modelName}。` : '本地模型不可用。')
+    }
+  }
+  return {
+    status:
+      preferences.endpoint.baseUrl && preferences.endpoint.model
+        ? 'override'
+        : 'unavailable',
+    statusLabel:
+      preferences.endpoint.baseUrl && preferences.endpoint.model
+        ? STATUS_LABEL.override
+        : STATUS_LABEL.unavailable,
+    detail: preferences.message ?? 'OpenAI 兼容端点。'
+  }
+}
+
 /** Every row the panel renders, derived from one main-owned view. */
 export interface SettingsRows {
   theme: SettingState
   hotkey: SettingState
   vocabulary: SettingState
   provider: SettingState
+  llm: SettingState
 }
 
 export function buildSettingsRows(preferences: PreferencesView): SettingsRows {
@@ -165,7 +196,8 @@ export function buildSettingsRows(preferences: PreferencesView): SettingsRows {
     theme: describeTheme(preferences.theme),
     hotkey: describeHotkey(preferences.hotkey, preferences.hotkeyMessage),
     vocabulary: describeVocabulary(preferences.vocabulary),
-    provider: describeProvider(preferences.provider)
+    provider: describeProvider(preferences.provider),
+    llm: describeLlm(preferences.llm)
   }
 }
 

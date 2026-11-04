@@ -17,6 +17,7 @@ const args = process.argv.slice(2)
 const port = Number(args[args.indexOf('--port') + 1])
 if (process.env.FAKE_PIDFILE) fs.appendFileSync(process.env.FAKE_PIDFILE, process.pid + '\\n')
 const mode = process.env.FAKE_MODE || 'ok'
+if (mode === 'ignoreterm') process.on('SIGTERM', () => {})
 http.createServer((req, res) => {
   if (req.url === '/health') {
     if (mode === 'nohealth') return
@@ -174,6 +175,32 @@ describe('LLM sidecar lifecycle', () => {
       timedOut: false
     })
     await instance.stop()
+  })
+
+  it('escalates a pending graceful stop when force is requested', async () => {
+    process.env.FAKE_MODE = 'ignoreterm'
+    const instance = sidecar()
+    await instance.start()
+    const pid = instance.pid as number
+
+    const graceful = instance.stop()
+    const started = Date.now()
+    await instance.stop(true)
+    await graceful
+
+    expect(Date.now() - started).toBeLessThan(2500)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(() => process.kill(pid, 0)).toThrow()
+  })
+
+  it('force-stops the child', async () => {
+    process.env.FAKE_MODE = 'ok'
+    const instance = sidecar()
+    await instance.start()
+    const pid = instance.pid as number
+    await instance.stop(true)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(() => process.kill(pid, 0)).toThrow()
   })
 
   it('waits for an in-flight stop before starting again', async () => {

@@ -19,6 +19,7 @@
     "tests/**/*.ts",
     "scripts/llm-probe.ts",
     "scripts/package-llm-runtime.ts",
+    "scripts/llm-eval.ts",
     "electron.vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts"

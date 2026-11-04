@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs'
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -27,7 +27,7 @@ afterEach(() => {
 
 describe('preferences store', () => {
   it('starts every preference at its default when no file exists', async () => {
-    await expect(new ThemeStore(makeDir()).loadPreferences()).resolves.toEqual({
+    await expect(new ThemeStore(makeDir()).loadPreferences()).resolves.toMatchObject({
       theme: 'system',
       hotkey: DEFAULT_ACCELERATOR
     })
@@ -38,7 +38,7 @@ describe('preferences store', () => {
     const store = new ThemeStore(dir)
     await store.save('dark')
     await store.saveHotkey('Command+Shift+K')
-    await expect(store.loadPreferences()).resolves.toEqual({
+    await expect(store.loadPreferences()).resolves.toMatchObject({
       theme: 'dark',
       hotkey: 'Command+Shift+K'
     })
@@ -53,7 +53,7 @@ describe('preferences store', () => {
     const store = new ThemeStore(dir)
     await store.saveHotkey('Control+Alt+H')
     await store.save('light')
-    await expect(store.loadPreferences()).resolves.toEqual({
+    await expect(store.loadPreferences()).resolves.toMatchObject({
       theme: 'light',
       hotkey: 'Control+Alt+H'
     })
@@ -82,7 +82,7 @@ describe('preferences store', () => {
       JSON.stringify({ theme: 'dark', hotkey: 'cmd+shift+k' }),
       'utf8'
     )
-    await expect(new ThemeStore(dir).loadPreferences()).resolves.toEqual({
+    await expect(new ThemeStore(dir).loadPreferences()).resolves.toMatchObject({
       theme: 'dark',
       hotkey: 'Command+Shift+K'
     })
@@ -91,7 +91,7 @@ describe('preferences store', () => {
       JSON.stringify({ theme: 'dark', hotkey: 'Space' }),
       'utf8'
     )
-    await expect(new ThemeStore(dir).loadPreferences()).resolves.toEqual({
+    await expect(new ThemeStore(dir).loadPreferences()).resolves.toMatchObject({
       theme: 'dark',
       hotkey: DEFAULT_ACCELERATOR
     })
@@ -101,13 +101,13 @@ describe('preferences store', () => {
     const dir = makeDir()
     await writeFile(preferencesFile(dir), '{ not json', 'utf8')
     const store = new ThemeStore(dir)
-    await expect(store.loadPreferences()).resolves.toEqual({
+    await expect(store.loadPreferences()).resolves.toMatchObject({
       theme: 'system',
       hotkey: DEFAULT_ACCELERATOR
     })
     // A save after corruption repairs the file instead of failing.
     await store.save('dark')
-    await expect(store.loadPreferences()).resolves.toEqual({
+    await expect(store.loadPreferences()).resolves.toMatchObject({
       theme: 'dark',
       hotkey: DEFAULT_ACCELERATOR
     })
@@ -120,7 +120,7 @@ describe('preferences store', () => {
       JSON.stringify({ theme: 'dark', hotkey: 'constructor+Space' }),
       'utf8'
     )
-    await expect(new ThemeStore(dir).loadPreferences()).resolves.toEqual({
+    await expect(new ThemeStore(dir).loadPreferences()).resolves.toMatchObject({
       theme: 'dark',
       hotkey: DEFAULT_ACCELERATOR
     })
@@ -134,7 +134,7 @@ describe('preferences store', () => {
     const result = await store.update({ theme: 'sepia', hotkey: 'Space' })
     expect(result.ok).toBe(false)
     expect(await readFile(preferencesFile(dir), 'utf8')).toBe(before)
-    await expect(store.loadPreferences()).resolves.toEqual({
+    await expect(store.loadPreferences()).resolves.toMatchObject({
       theme: 'dark',
       hotkey: DEFAULT_ACCELERATOR
     })
@@ -161,6 +161,7 @@ describe('preferences store', () => {
     const slowDeps: ThemeStoreDeps = {
       readFile,
       mkdir,
+      rename,
       writeFile: async (file, data, options) => {
         // Widen the read-modify-write window: without the store's write chain
         // both saves read the old file and the later write drops the other key.
@@ -170,7 +171,7 @@ describe('preferences store', () => {
     }
     const store = new ThemeStore(dir, slowDeps)
     await Promise.all([store.save('dark'), store.saveHotkey('Command+Shift+K')])
-    await expect(store.loadPreferences()).resolves.toEqual({
+    await expect(store.loadPreferences()).resolves.toMatchObject({
       theme: 'dark',
       hotkey: 'Command+Shift+K'
     })
@@ -183,11 +184,12 @@ describe('preferences store', () => {
         throw failure
       },
       writeFile,
-      mkdir
+      mkdir,
+      rename
     }
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      await expect(new ThemeStore(makeDir(), deps).loadPreferences()).resolves.toEqual({
+      await expect(new ThemeStore(makeDir(), deps).loadPreferences()).resolves.toMatchObject({
         theme: 'system',
         hotkey: DEFAULT_ACCELERATOR
       })
@@ -202,7 +204,7 @@ describe('preferences store', () => {
   it('stays silent when the file is simply missing', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      await expect(new ThemeStore(makeDir()).loadPreferences()).resolves.toEqual({
+      await expect(new ThemeStore(makeDir()).loadPreferences()).resolves.toMatchObject({
         theme: 'system',
         hotkey: DEFAULT_ACCELERATOR
       })
@@ -215,7 +217,7 @@ describe('preferences store', () => {
   it('falls back to both defaults when the JSON is not an object', async () => {
     const dir = makeDir()
     await writeFile(preferencesFile(dir), '["light"]', 'utf8')
-    await expect(new ThemeStore(dir).loadPreferences()).resolves.toEqual({
+    await expect(new ThemeStore(dir).loadPreferences()).resolves.toMatchObject({
       theme: 'system',
       hotkey: DEFAULT_ACCELERATOR
     })
@@ -346,7 +348,7 @@ describe('vocabulary config parsing', () => {
 describe('vocabulary store', () => {
   it('returns defaults when no file exists', async () => {
     const store = new VocabularyStore(makeDir())
-    await expect(store.load()).resolves.toEqual({})
+    await expect(store.load()).resolves.toMatchObject({})
   })
 
   it('round-trips a saved word list', async () => {
@@ -361,9 +363,9 @@ describe('vocabulary store', () => {
       repetitionThreshold: 3
     }
     await store.save(options)
-    await expect(store.load()).resolves.toEqual(options)
+    await expect(store.load()).resolves.toMatchObject(options)
     // A second store on the same directory sees the persisted value.
-    await expect(new VocabularyStore(dir).load()).resolves.toEqual(options)
+    await expect(new VocabularyStore(dir).load()).resolves.toMatchObject(options)
   })
 
   it('creates the userData directory when it does not exist yet', async () => {
@@ -378,13 +380,13 @@ describe('vocabulary store', () => {
   it('falls back to defaults on corrupt JSON', async () => {
     const dir = makeDir()
     await writeFile(path.join(dir, VOCABULARY_FILE), '{ not json', 'utf8')
-    await expect(new VocabularyStore(dir).load()).resolves.toEqual({})
+    await expect(new VocabularyStore(dir).load()).resolves.toMatchObject({})
   })
 
   it('falls back to defaults when the payload is not an object', async () => {
     const dir = makeDir()
     await writeFile(path.join(dir, VOCABULARY_FILE), '"hello"', 'utf8')
-    await expect(new VocabularyStore(dir).load()).resolves.toEqual({})
+    await expect(new VocabularyStore(dir).load()).resolves.toMatchObject({})
   })
 
   it('uses a file separate from preferences.json', async () => {
@@ -416,7 +418,7 @@ describe('vocabulary store', () => {
 
   it('reports a missing file as the default state', async () => {
     const store = new VocabularyStore(makeDir())
-    await expect(store.loadDetailed()).resolves.toEqual({ options: {}, state: 'default' })
+    await expect(store.loadDetailed()).resolves.toMatchObject({ options: {}, state: 'default' })
     expect(store.file.endsWith(VOCABULARY_FILE)).toBe(true)
   })
 

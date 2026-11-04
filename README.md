@@ -58,10 +58,17 @@ pnpm bench:asr   # provider-driven benchmark; writes bench/reports/<date>-qwen3-
   Use `JUSTSPEAK_ASR=fake pnpm dev` for the deterministic fake flow. An unknown value is an
   error, and a missing model is never silently replaced by fake or cloud.
 - `pnpm package:mac` builds an unpacked app and `pnpm package:mac:artifacts` builds the DMG
-  and ZIP. Both stage the ASR runtime into `resources/runtime/` first, so a packaged install
-  no longer needs a manual copy of `models/runtime`; model weights still download on first
-  run. Signing and notarisation are prepared but disabled until credentials exist — see
+  and ZIP. Both stage the ASR runtime into `resources/runtime/` and the optional LLM runtime
+  into `resources/llm/` first, so a packaged install no longer needs a manual copy of
+  `models/runtime`; model weights still download on first run. Signing and notarisation are
+  prepared but disabled until credentials exist — see
   [Packaging](docs/PACKAGING-RELEASE.md).
+- **Optional 智能清理** is off by default. Settings can select a local
+  Qwen2.5-1.5B-Instruct model (downloaded on demand) or an OpenAI-compatible endpoint.
+  The model only chooses a closed correction action inside a rule-marked candidate; a guard
+  and an 800 ms fallback keep the rule text when anything fails. See
+  [ASR correction research](docs/ASR-CORRECTION-RESEARCH.md) and
+  [LLM eval SOP](docs/LLM-EVAL-SOP.md).
 - Segmentation defaults to `auto`: an utterance inside the selected provider's own limit
   takes the unchanged one-shot path, and only a longer one is segmented. That is what makes
   SenseVoice's 30-second ceiling usable. `JUSTSPEAK_SEGMENTED=single` forces one-shot and

@@ -39,6 +39,8 @@ export interface SessionControllerDeps {
   fake: boolean
   /** Deterministic cleanup between the ASR result and the paste call. */
   postprocess?: (text: string) => PostprocessResult
+  /** Optional async stage after rules (LLM cleanup). Never blocks delivery on failure. */
+  refine?: (text: string) => Promise<{ text: string; applied: string[] } | undefined>
   getAudio?: (summary: RecordingSummary) => AudioInput | null
   now?: () => number
   startDebounceMs?: number
@@ -181,6 +183,19 @@ export class SessionController {
       if (processed && (processed.text.length > 0 || rawText.length === 0)) {
         text = processed.text
         applied = processed.applied
+      }
+
+      if (this.deps.refine && text.length > 0) {
+        try {
+          const refined = await this.deps.refine(text)
+          if (refined && refined.text.length > 0) {
+            text = refined.text
+            applied = [...applied, ...refined.applied]
+          }
+        } catch (error) {
+          // An optional stage must not lose the transcript.
+          console.warn('[session] refine stage failed', error)
+        }
       }
 
       event = {

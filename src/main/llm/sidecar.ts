@@ -9,13 +9,10 @@ import {
 } from '../../core/llm/decision'
 
 /**
- * Technical spike for the LLM sidecar. It is intentionally not wired into the
- * app: no settings, no IPC, no default behavior. `scripts/llm-probe.ts` starts
- * it, measures it, and stops it.
- *
- * `llama-server` is kept as a child process so a model crash cannot take the
- * Electron main process down, and so the runtime can be signed and replaced
- * independently, matching the existing transcribe-cli sidecar.
+ * `llama-server` as a child process: a model crash cannot take the Electron
+ * main process down, and the runtime can be signed and replaced independently,
+ * matching the existing transcribe-cli sidecar. `LlmCorrector` owns one per
+ * local backend session; `scripts/llm-probe.ts` measures it directly.
  */
 export interface LlamaSidecarOptions {
   binaryPath: string
@@ -24,6 +21,8 @@ export interface LlamaSidecarOptions {
   contextSize?: number
   threads?: number
   onLog?: (line: string) => void
+  /** The child exited on its own (not because the owner called stop). */
+  onExit?: () => void
 }
 
 export interface DecisionResult {
@@ -55,6 +54,8 @@ export class LlamaSidecar {
   private spawnError?: Error
   private starting?: Promise<void>
   private stopping?: Promise<void>
+  /** The child captured by the in-flight stop, so a later force stop can escalate. */
+  private stoppingChild?: ChildProcess
   private generation = 0
 
   constructor(options: LlamaSidecarOptions) {
@@ -68,6 +69,11 @@ export class LlamaSidecar {
 
   get pid(): number | undefined {
     return this.child?.pid
+  }
+
+  /** False once the child exited or was stopped; callers use it to recover. */
+  get alive(): boolean {
+    return this.child !== undefined
   }
 
   get baseUrl(): string | undefined {
@@ -146,7 +152,12 @@ export class LlamaSidecar {
       if (this.child !== child) return
       this.exited = true
       this.child = undefined
-      if (!this.stopped) this.options.onLog?.(`sidecar exited: code=${code} signal=${signal}`)
+      // A dead server must not keep advertising a live port.
+      this.port = undefined
+      if (!this.stopped) {
+        this.options.onLog?.(`sidecar exited: code=${code} signal=${signal}`)
+        this.options.onExit?.()
+      }
     })
 
     try {
@@ -183,7 +194,19 @@ export class LlamaSidecar {
   }
 
   async decide(text: string, timeoutMs = 800): Promise<DecisionResult> {
-    if (!this.baseUrl) throw new Error('sidecar is not started')
+    if (!this.baseUrl) {
+      // A crashed server is a fallback, not a programming error; a never-started
+      // or stopped one is still a caller bug.
+      if (this.exited) {
+        return {
+          action: 'defer_to_human',
+          latencyMs: 0,
+          raw: 'sidecar exited',
+          timedOut: false
+        }
+      }
+      throw new Error('sidecar is not started')
+    }
     const prompt = buildDecisionPrompt(text)
     const started = Date.now()
     const controller = new AbortController()
@@ -231,9 +254,14 @@ export class LlamaSidecar {
     }
   }
 
-  async stop(): Promise<void> {
-    if (this.stopping) return this.stopping
-    this.stopping = this.stopInternal()
+  async stop(force = false): Promise<void> {
+    if (this.stopping) {
+      // A graceful stop may still be in its 3 s window; quit cannot wait that
+      // long, so escalate the exact child instead of returning quietly.
+      if (force) this.stoppingChild?.kill('SIGKILL')
+      return this.stopping
+    }
+    this.stopping = this.stopInternal(force)
     try {
       await this.stopping
     } finally {
@@ -241,7 +269,7 @@ export class LlamaSidecar {
     }
   }
 
-  private async stopInternal(): Promise<void> {
+  private async stopInternal(force: boolean): Promise<void> {
     this.stopped = true
     this.generation += 1
     const child = this.child
@@ -258,21 +286,29 @@ export class LlamaSidecar {
       return
     }
 
-    child.kill('SIGTERM')
-    await new Promise<void>((resolve) => {
-      let settled = false
-      const finish = (): void => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        resolve()
-      }
-      const timer = setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
-        finish()
-      }, 3000)
-      child.once('exit', finish)
-      if (child.exitCode !== null || child.signalCode !== null) finish()
-    })
+    this.stoppingChild = child
+    try {
+      child.kill(force ? 'SIGKILL' : 'SIGTERM')
+      await new Promise<void>((resolve) => {
+        let settled = false
+        const finish = (): void => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          resolve()
+        }
+        const timer = setTimeout(
+          () => {
+            if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+            finish()
+          },
+          force ? 500 : 3000
+        )
+        child.once('exit', finish)
+        if (child.exitCode !== null || child.signalCode !== null) finish()
+      })
+    } finally {
+      if (this.stoppingChild === child) this.stoppingChild = undefined
+    }
   }
 }

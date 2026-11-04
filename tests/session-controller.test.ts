@@ -116,6 +116,32 @@ describe('session state machine', () => {
     expect(harness.controller.state).toBe('idle')
   })
 
+  it('applies the optional refine stage before delivery', async () => {
+    const harness = setup({
+      refine: async (text) => ({ text: `${text}！`, applied: ['llm'] })
+    })
+    harness.controller.toggle(true)
+    harness.advance(1000)
+    harness.controller.toggle(true)
+    await harness.controller.handleCaptureStopped(SUMMARY)
+    expect(harness.transcripts[0]).toMatchObject({ text: '你好！', applied: ['llm'] })
+    expect(harness.pastes).toEqual(['你好！'])
+  })
+
+  it('keeps the transcript when the refine stage fails', async () => {
+    const harness = setup({
+      refine: async () => {
+        throw new Error('model down')
+      }
+    })
+    harness.controller.toggle(true)
+    harness.advance(1000)
+    harness.controller.toggle(true)
+    await harness.controller.handleCaptureStopped(SUMMARY)
+    expect(harness.transcripts[0]).toMatchObject({ text: '你好', applied: [] })
+    expect(harness.pastes).toEqual(['你好'])
+  })
+
   it('ignores stale stop events', async () => {
     const harness = setup()
     await harness.controller.handleCaptureStopped(SUMMARY)

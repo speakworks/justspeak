@@ -1,8 +1,8 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { acceleratorDisplayParts } from '../../core/hotkey/accelerator'
 import type { SettingState, SettingsRows } from '../../core/preferences/view'
 import { THEME_LABEL, THEME_PREFERENCES } from '../../core/theme/theme'
-import type { PreferencesView, ThemePreference } from '../../shared/ipc'
+import type { LlmBackend, PreferencesView, ThemePreference } from '../../shared/ipc'
 
 export interface SettingsPanelProps {
   preferences: PreferencesView | null
@@ -17,6 +17,15 @@ export interface SettingsPanelProps {
   onApplyHotkey: () => void
   onTheme: (theme: ThemePreference) => void
   onReload: () => void
+  onLlmBackend: (backend: LlmBackend) => void
+  onLlmEndpointSave: (baseUrl: string, model: string) => void
+  onLlmKeySave: (key: string) => void
+  onLlmKeyClear: () => void
+  onLlmDownload: () => void
+  llmBusy: boolean
+  llmDownloadPercent?: number
+  llmFeedback?: string
+  llmFeedbackIsError: boolean
   /**
    * Which half of the surface to render: the sidebar gear shows the editable
    * settings, the 词典 destination shows the vocabulary editor. One component so
@@ -60,9 +69,27 @@ export function SettingsPanel({
   onApplyHotkey,
   onTheme,
   onReload,
+  onLlmBackend,
+  onLlmEndpointSave,
+  onLlmKeySave,
+  onLlmKeyClear,
+  onLlmDownload,
+  llmBusy,
+  llmDownloadPercent,
+  llmFeedback,
+  llmFeedbackIsError,
   section = 'settings'
 }: SettingsPanelProps): React.JSX.Element {
   const vocabularyOnly = section === 'vocabulary'
+  const [llmBaseUrl, setLlmBaseUrl] = useState('')
+  const [llmModel, setLlmModel] = useState('')
+  const [llmKey, setLlmKey] = useState('')
+
+  useEffect(() => {
+    if (!preferences) return
+    setLlmBaseUrl(preferences.llm.endpoint.baseUrl)
+    setLlmModel(preferences.llm.endpoint.model)
+  }, [preferences?.llm.endpoint.baseUrl, preferences?.llm.endpoint.model])
   return (
     <section
       className="card settings"
@@ -175,6 +202,7 @@ export function SettingsPanel({
 
           ) : null}
           {vocabularyOnly ? null : (
+          <>
           <div className="settings-row">
             <div className="settings-row-head">
               <span className="settings-label">模型</span>
@@ -194,6 +222,117 @@ export function SettingsPanel({
               {rows.provider.detail}
             </p>
           </div>
+
+          <div className="settings-row">
+            <div className="settings-row-head">
+              <span className="settings-label">智能清理</span>
+              <StatusChip state={rows.llm} />
+            </div>
+            <div className="settings-control">
+              <select
+                className="settings-select"
+                aria-label="智能清理后端"
+                value={preferences.llm.backend}
+                disabled={llmBusy}
+                onChange={(event) => onLlmBackend(event.target.value as LlmBackend)}
+              >
+                <option value="off">关闭</option>
+                <option value="local">本地模型</option>
+                <option value="endpoint">自定义端点</option>
+              </select>
+            </div>
+            <p className="settings-detail">{rows.llm.detail}</p>
+
+            {preferences.llm.backend === 'local' ? (
+              <div className="settings-control">
+                <button
+                  type="button"
+                  className="hotkey-apply"
+                  onClick={onLlmDownload}
+                  disabled={llmBusy || preferences.llm.local.modelReady}
+                >
+                  {preferences.llm.local.modelReady
+                    ? '本地模型已就绪'
+                    : llmDownloadPercent !== undefined
+                      ? `下载中 ${llmDownloadPercent}%`
+                      : '下载本地模型（约 1.1 GB）'}
+                </button>
+              </div>
+            ) : null}
+
+            {preferences.llm.backend === 'endpoint' ? (
+              <>
+                <div className="settings-control">
+                  <input
+                    className="hotkey-input"
+                    aria-label="智能清理服务地址"
+                    placeholder="https://… 或 http://127.0.0.1:11434"
+                    value={llmBaseUrl}
+                    onChange={(event) => setLlmBaseUrl(event.target.value)}
+                  />
+                  <input
+                    className="hotkey-input"
+                    aria-label="智能清理模型名"
+                    placeholder="模型名，例如 qwen2.5:1.5b"
+                    value={llmModel}
+                    onChange={(event) => setLlmModel(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="hotkey-apply"
+                    onClick={() => onLlmEndpointSave(llmBaseUrl, llmModel)}
+                    disabled={llmBusy}
+                  >
+                    保存端点
+                  </button>
+                </div>
+                <div className="settings-control">
+                  <input
+                    className="hotkey-input"
+                    type="password"
+                    aria-label="智能清理 API Key"
+                    placeholder={
+                      preferences.llm.endpoint.hasKey
+                        ? '已保存（留空不修改）'
+                        : 'API Key（本地端点可留空）'
+                    }
+                    value={llmKey}
+                    onChange={(event) => setLlmKey(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="hotkey-apply"
+                    onClick={() => {
+                      onLlmKeySave(llmKey)
+                      setLlmKey('')
+                    }}
+                    disabled={llmBusy || llmKey.trim().length === 0}
+                  >
+                    保存 Key
+                  </button>
+                  {preferences.llm.endpoint.hasKey ? (
+                    <button type="button" className="quiet-button" onClick={onLlmKeyClear}>
+                      清除
+                    </button>
+                  ) : null}
+                </div>
+                <p className="settings-detail">
+                  开启后转写文本会发送到你配置的服务；本机端点不出设备。
+                </p>
+              </>
+            ) : null}
+
+            {llmFeedback ? (
+              <p
+                className={
+                  llmFeedbackIsError ? 'settings-detail error' : 'settings-detail'
+                }
+              >
+                {llmFeedback}
+              </p>
+            ) : null}
+          </div>
+          </>
           )}
         </div>
       )}

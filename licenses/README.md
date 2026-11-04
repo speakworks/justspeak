@@ -18,6 +18,7 @@ only duplicate what the Electron distribution already contains.
 | `MIT-react-dom.txt` | MIT | `react-dom` |
 | `MIT-scheduler.txt` | MIT | `scheduler` |
 | `MIT-transcribe.cpp.txt` | MIT | `transcribe.cpp` ASR runtime (pinned v0.4.1) |
+| `MIT-llama.cpp.txt` | MIT | `llama.cpp` optional LLM cleanup runtime (pinned v0.8.0) |
 | `Apache-2.0.txt` | Apache-2.0 | Qwen3-ASR 0.6B weights, and any Apache-2.0 code |
 | `FunASR-Model-License-1.1.txt` | FunASR-Model-License-1.1 | SenseVoice Small weights |
 | `NOTICE-Qwen3-ASR-0.6B-gguf.txt` | Apache-2.0 §4(d) | Qwen3-ASR GGUF conversion: reproduces the conversion repo's NOTICE (§4(b) source of the change statement) |

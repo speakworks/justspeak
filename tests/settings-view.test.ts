@@ -3,6 +3,7 @@ import { DEFAULT_ACCELERATOR } from '../src/core/hotkey/accelerator'
 import {
   buildSettingsRows,
   describeHotkey,
+  describeLlm,
   describeProvider,
   summarizeProvider,
   PROVIDER_HEADER_HINT,
@@ -30,8 +31,74 @@ const PREFERENCES: PreferencesView = {
     label: 'Qwen3-ASR 0.6B（本地）',
     selectable: false,
     reason: '选择模型需要先合并第二 provider 的支持。'
+  },
+  llm: {
+    backend: 'off',
+    endpoint: { baseUrl: '', model: '', hasKey: false },
+    local: {
+      runtimeReady: false,
+      modelReady: false,
+      modelName: '',
+      modelPath: '',
+      state: 'idle'
+    }
   }
 }
+
+describe('llm state', () => {
+  it('labels off as the default', () => {
+    expect(describeLlm(PREFERENCES.llm)).toMatchObject({ status: 'default', statusLabel: '默认' })
+  })
+
+  it('labels a ready local model as an override', () => {
+    expect(
+      describeLlm({
+        backend: 'local',
+        endpoint: { baseUrl: '', model: '', hasKey: false },
+        local: {
+          runtimeReady: true,
+          modelReady: true,
+          modelName: 'Qwen',
+          modelPath: '/m',
+          state: 'ready'
+        }
+      })
+    ).toMatchObject({ status: 'override' })
+  })
+
+  it('does not claim ready when the local sidecar failed', () => {
+    expect(
+      describeLlm({
+        backend: 'local',
+        endpoint: { baseUrl: '', model: '', hasKey: false },
+        local: {
+          runtimeReady: true,
+          modelReady: true,
+          modelName: 'Qwen',
+          modelPath: '/m',
+          state: 'failed',
+          error: 'llama-server exited during startup'
+        }
+      })
+    ).toMatchObject({ status: 'unavailable' })
+  })
+
+  it('labels an incomplete endpoint as unavailable', () => {
+    expect(
+      describeLlm({
+        backend: 'endpoint',
+        endpoint: { baseUrl: '', model: '', hasKey: false },
+        local: {
+          runtimeReady: false,
+          modelReady: false,
+          modelName: '',
+          modelPath: '',
+          state: 'idle'
+        }
+      })
+    ).toMatchObject({ status: 'unavailable' })
+  })
+})
 
 describe('theme state', () => {
   it('labels the stored default as default, not as a user choice', () => {
@@ -139,11 +206,12 @@ describe('settings rows', () => {
       hotkey: 'Command+Shift+K',
       hotkeyMessage: 'Command+Shift+K 被占用，已回退。'
     })
-    expect(Object.keys(rows)).toEqual(['theme', 'hotkey', 'vocabulary', 'provider'])
+    expect(Object.keys(rows)).toEqual(['theme', 'hotkey', 'vocabulary', 'provider', 'llm'])
     expect(rows.theme.status).toBe('override')
     expect(rows.hotkey.status).toBe('unavailable')
     expect(rows.vocabulary.status).toBe('default')
     expect(rows.provider.status).toBe('unavailable')
+    expect(rows.llm.status).toBe('default')
   })
 })
 

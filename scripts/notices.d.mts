@@ -32,10 +32,15 @@ export function createDependencyEntry(
   manifest: SourceManifest,
   options?: { kind?: NoticesEntry['kind']; note?: string }
 ): NoticesEntry
-export function collectCatalogEntries(catalog: {
-  models?: Array<Record<string, unknown>>
-  runtimes?: Array<Record<string, unknown>>
-}): NoticesEntry[]
+export function collectCatalogEntries(
+  catalog: {
+    models?: Array<Record<string, unknown>>
+    runtimes?: Array<Record<string, unknown>>
+  },
+  llmCatalog?: {
+    models?: Array<Record<string, unknown>>
+  }
+): NoticesEntry[]
 export function collectNpmEntries(root: string): NoticesEntry[]
 export function collectElectronEntry(root: string): NoticesEntry[]
 export function groupByLicense(entries: NoticesEntry[]): LicenseGroup[]

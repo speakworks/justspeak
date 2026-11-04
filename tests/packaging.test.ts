@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import catalog from '../resources/models.json'
+import llmCatalog from '../resources/llm-models.json'
 import packageJson from '../package.json'
 import {
   collectCatalogEntries,
@@ -30,7 +31,7 @@ describe('packaging configuration and generated artifacts', () => {
   it('keeps THIRD_PARTY_NOTICES.md in sync with the production dependency tree', () => {
     const committed = readFileSync(path.join(ROOT, 'THIRD_PARTY_NOTICES.md'), 'utf8')
     const dependencyEntries = [...collectNpmEntries(ROOT), ...collectElectronEntry(ROOT)]
-    const catalogEntries = collectCatalogEntries(catalog)
+    const catalogEntries = collectCatalogEntries(catalog, llmCatalog)
 
     expect(renderNotices({ dependencyEntries, catalogEntries })).toBe(committed)
   })
@@ -59,6 +60,8 @@ describe('license texts travel with the app', () => {
     'react-dom': ['MIT-react-dom.txt'],
     scheduler: ['MIT-scheduler.txt'],
     'transcribe.cpp': ['MIT-transcribe.cpp.txt'],
+    'llama.cpp': ['MIT-llama.cpp.txt'],
+    'Qwen2.5-1.5B-Instruct (Q4_K_M)': ['Apache-2.0.txt'],
     'Qwen3-ASR 0.6B (Q8_0)': ['Apache-2.0.txt', 'NOTICE-Qwen3-ASR-0.6B-gguf.txt'],
     'SenseVoice Small (Q8_0)': [
       'FunASR-Model-License-1.1.txt',

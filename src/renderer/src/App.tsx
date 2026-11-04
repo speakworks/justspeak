@@ -15,6 +15,8 @@ import { resolveTheme } from '../../core/theme/theme'
 import type {
   AppState,
   AsrProviderSelection,
+  LlmBackend,
+  PreferencesPatch,
   PreferencesView,
   ResolvedTheme,
   SelectableAsrProviderId,
@@ -128,6 +130,10 @@ export function App(): React.JSX.Element {
   /** The one renderer copy of persisted settings, replaced by main on every read. */
   const [preferences, setPreferences] = useState<PreferencesView | null>(null)
   const [preferencesError, setPreferencesError] = useState<string | undefined>()
+  const [llmBusy, setLlmBusy] = useState(false)
+  const [llmDownloadPercent, setLlmDownloadPercent] = useState<number | undefined>()
+  const [llmFeedback, setLlmFeedback] = useState<string | undefined>()
+  const [llmFeedbackIsError, setLlmFeedbackIsError] = useState(false)
   const [view, setView] = useState<View>('home')
   // The dictated text lives above the destination switch so a transcript that
   // lands while another destination is shown is not lost.
@@ -266,6 +272,116 @@ export function App(): React.JSX.Element {
       })
   }, [])
 
+  const applyPreferencePatch = useCallback(async (patch: PreferencesPatch): Promise<boolean> => {
+    setPreferencesError(undefined)
+    setLlmFeedback(undefined)
+    try {
+      const outcome = await window.justspeak.setPreferences(patch)
+      setPreferences(outcome.preferences)
+      if (!outcome.ok) {
+        const message = outcome.message ?? '设置保存失败。'
+        setPreferencesError(message)
+        setLlmFeedback(message)
+        setLlmFeedbackIsError(true)
+        return false
+      }
+      return true
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      setPreferencesError(message)
+      setLlmFeedback(message)
+      setLlmFeedbackIsError(true)
+      return false
+    }
+  }, [])
+
+  const changeLlmBackend = useCallback(
+    (backend: LlmBackend): void => {
+      void applyPreferencePatch({ llmBackend: backend })
+    },
+    [applyPreferencePatch]
+  )
+
+  const saveLlmEndpoint = useCallback(
+    (baseUrl: string, model: string): void => {
+      // Only claim success after the write actually succeeded; the previous
+      // version set this optimistically even when validation rejected the URL.
+      void applyPreferencePatch({ llmBaseUrl: baseUrl, llmModel: model }).then((ok) => {
+        if (ok) {
+          setLlmFeedback('端点已保存。')
+          setLlmFeedbackIsError(false)
+        }
+      })
+    },
+    [applyPreferencePatch]
+  )
+
+  const saveLlmKey = useCallback((key: string): void => {
+    setLlmBusy(true)
+    setLlmFeedback(undefined)
+    void window.justspeak
+      .setLlmKey(key)
+      .then((result) => {
+        setLlmFeedbackIsError(!result.ok)
+        setLlmFeedback(result.ok ? 'API Key 已保存。' : (result.message ?? '保存失败。'))
+      })
+      .catch((error: unknown) => {
+        setLlmFeedbackIsError(true)
+        setLlmFeedback(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => setLlmBusy(false))
+  }, [])
+
+  const clearLlmKey = useCallback((): void => {
+    setLlmBusy(true)
+    void window.justspeak
+      .clearLlmKey()
+      .then((result) => {
+        setLlmFeedbackIsError(!result.ok)
+        setLlmFeedback(result.ok ? 'API Key 已清除。' : (result.message ?? '清除失败。'))
+      })
+      .catch((error: unknown) => {
+        setLlmFeedbackIsError(true)
+        setLlmFeedback(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => setLlmBusy(false))
+  }, [])
+
+  const downloadLlmModel = useCallback((): void => {
+    setLlmBusy(true)
+    setLlmDownloadPercent(0)
+    setLlmFeedback(undefined)
+    void window.justspeak
+      .downloadLlmModel()
+      .then((result) => {
+        setLlmFeedbackIsError(!result.ok)
+        setLlmFeedback(result.ok ? '本地模型已下载。' : (result.message ?? '下载失败。'))
+      })
+      .catch((error: unknown) => {
+        setLlmFeedbackIsError(true)
+        setLlmFeedback(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => {
+        setLlmBusy(false)
+        setLlmDownloadPercent(undefined)
+      })
+  }, [])
+
+  useEffect(() => {
+    return window.justspeak.onLlmDownload((event) => {
+      if (event.state === 'downloading') {
+        setLlmDownloadPercent(event.percent)
+      } else if (event.state === 'ready') {
+        setLlmDownloadPercent(100)
+        setLlmFeedback('本地模型已下载。')
+        setLlmFeedbackIsError(false)
+      } else {
+        setLlmFeedback(event.message ?? '下载失败。')
+        setLlmFeedbackIsError(true)
+      }
+    })
+  }, [])
+
   const hotkeyDraftState = validateHotkeyDraft(hotkeyDraft, preferences?.hotkey ?? '')
 
   const applyHotkey = useCallback((): void => {
@@ -396,7 +512,16 @@ export function App(): React.JSX.Element {
     },
     onApplyHotkey: applyHotkey,
     onTheme: applyThemePreference,
-    onReload: reloadPreferences
+    onReload: reloadPreferences,
+    onLlmBackend: changeLlmBackend,
+    onLlmEndpointSave: saveLlmEndpoint,
+    onLlmKeySave: saveLlmKey,
+    onLlmKeyClear: clearLlmKey,
+    onLlmDownload: downloadLlmModel,
+    llmBusy,
+    llmDownloadPercent,
+    llmFeedback,
+    llmFeedbackIsError
   }
 
   const subtitle =

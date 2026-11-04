@@ -11,6 +11,47 @@ that makes each item checkable.
 
 ---
 
+## 2026-11-04 — optional LLM cleanup
+
+### 1. Local and endpoint cleanup are available behind an opt-in switch
+
+- Owner decision: do A + C + D. A = un-defer local LLM as opt-in; C = cloud
+  endpoint; D = evaluation set. Default remains offline and off.
+- **Now:** settings → 智能清理 has `off` / `local` / `endpoint`.
+  - Local: bundled llama.cpp sidecar (24 MB) + Qwen2.5-1.5B-Instruct Q4_K_M
+    (~1.1 GB) downloaded on demand into `userData/models/llm`, verified by
+    SHA-256.
+  - Endpoint: OpenAI-compatible base URL/model/optional key; the key is
+    encrypted with safeStorage and never returned to the renderer.
+  - Correction is rule-gated: one marker candidate, six closed actions, 800 ms
+    timeout, digit/length guard, fallback to the rule text on any failure.
+- **Not default-on:** the 1.5B quality is marginal; the Go/No-Go evaluation
+  gates any future default change.
+- **Contract:** `openspec/changes/llm-cleanup`.
+
+### 2. Evaluation set is ready but has no recordings
+
+- `scripts/llm-eval.ts` + `docs/LLM-EVAL-SOP.md` implement the comparison
+  (CER, digit preservation, change count, latency) and refuse to invent a
+  dataset. The owner needs to record 20–30 real samples.
+- Go condition: self-correction/filler errors ≥20%, dangerous-sample retention
+  100%, blind preference ≥55%. Below that, keep the default off and invest in
+  hotwords/vocabulary.
+
+### 3. Spike disposition
+
+- Draft PR #25 proved the sidecar path but is not merged as-is; its code was
+  folded into the `llm-cleanup` change. Close #25 after the product PR lands,
+  or keep it as the measurement record.
+
+### 4. Qwen2.5-3B is excluded
+
+- Qwen2.5-3B-Instruct is Qwen Research License (non-commercial) and its 85-char
+  sample took 1.86 s (over the 1.5 s hard timeout). The default pool stays
+  Apache-2.0: Qwen2.5-1.5B-Instruct / Qwen3-1.7B.
+
+---
+
 ## 2026-11-02 — packaged runtime and release readiness
 
 ### 1. A packaged install could not transcribe (resolves item 11)

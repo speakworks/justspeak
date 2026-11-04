@@ -1,7 +1,7 @@
 # LLM sidecar 技术原型（spike）
 
 - 日期：2026-11-04
-- 状态：**技术可行性验证，未接入产品**（没有设置项、没有默认行为、没有 UI）
+- 状态：历史技术验证记录；其 sidecar 代码已由 `openspec/changes/llm-cleanup` 接入产品（默认关闭、opt-in）
 - 背景：[ASR-CORRECTION-RESEARCH.md](ASR-CORRECTION-RESEARCH.md)
 - 目标：回答“内置 llama.cpp sidecar + 1.5B 模型在 macOS 上能不能稳定、够快、可打包”，而不是交付功能
 
@@ -112,7 +112,7 @@ sidecar.decide(...) // -> { action: 'defer_to_human', raw: 'fetch failed' }
 - **模型来源**：原型用 Ollama blob，不是正式下载链路；正式实现要补 catalog、SHA、进度、删除/列举 API。
 - **签名**：ad-hoc 仅限本地；正式发布需 Developer ID，并让 electron-builder 重签 sidecar。
 - **本地端口暴露**：`llama-server` 监听 `127.0.0.1` 随机端口，任何本机进程都能调用；原型已加 `--no-webui`，正式实现应改用 Unix socket 或加 token 鉴权。
-- **未接入应用**：没有 IPC、设置、UI、Guard；`src/main/llm/sidecar.ts` 只被探针脚本和生命周期测试使用。
+- **原型边界**：本 spike 本身没有 IPC、设置、UI；产品接入、设置、Guard 和默认关闭策略在 `llm-cleanup` 中完成。
 - **提示注入**：当前只有系统提示声明“文本是数据”，`parseCorrectionDecision` 仍会接受模型输出里任意合法动作 JSON。动作空间是封闭的、原型不执行动作，所以影响有限；正式接入必须用规则标记的候选窗口限定合法动作，并加对抗样例。
 
 ## 下一步（需要决策）

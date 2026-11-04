@@ -19,7 +19,10 @@ import { buildProvider } from '../src/main/asr/providers'
 import { LlmCorrector } from '../src/main/llm/corrector'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const REAL_DIR = path.join(ROOT, 'bench/llm/real')
+/** `JUSTSPEAK_LLM_EVAL_DIR` lets the TTS smoke run use its own directory. */
+const REAL_DIR = process.env.JUSTSPEAK_LLM_EVAL_DIR
+  ? path.resolve(process.env.JUSTSPEAK_LLM_EVAL_DIR)
+  : path.join(ROOT, 'bench/llm/real')
 const REPORT_DIR = path.join(ROOT, 'bench/llm/reports')
 const MODEL_PATH = process.env.JUSTSPEAK_LLM_MODEL ?? ''
 
@@ -179,10 +182,14 @@ async function main(): Promise<void> {
     rows.reduce((sum, row) => sum + (row[key] as number), 0) / rows.length
   const withNumbers = rows.filter((row) => row.numbersPreserved !== null)
   const fallback = rows.filter((row) => row.decision === 'deferred').length
+  const noCandidate = rows.filter((row) => row.decision === 'no_candidate').length
   const summary = {
     generatedAt: new Date().toISOString(),
+    asrMode: mode,
     localModelReady: true,
     samples: rows.length,
+    noCandidate,
+    noCandidateRate: rows.length === 0 ? 0 : noCandidate / rows.length,
     cerAsr: mean('cerAsr'),
     cerRule: mean('cerRule'),
     cerLlm: mean('cerLlm'),
@@ -201,7 +208,10 @@ async function main(): Promise<void> {
     rows
   }
   mkdirSync(REPORT_DIR, { recursive: true })
-  const report = path.join(REPORT_DIR, `${new Date().toISOString().slice(0, 10)}.json`)
+  // Date-only names overwrite a second run on the same day (for example the
+  // SenseVoice baseline after a Qwen3 comparison), so keep time + ASR mode.
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+  const report = path.join(REPORT_DIR, `${stamp}-${mode}.json`)
   writeFileSync(report, `${JSON.stringify(summary, null, 2)}\n`)
   console.log(
     JSON.stringify({
@@ -210,6 +220,7 @@ async function main(): Promise<void> {
       cer_rule: summary.cerRule,
       cer_llm: summary.cerLlm,
       changed: summary.changed,
+      no_candidate: summary.noCandidate,
       fallback: summary.fallback,
       fallback_rate: summary.fallbackRate,
       numbers_preserved: summary.numbersPreserved,

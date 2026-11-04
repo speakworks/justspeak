@@ -46,9 +46,21 @@ JUSTSPEAK_LLM_MODEL=/path/to/qwen2.5-1.5b-instruct-q4_k_m.gguf pnpm llm:eval
 
 输出：
 
-- `bench/llm/reports/<date>.json`（gitignored）
+- `bench/llm/reports/<timestamp>-<asr>.json`（gitignored；同一天可保留多次运行）
 - 每条的 `cerAsr` / `cerRule` / `cerLlm`、`decision`（`applied` / `keep_all` / `deferred` / `guard_rejected` / `no_candidate`）、数字是否与人工参考一致、ASR/LLM 延迟
 - 汇总的 `cerAsr` / `cerRule` / `cerLlm`、`fallback` / `fallbackRate`（`deferred` 占样本比例，含超时与无效输出）、`numbersPreserved` / `samplesWithNumbers`
+
+### 合成冒烟（不是 Go/No-Go）
+
+没有真人录音时，可以先用 macOS TTS 生成一份合成数据，验证 ASR → 规则 → LLM → 指标的全链路：
+
+```bash
+pnpm llm:eval:smoke
+JUSTSPEAK_LLM_EVAL_DIR=bench/llm/smoke \
+  JUSTSPEAK_LLM_MODEL=/path/to/model.gguf pnpm llm:eval
+```
+
+`scripts/llm-eval-smoke.ts` 用 `say` + `afconvert` 生成 16 kHz 单声道 PCM16，输出在 `bench/llm/smoke/`（gitignored）。**合成音频不能替代真人口语，不能用于“默认开启”的 Go/No-Go 决策**；它只证明评测链路可用，并暴露明显的模型/护栏回归。
 
 ## 3. Go / No-Go
 
@@ -56,6 +68,7 @@ JUSTSPEAK_LLM_MODEL=/path/to/qwen2.5-1.5b-instruct-q4_k_m.gguf pnpm llm:eval
 
 - **Go**：自纠/填充词类错误占样本 ≥20%，且危险样本（数字/否定/专名）保留 100%，盲评偏好 ≥55%。
 - **No-Go**：自纠类 <10%，或 `fallbackRate` >25%，或危险样本保留不达标。
+- 同时报告 `noCandidateRate`：它衡量“规则是否愿意把样本交给模型”，不要把低触发率误读成模型质量。合成冒烟的基线见 [LLM-EVAL-SMOKE.md](LLM-EVAL-SMOKE.md)。
 - 升级更强模型：受限决策 CER 降幅 <5% 且用户明确反馈“改得不够”。
 
 注意：CER 只衡量字面差异，不衡量“意思有没有变”。数字/否定/专名必须单独看，必要时人工盲评。

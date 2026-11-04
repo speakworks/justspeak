@@ -26,7 +26,8 @@
     "package:mac:signed": "tsx scripts/package-runtime.ts && tsx scripts/package-llm-runtime.ts && electron-vite build && tsx scripts/package-mac-signed.ts",
     "verify:mac": "tsx scripts/verify-mac-app.ts",
     "postinstall": "node node_modules/electron/install.js",
-    "llm:eval": "tsx scripts/llm-eval.ts"
+    "llm:eval": "tsx scripts/llm-eval.ts",
+    "llm:eval:smoke": "tsx scripts/llm-eval-smoke.ts"
   },
   "dependencies": {
     "react": "^19.3.1",

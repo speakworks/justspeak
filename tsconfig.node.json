@@ -20,6 +20,7 @@
     "scripts/llm-probe.ts",
     "scripts/package-llm-runtime.ts",
     "scripts/llm-eval.ts",
+    "scripts/llm-eval-smoke.ts",
     "electron.vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts"

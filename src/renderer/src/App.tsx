@@ -540,6 +540,9 @@ export function App(): React.JSX.Element {
     onLlmKeySave: saveLlmKey,
     onLlmKeyClear: clearLlmKey,
     onLlmDownload: downloadLlmModel,
+    asr,
+    onProviderChange: changeProvider,
+    providerBusy: isBusy || state === 'recording',
     llmBusy,
     llmDownloadPercent,
     llmFeedback,
@@ -574,27 +577,6 @@ export function App(): React.JSX.Element {
               <button type="button" className="quiet-button" onClick={() => setView('home')}>
                 完成
               </button>
-            ) : asr ? (
-              <span className="provider">
-                <select
-                  className="provider-select"
-                  aria-label="识别模型"
-                  value={asr.id}
-                  disabled={isBusy || state === 'recording'}
-                  onChange={(event) =>
-                    changeProvider(event.target.value as SelectableAsrProviderId)
-                  }
-                >
-                  {asr.options.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <svg className="provider-chevron" viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="m4.5 6.5 3.5 3.5 3.5-3.5" />
-                </svg>
-              </span>
             ) : null}
           </div>
         </header>

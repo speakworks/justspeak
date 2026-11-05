@@ -77,7 +77,7 @@ export interface VocabularySummary {
 export interface ProviderSummary {
   id: string
   label: string
-  /** Whether the user can switch provider right now (the picker lives in the header). */
+  /** Whether the user can switch provider right now (the picker lives in settings). */
   selectable: boolean
   /** What is missing before this setting can be changed. */
   reason: string

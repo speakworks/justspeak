@@ -158,12 +158,14 @@ export function SettingsPanel({
               <span id="settings-hotkey-status" className="hotkey-status" aria-live="polite">
                 {hotkeyCapturing ? '按 Esc 取消' : '点击后直接按组合键'}
               </span>
+              <span className="settings-live" role="status" aria-live="polite">
+                {hotkeyMessage ?? ''}
+              </span>
             </div>
             {hotkeyMessage ? (
               <p
                 id="settings-hotkey-message"
                 className={hotkeyMessageIsError ? 'hotkey-message error' : 'hotkey-message'}
-                aria-live="polite"
               >
                 {hotkeyMessage}
               </p>

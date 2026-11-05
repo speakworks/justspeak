@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { captureHotkey, type HotkeyKeyInput } from '../src/core/hotkey/capture'
+import { parseAccelerator } from '../src/core/hotkey/accelerator'
+import {
+  captureHotkey,
+  RESERVED_ACCELERATORS,
+  type HotkeyKeyInput
+} from '../src/core/hotkey/capture'
 
 function key(
   code: string,
@@ -71,11 +76,21 @@ describe('press-to-record hotkey capture', () => {
     ['Command+R', key('KeyR', { metaKey: true })],
     ['Command+C', key('KeyC', { metaKey: true })],
     ['Command+Space', key('Space', { metaKey: true })],
-    ['Command+Shift+3', key('Digit3', { metaKey: true, shiftKey: true })]
+    ['Command+Shift+3', key('Digit3', { metaKey: true, shiftKey: true })],
+    ['Command+-', key('Minus', { metaKey: true })],
+    ['Command+`', key('Backquote', { metaKey: true })]
   ])('refuses the macOS-reserved %s', (_label, input) => {
     const result = captureHotkey(input)
     expect(result.status).toBe('invalid')
     if (result.status === 'invalid') expect(result.message).toContain('macOS 占用')
+  })
+
+  it('keeps every reserved accelerator parseable and canonical', () => {
+    for (const accelerator of RESERVED_ACCELERATORS) {
+      const parsed = parseAccelerator(accelerator)
+      expect(parsed.ok, accelerator).toBe(true)
+      if (parsed.ok) expect(parsed.value.accelerator).toBe(accelerator)
+    }
   })
 
   it('never emits a modifier-less accelerator', () => {

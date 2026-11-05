@@ -154,7 +154,7 @@ describe('hotkey capture lifecycle', () => {
     expect(h.timer.delays).toEqual([15_000, 15_000])
   })
 
-  it('restores the previous accelerator on cancel and does not write', async () => {
+  it('restores the previous accelerator on cancel', async () => {
     const h = harness()
     await h.controller.start()
     const result = await h.controller.cancel()

@@ -100,7 +100,13 @@ const NAMED_KEYS = new Map<string, string>([
  * a global dictation key would break the shortcut everywhere, so the recorder
  * refuses them instead of letting `globalShortcut` win the race.
  */
-const RESERVED = new Set([
+/**
+ * Canonical spellings only: the check below compares against
+ * `parseAccelerator`'s output, so `Command+Minus` would never match the
+ * canonical `Command+-`. `tests/hotkey-capture.test.ts` asserts every entry
+ * parses to itself.
+ */
+export const RESERVED_ACCELERATORS = [
   // Application menu roles and edit/view shortcuts. Capturing suppresses the
   // native menu so these reach the recorder; they must not become global.
   'Command+Q',
@@ -120,14 +126,13 @@ const RESERVED = new Set([
   'Command+R',
   'Command+Shift+R',
   'Command+0',
-  'Command+Minus',
-  'Command+Plus',
+  'Command+-',
   'Command+=',
   'Command+Shift+=',
   'Command+Alt+I',
   'Command+Shift+I',
   'Command+Control+F',
-  'Command+Backquote',
+  'Command+`',
   // macOS system shortcuts (Spotlight, screenshots, emoji/Finder search). The
   // system may consume these before the app sees them; the list covers the
   // ones that do arrive.
@@ -138,7 +143,9 @@ const RESERVED = new Set([
   'Command+Shift+4',
   'Command+Shift+5',
   'Command+Shift+6'
-])
+] as const
+
+const RESERVED = new Set<string>(RESERVED_ACCELERATORS)
 
 const NO_MODIFIER_MESSAGE =
   '快捷键必须包含至少一个修饰键（Command、Control、Alt 或 Shift）。'

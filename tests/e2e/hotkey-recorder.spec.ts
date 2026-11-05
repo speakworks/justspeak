@@ -96,6 +96,7 @@ test.describe('JustSpeak press-to-record hotkey', () => {
       await recorder.click()
       await expect(page.getByText(/请按下快捷键/)).toBeVisible()
       await page.keyboard.press(NEW_CHORD)
+      await expect(page.getByText(/请按下快捷键/)).toHaveCount(0)
       await expect(recorder).toBeEnabled()
       await expect.poll(() => appState(page)).toBe('idle')
       expect(await liveHotkey(page)).toBe(NEW_ACCELERATOR)

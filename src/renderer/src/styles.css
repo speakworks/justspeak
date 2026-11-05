@@ -285,49 +285,6 @@ textarea {
   color: var(--muted);
 }
 
-.provider {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.provider-select {
-  appearance: none;
-  -webkit-appearance: none;
-  height: 26px;
-  max-width: 190px;
-  padding: 0 24px 0 9px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.provider-select:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.provider-select:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.provider-chevron {
-  position: absolute;
-  right: 7px;
-  width: 11px;
-  height: 11px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.4;
-  stroke-linecap: round;
-  color: var(--faint);
-  pointer-events: none;
-}
-
 .quiet-button {
   height: 26px;
   padding: 0 11px;

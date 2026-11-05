@@ -2,7 +2,13 @@ import React, { useEffect, useState } from 'react'
 import { acceleratorDisplayParts } from '../../core/hotkey/accelerator'
 import type { SettingState, SettingsRows } from '../../core/preferences/view'
 import { THEME_LABEL, THEME_PREFERENCES } from '../../core/theme/theme'
-import type { LlmBackend, PreferencesView, ThemePreference } from '../../shared/ipc'
+import type {
+  AsrProviderSelection,
+  LlmBackend,
+  PreferencesView,
+  SelectableAsrProviderId,
+  ThemePreference
+} from '../../shared/ipc'
 
 export interface SettingsPanelProps {
   preferences: PreferencesView | null
@@ -22,6 +28,11 @@ export interface SettingsPanelProps {
   onLlmKeySave: (key: string) => void
   onLlmKeyClear: () => void
   onLlmDownload: () => void
+  /** Live ASR selection, including the options main reports; settings owns switching. */
+  asr?: AsrProviderSelection
+  onProviderChange: (provider: SelectableAsrProviderId) => void
+  /** True while recording or a session rebuild is in flight (main rejects a switch then). */
+  providerBusy: boolean
   llmBusy: boolean
   llmDownloadPercent?: number
   llmFeedback?: string
@@ -78,6 +89,9 @@ export function SettingsPanel({
   onLlmKeySave,
   onLlmKeyClear,
   onLlmDownload,
+  asr,
+  onProviderChange,
+  providerBusy,
   llmBusy,
   llmDownloadPercent,
   llmFeedback,
@@ -219,11 +233,21 @@ export function SettingsPanel({
             <div className="settings-control">
               <select
                 className="settings-select"
-                value={preferences.provider.id}
-                disabled
+                aria-label="识别模型"
+                value={asr?.id ?? preferences.provider.id}
+                disabled={providerBusy || !asr || !preferences.provider.selectable}
                 aria-describedby="settings-provider-reason"
+                onChange={(event) =>
+                  onProviderChange(event.target.value as SelectableAsrProviderId)
+                }
               >
-                <option value={preferences.provider.id}>{preferences.provider.label}</option>
+                {(asr?.options ?? [{ id: preferences.provider.id, label: preferences.provider.label }]).map(
+                  (option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  )
+                )}
               </select>
             </div>
             <p className="settings-detail" id="settings-provider-reason">

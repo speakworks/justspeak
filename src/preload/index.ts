@@ -4,6 +4,8 @@ import type {
   AppStatus,
   DiagnosticsExportResult,
   HistoryEntry,
+  HotkeyCaptureEndResult,
+  HotkeyCaptureStartResult,
   JustSpeakApi,
   LlmDownloadEvent,
   OverlayState,
@@ -30,6 +32,16 @@ const api: JustSpeakApi = {
   getPreferences: () => ipcRenderer.invoke('preferences:get') as Promise<PreferencesView>,
   setPreferences: (patch: PreferencesPatch) =>
     ipcRenderer.invoke('preferences:set', patch) as Promise<PreferencesSetResult>,
+  beginHotkeyCapture: () =>
+    ipcRenderer.invoke('hotkey:capture-start') as Promise<HotkeyCaptureStartResult>,
+  endHotkeyCapture: () =>
+    ipcRenderer.invoke('hotkey:capture-end') as Promise<HotkeyCaptureEndResult>,
+  onHotkeyCaptureEnded: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, result: HotkeyCaptureEndResult) =>
+      listener(result)
+    ipcRenderer.on('hotkey:capture-ended', handler)
+    return () => ipcRenderer.removeListener('hotkey:capture-ended', handler)
+  },
   setLlmKey: (key: string) =>
     ipcRenderer.invoke('llm:set-key', key) as Promise<{ ok: boolean; message?: string }>,
   clearLlmKey: () =>

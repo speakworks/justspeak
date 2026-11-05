@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react'
-import { acceleratorDisplayParts } from '../../core/hotkey/accelerator'
 import type { SettingState, SettingsRows } from '../../core/preferences/view'
 import { THEME_LABEL, THEME_PREFERENCES } from '../../core/theme/theme'
 import type {
@@ -9,18 +8,20 @@ import type {
   SelectableAsrProviderId,
   ThemePreference
 } from '../../shared/ipc'
+import { HotkeyRecorder } from './HotkeyRecorder'
 
 export interface SettingsPanelProps {
   preferences: PreferencesView | null
   rows: SettingsRows | null
   error?: string
-  hotkeyDraft: string
   hotkeyMessage?: string
   hotkeyMessageIsError: boolean
   hotkeyBusy: boolean
-  canApplyHotkey: boolean
-  onHotkeyDraft: (value: string) => void
-  onApplyHotkey: () => void
+  hotkeyCapturing: boolean
+  onHotkeyBegin: () => void
+  onHotkeyCaptured: (accelerator: string) => void
+  onHotkeyCancel: () => void
+  onHotkeyHint: (message?: string) => void
   onTheme: (theme: ThemePreference) => void
   onReload: () => void
   onLlmBackend: (backend: LlmBackend) => void
@@ -54,18 +55,6 @@ function StatusChip({ state }: { state: SettingState }): React.JSX.Element {
   return <span className={`settings-status ${state.status}`}>{state.statusLabel}</span>
 }
 
-function CurrentHotkey({ accelerator }: { accelerator: string }): React.JSX.Element {
-  const parts = accelerator ? acceleratorDisplayParts(accelerator) : []
-  if (parts.length === 0) return <span className="hotkey-missing">未注册</span>
-  return (
-    <>
-      {parts.map((part, index) => (
-        <kbd key={`${part}-${index}`}>{part}</kbd>
-      ))}
-    </>
-  )
-}
-
 /**
  * One panel for every user preference. It owns no persisted state: the values
  * come from `preferences` (main's read of disk / the live OS binding), and
@@ -75,13 +64,14 @@ export function SettingsPanel({
   preferences,
   rows,
   error,
-  hotkeyDraft,
   hotkeyMessage,
   hotkeyMessageIsError,
   hotkeyBusy,
-  canApplyHotkey,
-  onHotkeyDraft,
-  onApplyHotkey,
+  hotkeyCapturing,
+  onHotkeyBegin,
+  onHotkeyCaptured,
+  onHotkeyCancel,
+  onHotkeyHint,
   onTheme,
   onReload,
   onLlmBackend,
@@ -152,35 +142,17 @@ export function SettingsPanel({
               <StatusChip state={rows.hotkey} />
             </div>
             <div className="settings-control">
-              <label className="settings-visually-hidden" htmlFor="settings-hotkey">
-                全局快捷键
-              </label>
-              <input
-                id="settings-hotkey"
-                className={
-                  hotkeyMessageIsError ? 'hotkey-input invalid' : 'hotkey-input settings-hotkey'
-                }
-                value={hotkeyDraft}
-                onChange={(event) => onHotkeyDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') onApplyHotkey()
-                }}
-                aria-invalid={hotkeyMessageIsError ? true : undefined}
-                aria-describedby={hotkeyMessage ? 'settings-hotkey-message' : 'settings-hotkey-status'}
-                spellCheck={false}
-                autoComplete="off"
+              <HotkeyRecorder
+                accelerator={preferences.hotkey}
+                capturing={hotkeyCapturing}
+                busy={hotkeyBusy}
+                onBegin={onHotkeyBegin}
+                onCaptured={onHotkeyCaptured}
+                onCancel={onHotkeyCancel}
+                onHint={onHotkeyHint}
               />
-              <button
-                type="button"
-                className="hotkey-apply"
-                onClick={onApplyHotkey}
-                disabled={hotkeyBusy || !canApplyHotkey}
-              >
-                应用
-              </button>
               <span id="settings-hotkey-status" className="hotkey-status">
-                当前
-                <CurrentHotkey accelerator={preferences.hotkey} />
+                {hotkeyCapturing ? '按 Esc 取消' : '点击后直接按组合键'}
               </span>
             </div>
             {hotkeyMessage ? (

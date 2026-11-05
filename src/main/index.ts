@@ -64,6 +64,8 @@ import type {
   DiagnosticsExportResult,
   HistoryEntry,
   HistoryOutcome,
+  HotkeyCaptureEndResult,
+  HotkeyCaptureStartResult,
   HotkeySetResult,
   ModelInfo,
   PermissionStatus,
@@ -177,6 +179,9 @@ function requireHistoryStore(): HistoryStore {
 let hotkeySource: HotkeySource | undefined
 let activeHotkey = DEFAULT_ACCELERATOR
 let hotkeyNotice: string | undefined
+/** True while the settings recorder owns the keyboard and the dictation key is unregistered. */
+let hotkeyCaptureActive = false
+let hotkeyCaptureTimer: ReturnType<typeof setTimeout> | undefined
 let postprocessOptions: PostprocessOptions = {}
 let providerPreference: ProviderPreferenceStore
 /** Raw persisted value; validation happens in `resolveAsrMode`. */
@@ -942,6 +947,40 @@ function createWindow(): void {
   }
 }
 
+/** How long a settings recorder may hold the dictation key unregistered. */
+const HOTKEY_CAPTURE_TIMEOUT_MS = 15_000
+
+function clearHotkeyCaptureTimer(): void {
+  if (hotkeyCaptureTimer !== undefined) {
+    clearTimeout(hotkeyCaptureTimer)
+    hotkeyCaptureTimer = undefined
+  }
+}
+
+/**
+ * End a captured recording without applying a new binding: register the
+ * accelerator that was live before the recorder took over. Idempotent, so the
+ * safety timeout and the renderer's cancel can race harmlessly.
+ */
+async function finishHotkeyCapture(): Promise<HotkeyCaptureEndResult> {
+  clearHotkeyCaptureTimer()
+  if (!hotkeyCaptureActive) return { ok: true, accelerator: activeHotkey }
+  hotkeyCaptureActive = false
+  if (!hotkeySource || activeHotkey.length === 0) {
+    return { ok: true, accelerator: activeHotkey }
+  }
+  const outcome = await registerHotkeyWithFallback(hotkeySource, activeHotkey)
+  activeHotkey = outcome.accelerator
+  hotkeyNotice = outcome.message
+  if (outcome.message) console.warn('[hotkey]', outcome.message)
+  refreshResultPanelEscape()
+  return {
+    ok: outcome.ok,
+    accelerator: activeHotkey,
+    ...(outcome.message === undefined ? {} : { message: outcome.message })
+  }
+}
+
 /** Register a requested accelerator and report what is actually live. */
 async function applyHotkeyPreference(payload: unknown): Promise<HotkeySetResult> {
   const requested = typeof payload === 'string' ? payload : ''
@@ -961,6 +1000,11 @@ async function applyHotkeyPreference(payload: unknown): Promise<HotkeySetResult>
   if (currentState !== 'idle' && currentState !== 'error') {
     return rejected('录音或识别过程中不能更改快捷键。')
   }
+
+  // Applying is also how a press-to-record capture ends successfully: the new
+  // binding supersedes the temporary unregistration, so no restore is needed.
+  clearHotkeyCaptureTimer()
+  hotkeyCaptureActive = false
 
   const outcome = await registerHotkeyWithFallback(hotkeySource, parsed.value.accelerator)
   activeHotkey = outcome.accelerator
@@ -1193,6 +1237,61 @@ app.whenReady().then(async () => {
       return { ok, preferences: view, hotkey: hotkeyResult, message }
     }
   )
+
+  ipcMain.handle(
+    'hotkey:capture-start',
+    async (event): Promise<HotkeyCaptureStartResult> => {
+      if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+        console.warn('[hotkey] rejected untrusted capture start')
+        throw new Error('未授权的快捷键请求。')
+      }
+      if (!hotkeySource) return { ok: false, message: '快捷键服务尚未就绪。' }
+      const currentState = session?.state ?? 'idle'
+      if (currentState !== 'idle' && currentState !== 'error') {
+        return { ok: false, message: '录音或识别过程中不能更改快捷键。' }
+      }
+      if (hotkeyCaptureActive) return { ok: true }
+      try {
+        // The app's own global shortcut would otherwise swallow the chord the
+        // user is trying to record (including the current one).
+        await hotkeySource.stop()
+      } catch (error) {
+        return {
+          ok: false,
+          message: `无法暂停当前快捷键：${error instanceof Error ? error.message : String(error)}`
+        }
+      }
+      hotkeyCaptureActive = true
+      clearHotkeyCaptureTimer()
+      hotkeyCaptureTimer = setTimeout(() => {
+        hotkeyCaptureTimer = undefined
+        void finishHotkeyCapture()
+          .then(async (result) => {
+            mainWindow?.webContents.send('hotkey:capture-ended', result)
+            mainWindow?.webContents.send('preferences:changed', await readPreferencesView())
+          })
+          .catch((error: unknown) => {
+            console.warn('[hotkey] safety restore failed', error)
+          })
+      }, HOTKEY_CAPTURE_TIMEOUT_MS)
+      return { ok: true }
+    }
+  )
+
+  ipcMain.handle(
+    'hotkey:capture-end',
+    async (event): Promise<HotkeyCaptureEndResult> => {
+      if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+        console.warn('[hotkey] rejected untrusted capture end')
+        throw new Error('未授权的快捷键请求。')
+      }
+      const result = await finishHotkeyCapture()
+      // Restoring can fail and fall back to the default, which changes what the
+      // settings row must show even though no new binding was applied.
+      mainWindow?.webContents.send('preferences:changed', await readPreferencesView())
+      return result
+    }
+  )
   ipcMain.handle('llm:set-key', async (event, key: unknown) => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
       return { ok: false, message: '未授权的设置请求。' }
@@ -1364,6 +1463,7 @@ app.whenReady().then(async () => {
 let flushingHistoryForQuit = false
 
 app.on('will-quit', (event) => {
+  clearHotkeyCaptureTimer()
   void hotkeySource?.stop()
   if (flushingHistoryForQuit) return
   // A transcript appended just before Cmd+Q must reach disk, and the optional

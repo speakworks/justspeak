@@ -82,19 +82,68 @@ The chosen accelerator SHALL be stored in `userData/preferences.json` through th
 - **THEN** loading returns the default theme and the default accelerator without throwing
 - **AND** a subsequent save rewrites a valid file
 
-### Requirement: The renderer SHALL show live validation and the registered accelerator
+### Requirement: Recording SHALL suspend the live binding safely
 
-The settings surface SHALL provide a compact control to enter an accelerator, SHALL validate it as the user types, SHALL disable applying an invalid or unchanged binding, SHALL show the currently registered accelerator, and SHALL display fallback or registration errors returned by main.
+Starting a recording SHALL unregister the dictation accelerator so the chord
+being recorded reaches the application, SHALL arm a bounded safety restore, and
+SHALL restore the previously live accelerator when the recording is cancelled,
+abandoned, or times out. Applying a new binding SHALL end the recording without
+a separate restore. A recording SHALL be refused while recording, transcribing,
+or pasting, and every capture IPC SHALL require the trusted sender.
 
-#### Scenario: Live validation
+#### Scenario: Recording the current binding
 
-- **WHEN** the user types an invalid binding
-- **THEN** the field shows an error message and the apply action is disabled
+- **WHEN** the user starts a recording and presses the accelerator that is currently live
+- **THEN** the renderer receives the chord instead of the hotkey toggling dictation
+- **AND** the chord can be applied or discarded
 
-#### Scenario: Applied binding
+#### Scenario: Cancel restores the previous binding
 
-- **WHEN** the user applies a valid, changed binding and the OS accepts it
-- **THEN** the shown current accelerator updates to the applied value
+- **WHEN** the user presses Escape or moves focus away from an armed recorder
+- **THEN** the previously live accelerator is registered again
+- **AND** no preference is written
+
+#### Scenario: Abandoned recording
+
+- **WHEN** a recording is still armed after the safety window elapses
+- **THEN** main restores the previously live accelerator
+- **AND** main pushes the restored accelerator and any message to the renderer
+
+#### Scenario: Recording during dictation
+
+- **WHEN** a recording is requested while the session is recording, transcribing, or pasting
+- **THEN** the request is refused with a message
+- **AND** the current accelerator stays registered
+
+### Requirement: The renderer SHALL record the next chord and show the registered accelerator
+
+The settings surface SHALL provide a press-to-record control instead of asking
+the user to type accelerator syntax. The control SHALL show the currently
+registered accelerator, SHALL arm a recording when activated, SHALL display held
+modifiers while the chord is unfinished, SHALL canonicalize the next chord
+through the pure capture mapper and accelerator parser, SHALL apply a valid
+chord through the single preferences surface, SHALL cancel on bare Escape or
+blur, SHALL refuse modifier-less chords and macOS-reserved combinations with a
+message, and SHALL display fallback or registration errors returned by main.
+Manual typing SHALL NOT be required and SHALL NOT be accepted by the control.
+
+#### Scenario: Record a new binding
+
+- **WHEN** the user activates the control and presses Command+Shift+K
+- **THEN** the control shows `⌘ ⇧ K`
+- **AND** the binding is applied and the shown current accelerator updates
+
+#### Scenario: Modifier preview
+
+- **WHEN** the user holds Command and Shift before pressing a main key
+- **THEN** the control shows `⌘ ⇧` as a pending chord
+- **AND** no binding is applied until a main key arrives
+
+#### Scenario: Invalid chord stays armed
+
+- **WHEN** the user presses a modifier-less key, an unsupported key, or Command+Q
+- **THEN** the control shows a message naming the problem
+- **AND** it keeps waiting for another chord rather than applying anything
 
 #### Scenario: Fallback after apply
 

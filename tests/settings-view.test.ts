@@ -10,8 +10,7 @@ import {
   PROVIDER_NOT_READY_REASON,
   PROVIDER_FAKE_REASON,
   describeTheme,
-  describeVocabulary,
-  validateHotkeyDraft
+  describeVocabulary
 } from '../src/core/preferences/view'
 import type { PreferencesView, VocabularySummary } from '../src/shared/ipc'
 
@@ -212,30 +211,6 @@ describe('settings rows', () => {
     expect(rows.vocabulary.status).toBe('default')
     expect(rows.provider.status).toBe('unavailable')
     expect(rows.llm.status).toBe('default')
-  })
-})
-
-describe('hotkey draft validation', () => {
-  it('rejects an invalid binding and keeps apply unavailable', () => {
-    const state = validateHotkeyDraft('Space', DEFAULT_ACCELERATOR)
-    expect(state.ok).toBe(false)
-    expect(state.dirty).toBe(false)
-    expect(state.message).toContain('修饰键')
-  })
-
-  it('treats the live binding as not dirty', () => {
-    expect(validateHotkeyDraft(DEFAULT_ACCELERATOR, DEFAULT_ACCELERATOR)).toMatchObject({
-      ok: true,
-      dirty: false
-    })
-  })
-
-  it('canonicalizes a changed binding and marks it dirty', () => {
-    expect(validateHotkeyDraft('cmd+shift+k', DEFAULT_ACCELERATOR)).toMatchObject({
-      ok: true,
-      accelerator: 'Command+Shift+K',
-      dirty: true
-    })
   })
 })
 

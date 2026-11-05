@@ -7,7 +7,7 @@
  * testable without a DOM.
  */
 
-import { parseAccelerator, DEFAULT_ACCELERATOR } from '../hotkey/accelerator'
+import { DEFAULT_ACCELERATOR } from '../hotkey/accelerator'
 import { THEME_LABEL } from '../theme/theme'
 import type {
   PreferencesView,
@@ -201,22 +201,3 @@ export function buildSettingsRows(preferences: PreferencesView): SettingsRows {
   }
 }
 
-export interface HotkeyDraftResult {
-  ok: boolean
-  accelerator?: string
-  message?: string
-  /** True only for a valid binding that differs from the live one. */
-  dirty: boolean
-}
-
-export function validateHotkeyDraft(draft: string, active: string): HotkeyDraftResult {
-  const parsed = parseAccelerator(draft)
-  if (!parsed.ok) {
-    return { ok: false, message: parsed.error.message, dirty: false }
-  }
-  return {
-    ok: true,
-    accelerator: parsed.value.accelerator,
-    dirty: parsed.value.accelerator !== active
-  }
-}

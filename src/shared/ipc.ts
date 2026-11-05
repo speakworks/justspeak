@@ -53,6 +53,23 @@ export interface HotkeySetResult {
   message?: string
 }
 
+/**
+ * Press-to-record brackets the capture with these two calls. Starting one
+ * temporarily unregisters the dictation accelerator so the chord being
+ * recorded is not swallowed by the app's own global shortcut.
+ */
+export interface HotkeyCaptureStartResult {
+  ok: boolean
+  message?: string
+}
+
+export interface HotkeyCaptureEndResult {
+  ok: boolean
+  /** The accelerator that is live after the capture ended. */
+  accelerator: string
+  message?: string
+}
+
 /** `system` follows macOS appearance; `light` / `dark` pin it. */
 export type ThemePreference = 'system' | 'light' | 'dark'
 
@@ -240,6 +257,12 @@ export interface JustSpeakApi {
   getPreferences: () => Promise<PreferencesView>
   /** Writes one or more preferences through the single preferences surface. */
   setPreferences: (patch: PreferencesPatch) => Promise<PreferencesSetResult>
+  /** Temporarily unregisters the dictation hotkey so a new chord can be pressed. */
+  beginHotkeyCapture: () => Promise<HotkeyCaptureStartResult>
+  /** Restores the previous hotkey after a cancelled or timed-out recording. */
+  endHotkeyCapture: () => Promise<HotkeyCaptureEndResult>
+  /** Main ends a capture on its own (safety timeout) and reports the live key. */
+  onHotkeyCaptureEnded: (listener: (result: HotkeyCaptureEndResult) => void) => () => void
   /** Stores an endpoint key encrypted; the key never returns to the renderer. */
   setLlmKey: (key: string) => Promise<{ ok: boolean; message?: string }>
   clearLlmKey: () => Promise<{ ok: boolean; message?: string }>

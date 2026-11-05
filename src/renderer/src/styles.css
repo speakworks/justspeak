@@ -718,6 +718,45 @@ textarea {
   background: var(--red-soft);
 }
 
+/* Press-to-record: a button styled like the old text field, but it never
+   accepts typed text — the chord itself is the value. */
+.hotkey-recorder {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  color: var(--text);
+  text-align: left;
+}
+
+.hotkey-recorder:hover:not(:disabled) {
+  border-color: var(--accent-line);
+}
+
+.hotkey-recorder.capturing {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.hotkey-recorder:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.hotkey-keycaps,
+.hotkey-capturing {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.hotkey-wait {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .hotkey-status {
   flex: none;
   display: inline-flex;

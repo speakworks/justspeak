@@ -113,7 +113,9 @@ test.describe('JustSpeak press-to-record hotkey', () => {
       await recorder.click()
       await expect(page.getByText(/请按下快捷键/)).toBeVisible()
       await page.keyboard.press('A')
-      await expect(page.getByText(/至少一个修饰键/)).toBeVisible()
+      // The persistent live region carries the same text for screen readers,
+      // so target the visible message explicitly.
+      await expect(page.locator('#settings-hotkey-message')).toContainText('至少一个修饰键')
       await expect(page.getByText(/请按下快捷键/)).toBeVisible()
       await page.keyboard.press('Escape')
       expect(await liveHotkey(page)).toBe(NEW_ACCELERATOR)

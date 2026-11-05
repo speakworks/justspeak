@@ -25,6 +25,7 @@ See [docs/ROADMAP.md](docs/ROADMAP.md).
 ## Project docs
 
 - [Website](https://speakworks.github.io/justspeak/)
+- [AI handoff (current state and next steps)](docs/AI-HANDOFF.md)
 - [Core boundary ADR](docs/ADR-0001-core-boundary.md)
 - [Privacy](docs/PRIVACY.md)
 - [Contributing](CONTRIBUTING.md)
@@ -34,8 +35,8 @@ See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 M1 runs a real local transcript path: the renderer sends 16 kHz mono PCM to main,
 main writes a temporary WAV, and the pinned `transcribe.cpp` CLI transcribes it with
-one of two catalog-backed providers, Qwen3-ASR 0.6B Q8_0 (default) or SenseVoice
-Small Q8_0. The fake provider remains available for tests and the demo.
+one of two catalog-backed providers, SenseVoice Small Q8_0 (default) or Qwen3-ASR
+0.6B Q8_0. The fake provider remains available for tests and the demo.
 
 Requirements: macOS arm64, Node 24, pnpm, and Xcode Command Line Tools plus CMake for
 the pinned runtime build.

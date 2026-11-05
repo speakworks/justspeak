@@ -149,7 +149,8 @@ const PUNCTUATION = new Set([
   '|',
   '\\',
   '}',
-  '"'
+  '"',
+  "'"
 ])
 
 const LETTER = /^[a-z]$/i
@@ -296,4 +297,9 @@ export function acceleratorDisplayParts(accelerator: string): string[] {
     ...parsed.value.modifiers.map((modifier) => MODIFIER_DISPLAY[modifier] ?? modifier),
     KEY_DISPLAY[parsed.value.key] ?? parsed.value.key
   ]
+}
+
+/** Glyphs for the modifiers held mid-chord, before the main key arrives. */
+export function modifierDisplayParts(modifiers: readonly HotkeyModifier[]): string[] {
+  return modifiers.map((modifier) => MODIFIER_DISPLAY[modifier] ?? modifier)
 }

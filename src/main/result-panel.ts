@@ -141,6 +141,18 @@ export function refreshResultPanelEscape(): void {
   push()
 }
 
+/**
+ * The dictation hotkey source is about to call `unregisterAll` for a settings
+ * capture. Drop the panel's Escape hint without re-registering Escape: that
+ * key now belongs to the recorder and cancels the capture instead.
+ */
+export function suspendResultPanelEscape(): void {
+  if (!window || window.isDestroyed() || !window.isVisible() || retained === null) return
+  if (!retained.canEscape) return
+  retained = { ...retained, canEscape: false }
+  push()
+}
+
 /** Copy the retained text and dismiss after the button's own feedback frame. */
 export function copyResultPanelText(): void {
   if (retained === null) return

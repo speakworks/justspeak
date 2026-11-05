@@ -6,11 +6,7 @@ import {
   type WorkletNodePort
 } from '../../core/capture/capture-controller'
 import { DEFAULT_ACCELERATOR, acceleratorDisplayParts } from '../../core/hotkey/accelerator'
-import {
-  buildSettingsRows,
-  validateHotkeyDraft,
-  type SettingsRows
-} from '../../core/preferences/view'
+import { buildSettingsRows, type SettingsRows } from '../../core/preferences/view'
 import { resolveTheme } from '../../core/theme/theme'
 import type {
   AppState,
@@ -161,7 +157,7 @@ export function App(): React.JSX.Element {
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const composingRef = useRef(false)
   const pendingInsertRef = useRef<string | null>(null)
-  const [hotkeyDraft, setHotkeyDraft] = useState(DEFAULT_ACCELERATOR)
+  const [hotkeyCapturing, setHotkeyCapturing] = useState(false)
   const [hotkeyFeedback, setHotkeyFeedback] = useState<string | undefined>()
   const [hotkeyError, setHotkeyError] = useState(false)
   const [hotkeyBusy, setHotkeyBusy] = useState(false)
@@ -218,16 +214,6 @@ export function App(): React.JSX.Element {
       })
   }, [])
 
-  // Adopt the live accelerator as the draft only when main reports a new one,
-  // so typing in the panel is never overwritten by an unrelated refresh.
-  const lastHotkey = useRef<string | undefined>(undefined)
-  useEffect(() => {
-    if (!preferences) return
-    if (lastHotkey.current === preferences.hotkey) return
-    lastHotkey.current = preferences.hotkey
-    setHotkeyDraft(preferences.hotkey || DEFAULT_ACCELERATOR)
-  }, [preferences])
-
   useEffect(() => {
     const unsubPreferences = window.justspeak.onPreferencesChanged((next) => {
       setPreferences(next)
@@ -247,6 +233,22 @@ export function App(): React.JSX.Element {
         setPreferencesError(error instanceof Error ? error.message : String(error))
       })
     return unsubPreferences
+  }, [])
+
+  // Main restores the old binding if a recorder is abandoned (or the renderer
+  // dies); this event unsticks the button instead of leaving it "recording".
+  useEffect(() => {
+    return window.justspeak.onHotkeyCaptureEnded((result) => {
+      setHotkeyCapturing(false)
+      setHotkeyBusy(false)
+      if (result.message) {
+        setHotkeyFeedback(result.message)
+        setHotkeyError(true)
+      } else {
+        setHotkeyFeedback(undefined)
+        setHotkeyError(false)
+      }
+    })
   }, [])
 
   const applyThemePreference = useCallback((next: ThemePreference): void => {
@@ -404,18 +406,43 @@ export function App(): React.JSX.Element {
     })
   }, [])
 
-  const hotkeyDraftState = validateHotkeyDraft(hotkeyDraft, preferences?.hotkey ?? '')
-
-  const applyHotkey = useCallback((): void => {
-    const parsed = validateHotkeyDraft(hotkeyDraft, preferences?.hotkey ?? '')
-    if (!parsed.ok || !parsed.accelerator) {
-      setHotkeyFeedback(parsed.message)
-      setHotkeyError(true)
-      return
-    }
-    setHotkeyBusy(true)
+  const beginHotkeyCapture = useCallback((): void => {
+    if (hotkeyCapturing) return
+    setHotkeyFeedback(undefined)
+    setHotkeyError(false)
     void window.justspeak
-      .setPreferences({ hotkey: parsed.accelerator })
+      .beginHotkeyCapture()
+      .then((result) => {
+        if (!result.ok) {
+          setHotkeyFeedback(result.message)
+          setHotkeyError(true)
+          return
+        }
+        setHotkeyCapturing(true)
+      })
+      .catch((error: unknown) => {
+        setHotkeyFeedback(error instanceof Error ? error.message : String(error))
+        setHotkeyError(true)
+      })
+  }, [hotkeyCapturing])
+
+  const cancelHotkeyCapture = useCallback((): void => {
+    setHotkeyCapturing(false)
+    setHotkeyFeedback(undefined)
+    setHotkeyError(false)
+    void window.justspeak.endHotkeyCapture().catch((error: unknown) => {
+      setHotkeyFeedback(error instanceof Error ? error.message : String(error))
+      setHotkeyError(true)
+    })
+  }, [])
+
+  const captureHotkeyBinding = useCallback((accelerator: string): void => {
+    setHotkeyCapturing(false)
+    setHotkeyBusy(true)
+    setHotkeyFeedback(undefined)
+    setHotkeyError(false)
+    void window.justspeak
+      .setPreferences({ hotkey: accelerator })
       .then((outcome) => {
         // `preferences.hotkey` is what the OS accepted, which may be the
         // default after a refused binding; the message names what failed.
@@ -426,9 +453,23 @@ export function App(): React.JSX.Element {
       .catch((error: unknown) => {
         setHotkeyError(true)
         setHotkeyFeedback(error instanceof Error ? error.message : String(error))
+        // The apply never reached main's capture cleanup; restore explicitly
+        // instead of leaving the dictation key unregistered.
+        void window.justspeak.endHotkeyCapture().catch(() => undefined)
       })
       .finally(() => setHotkeyBusy(false))
-  }, [hotkeyDraft, preferences?.hotkey])
+  }, [])
+
+  const showHotkeyHint = useCallback((message?: string): void => {
+    setHotkeyFeedback(message)
+    setHotkeyError(message !== undefined)
+  }, [])
+
+  // Leaving the settings page while recording would strand the temporary
+  // unregistration until the safety timeout.
+  useEffect(() => {
+    if (view !== 'settings' && hotkeyCapturing) cancelHotkeyCapture()
+  }, [view, hotkeyCapturing, cancelHotkeyCapture])
 
   useEffect(() => {
     const controller = controllerRef.current
@@ -486,9 +527,8 @@ export function App(): React.JSX.Element {
   }, [reportFailure])
 
   const isBusy = state === 'transcribing' || state === 'pasting'
-  const liveError = hotkeyDraftState.ok ? undefined : hotkeyDraftState.message
-  const hotkeyMessage = hotkeyFeedback ?? liveError
-  const hotkeyMessageIsError = hotkeyError || liveError !== undefined
+  const hotkeyMessage = hotkeyFeedback
+  const hotkeyMessageIsError = hotkeyError
   const rows: SettingsRows | null = preferences ? buildSettingsRows(preferences) : null
   const hotkeyLabel = acceleratorDisplayParts(
     preferences?.hotkey || DEFAULT_ACCELERATOR
@@ -522,17 +562,14 @@ export function App(): React.JSX.Element {
     preferences,
     rows,
     error: preferencesError,
-    hotkeyDraft,
     hotkeyMessage,
     hotkeyMessageIsError,
     hotkeyBusy,
-    canApplyHotkey: hotkeyDraftState.ok && hotkeyDraftState.dirty,
-    onHotkeyDraft: (value: string) => {
-      setHotkeyDraft(value)
-      setHotkeyFeedback(undefined)
-      setHotkeyError(false)
-    },
-    onApplyHotkey: applyHotkey,
+    hotkeyCapturing,
+    onHotkeyBegin: beginHotkeyCapture,
+    onHotkeyCaptured: captureHotkeyBinding,
+    onHotkeyCancel: cancelHotkeyCapture,
+    onHotkeyHint: showHotkeyHint,
     onTheme: applyThemePreference,
     onReload: reloadPreferences,
     onLlmBackend: changeLlmBackend,

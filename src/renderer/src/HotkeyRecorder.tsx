@@ -4,7 +4,7 @@ import {
   modifierDisplayParts,
   type HotkeyModifier
 } from '../../core/hotkey/accelerator'
-import { captureHotkey, type HotkeyKeyInput } from '../../core/hotkey/capture'
+import { captureHotkey, heldModifiers, type HotkeyKeyInput } from '../../core/hotkey/capture'
 
 export interface HotkeyRecorderProps {
   /** The accelerator that is live right now. */
@@ -12,6 +12,9 @@ export interface HotkeyRecorderProps {
   /** True only after main has unregistered the live hotkey and is waiting. */
   capturing: boolean
   busy: boolean
+  /** Id of the status or message element that describes the control. */
+  describedBy?: string
+  invalid: boolean
   onBegin: () => void
   onCaptured: (accelerator: string) => void
   onCancel: () => void
@@ -42,6 +45,8 @@ export function HotkeyRecorder({
   accelerator,
   capturing,
   busy,
+  describedBy,
+  invalid,
   onBegin,
   onCaptured,
   onCancel,
@@ -111,10 +116,27 @@ export function HotkeyRecorder({
         if (!capturing && !busy) onBegin()
       }}
       onKeyDown={handleKeyDown}
+      onKeyUp={(event) => {
+        if (!capturing) return
+        // The preview describes what is held *now*; releasing Command must
+        // not leave "⌘ …" on screen until the next key arrives.
+        event.preventDefault()
+        event.stopPropagation()
+        setModifiers(
+          heldModifiers({
+            metaKey: event.metaKey,
+            ctrlKey: event.ctrlKey,
+            altKey: event.altKey,
+            shiftKey: event.shiftKey
+          })
+        )
+      }}
       onBlur={() => {
         if (capturing && !busy) onCancel()
       }}
       disabled={busy}
+      aria-describedby={describedBy}
+      aria-invalid={invalid || undefined}
       aria-label={
         capturing
           ? '正在录制快捷键：按下组合键，按 Esc 取消'

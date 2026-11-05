@@ -101,6 +101,8 @@ const NAMED_KEYS = new Map<string, string>([
  * refuses them instead of letting `globalShortcut` win the race.
  */
 const RESERVED = new Set([
+  // Application menu roles and edit/view shortcuts. Capturing suppresses the
+  // native menu so these reach the recorder; they must not become global.
   'Command+Q',
   'Command+W',
   'Command+H',
@@ -108,7 +110,34 @@ const RESERVED = new Set([
   'Command+Tab',
   'Command+Shift+Q',
   'Command+Alt+Escape',
-  'Command+Control+Q'
+  'Command+Control+Q',
+  'Command+Z',
+  'Command+Shift+Z',
+  'Command+X',
+  'Command+C',
+  'Command+V',
+  'Command+A',
+  'Command+R',
+  'Command+Shift+R',
+  'Command+0',
+  'Command+Minus',
+  'Command+Plus',
+  'Command+=',
+  'Command+Shift+=',
+  'Command+Alt+I',
+  'Command+Shift+I',
+  'Command+Control+F',
+  'Command+Backquote',
+  // macOS system shortcuts (Spotlight, screenshots, emoji/Finder search). The
+  // system may consume these before the app sees them; the list covers the
+  // ones that do arrive.
+  'Command+Space',
+  'Command+Alt+Space',
+  'Command+Control+Space',
+  'Command+Shift+3',
+  'Command+Shift+4',
+  'Command+Shift+5',
+  'Command+Shift+6'
 ])
 
 const NO_MODIFIER_MESSAGE =
@@ -130,7 +159,9 @@ function keyFromCode(code: string): string | undefined {
 }
 
 /** Canonical modifier order, matching `parseAccelerator`'s emission order. */
-function heldModifiers(input: HotkeyKeyInput): HotkeyModifier[] {
+export function heldModifiers(
+  input: Pick<HotkeyKeyInput, 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>
+): HotkeyModifier[] {
   const modifiers: HotkeyModifier[] = []
   if (input.metaKey) modifiers.push('Command')
   if (input.ctrlKey) modifiers.push('Control')

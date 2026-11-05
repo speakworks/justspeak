@@ -146,12 +146,16 @@ export function SettingsPanel({
                 accelerator={preferences.hotkey}
                 capturing={hotkeyCapturing}
                 busy={hotkeyBusy}
+                invalid={hotkeyMessageIsError}
+                describedBy={
+                  hotkeyMessage ? 'settings-hotkey-message' : 'settings-hotkey-status'
+                }
                 onBegin={onHotkeyBegin}
                 onCaptured={onHotkeyCaptured}
                 onCancel={onHotkeyCancel}
                 onHint={onHotkeyHint}
               />
-              <span id="settings-hotkey-status" className="hotkey-status">
+              <span id="settings-hotkey-status" className="hotkey-status" aria-live="polite">
                 {hotkeyCapturing ? '按 Esc 取消' : '点击后直接按组合键'}
               </span>
             </div>
@@ -159,6 +163,7 @@ export function SettingsPanel({
               <p
                 id="settings-hotkey-message"
                 className={hotkeyMessageIsError ? 'hotkey-message error' : 'hotkey-message'}
+                aria-live="polite"
               >
                 {hotkeyMessage}
               </p>

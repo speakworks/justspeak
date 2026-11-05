@@ -26,6 +26,7 @@ describe('press-to-record hotkey capture', () => {
     ['Command+Up', key('ArrowUp', { metaKey: true }), 'Command+Up'],
     ['Command+num5', key('Numpad5', { metaKey: true }), 'Command+num5'],
     ['Command+/', key('Slash', { metaKey: true }), 'Command+/'],
+    ["Command+'", key('Quote', { metaKey: true }), "Command+'"],
     ['Command+Shift+/', key('Slash', { metaKey: true, shiftKey: true }), 'Command+Shift+/'],
     ['modified Escape', key('Escape', { metaKey: true }), 'Command+Escape'],
     ['Command+Backspace', key('Backspace', { metaKey: true }), 'Command+Backspace']
@@ -66,7 +67,11 @@ describe('press-to-record hotkey capture', () => {
     ['Command+W', key('KeyW', { metaKey: true })],
     ['Command+Shift+Q', key('KeyQ', { metaKey: true, shiftKey: true })],
     ['Command+Alt+Escape', key('Escape', { metaKey: true, altKey: true })],
-    ['Command+Control+Q', key('KeyQ', { metaKey: true, ctrlKey: true })]
+    ['Command+Control+Q', key('KeyQ', { metaKey: true, ctrlKey: true })],
+    ['Command+R', key('KeyR', { metaKey: true })],
+    ['Command+C', key('KeyC', { metaKey: true })],
+    ['Command+Space', key('Space', { metaKey: true })],
+    ['Command+Shift+3', key('Digit3', { metaKey: true, shiftKey: true })]
   ])('refuses the macOS-reserved %s', (_label, input) => {
     const result = captureHotkey(input)
     expect(result.status).toBe('invalid')

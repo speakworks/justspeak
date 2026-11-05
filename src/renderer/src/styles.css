@@ -713,11 +713,6 @@ textarea {
   font-size: 12px;
 }
 
-.hotkey-input.invalid {
-  border-color: var(--red-line);
-  background: var(--red-soft);
-}
-
 /* Press-to-record: a button styled like the old text field, but it never
    accepts typed text — the chord itself is the value. */
 .hotkey-recorder {
@@ -783,11 +778,6 @@ textarea {
   color: var(--faint);
 }
 
-.settings-hotkey {
-  flex: 1 1 200px;
-  max-width: 320px;
-}
-
 .settings-path {
   flex: 1 1 260px;
   min-width: 0;
@@ -811,15 +801,6 @@ textarea {
 .settings-select:disabled {
   opacity: 0.8;
   cursor: not-allowed;
-}
-
-.settings-visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 
 kbd {

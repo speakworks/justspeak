@@ -31,6 +31,7 @@ import type {
 } from '../core/asr/types'
 import type { ModelCatalogEntry } from '../core/asr/model-catalog'
 import { DEFAULT_ACCELERATOR, parseAccelerator } from '../core/hotkey/accelerator'
+import { HotkeyCaptureController } from '../core/hotkey/capture-controller'
 import { registerHotkeyWithFallback } from '../core/hotkey/registration'
 import type { HotkeySource } from '../core/hotkey/types'
 import { postprocess, type PostprocessOptions } from '../core/postprocess'
@@ -115,7 +116,8 @@ import {
   refreshResultPanelEscape,
   replayResultPanel,
   resultPanelWebContentsId,
-  showResultPanel
+  showResultPanel,
+  suspendResultPanelEscape
 } from './result-panel'
 import { isTrustedSender } from './ipc-sender'
 import { PcmBuffer } from './pcm-buffer'
@@ -179,9 +181,7 @@ function requireHistoryStore(): HistoryStore {
 let hotkeySource: HotkeySource | undefined
 let activeHotkey = DEFAULT_ACCELERATOR
 let hotkeyNotice: string | undefined
-/** True while the settings recorder owns the keyboard and the dictation key is unregistered. */
-let hotkeyCaptureActive = false
-let hotkeyCaptureTimer: ReturnType<typeof setTimeout> | undefined
+let hotkeyCapture: HotkeyCaptureController | undefined
 let postprocessOptions: PostprocessOptions = {}
 let providerPreference: ProviderPreferenceStore
 /** Raw persisted value; validation happens in `resolveAsrMode`. */
@@ -947,38 +947,23 @@ function createWindow(): void {
   }
 }
 
-/** How long a settings recorder may hold the dictation key unregistered. */
-const HOTKEY_CAPTURE_TIMEOUT_MS = 15_000
-
-function clearHotkeyCaptureTimer(): void {
-  if (hotkeyCaptureTimer !== undefined) {
-    clearTimeout(hotkeyCaptureTimer)
-    hotkeyCaptureTimer = undefined
-  }
-}
-
 /**
- * End a captured recording without applying a new binding: register the
- * accelerator that was live before the recorder took over. Idempotent, so the
- * safety timeout and the renderer's cancel can race harmlessly.
+ * How long a settings recorder may hold the dictation key unregistered. The
+ * environment override exists so the Electron E2E can exercise the restore
+ * path without waiting the full window.
  */
+const HOTKEY_CAPTURE_TIMEOUT_MS = (() => {
+  // Only the E2E harness may shorten the safety window.
+  const raw =
+    process.env.JUSTSPEAK_E2E === '1'
+      ? Number(process.env.JUSTSPEAK_HOTKEY_CAPTURE_TIMEOUT_MS)
+      : Number.NaN
+  return Number.isFinite(raw) && raw >= 100 ? raw : 15_000
+})()
+
 async function finishHotkeyCapture(): Promise<HotkeyCaptureEndResult> {
-  clearHotkeyCaptureTimer()
-  if (!hotkeyCaptureActive) return { ok: true, accelerator: activeHotkey }
-  hotkeyCaptureActive = false
-  if (!hotkeySource || activeHotkey.length === 0) {
-    return { ok: true, accelerator: activeHotkey }
-  }
-  const outcome = await registerHotkeyWithFallback(hotkeySource, activeHotkey)
-  activeHotkey = outcome.accelerator
-  hotkeyNotice = outcome.message
-  if (outcome.message) console.warn('[hotkey]', outcome.message)
-  refreshResultPanelEscape()
-  return {
-    ok: outcome.ok,
-    accelerator: activeHotkey,
-    ...(outcome.message === undefined ? {} : { message: outcome.message })
-  }
+  if (!hotkeyCapture) return { ok: true, accelerator: activeHotkey }
+  return hotkeyCapture.cancel()
 }
 
 /** Register a requested accelerator and report what is actually live. */
@@ -1003,8 +988,7 @@ async function applyHotkeyPreference(payload: unknown): Promise<HotkeySetResult>
 
   // Applying is also how a press-to-record capture ends successfully: the new
   // binding supersedes the temporary unregistration, so no restore is needed.
-  clearHotkeyCaptureTimer()
-  hotkeyCaptureActive = false
+  hotkeyCapture?.releaseForApply()
 
   const outcome = await registerHotkeyWithFallback(hotkeySource, parsed.value.accelerator)
   activeHotkey = outcome.accelerator
@@ -1245,36 +1229,14 @@ app.whenReady().then(async () => {
         console.warn('[hotkey] rejected untrusted capture start')
         throw new Error('未授权的快捷键请求。')
       }
-      if (!hotkeySource) return { ok: false, message: '快捷键服务尚未就绪。' }
+      if (!hotkeyCapture) return { ok: false, message: '快捷键服务尚未就绪。' }
       const currentState = session?.state ?? 'idle'
       if (currentState !== 'idle' && currentState !== 'error') {
         return { ok: false, message: '录音或识别过程中不能更改快捷键。' }
       }
-      if (hotkeyCaptureActive) return { ok: true }
-      try {
-        // The app's own global shortcut would otherwise swallow the chord the
-        // user is trying to record (including the current one).
-        await hotkeySource.stop()
-      } catch (error) {
-        return {
-          ok: false,
-          message: `无法暂停当前快捷键：${error instanceof Error ? error.message : String(error)}`
-        }
-      }
-      hotkeyCaptureActive = true
-      clearHotkeyCaptureTimer()
-      hotkeyCaptureTimer = setTimeout(() => {
-        hotkeyCaptureTimer = undefined
-        void finishHotkeyCapture()
-          .then(async (result) => {
-            mainWindow?.webContents.send('hotkey:capture-ended', result)
-            mainWindow?.webContents.send('preferences:changed', await readPreferencesView())
-          })
-          .catch((error: unknown) => {
-            console.warn('[hotkey] safety restore failed', error)
-          })
-      }, HOTKEY_CAPTURE_TIMEOUT_MS)
-      return { ok: true }
+      // The controller unregisters the dictation key first, so the app's own
+      // global shortcut cannot swallow the chord being recorded.
+      return hotkeyCapture.start()
     }
   )
 
@@ -1450,6 +1412,37 @@ app.whenReady().then(async () => {
   void runProviderInitialization()
 
   hotkeySource = new ElectronGlobalShortcutSource(globalShortcut)
+  hotkeyCapture = new HotkeyCaptureController({
+    source: hotkeySource,
+    timeoutMs: HOTKEY_CAPTURE_TIMEOUT_MS,
+    timer: {
+      set: (callback, delayMs) => setTimeout(callback, delayMs),
+      clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>)
+    },
+    getActive: () => activeHotkey,
+    setActive: (accelerator, message) => {
+      activeHotkey = accelerator
+      hotkeyNotice = message
+      if (message) console.warn('[hotkey]', message)
+    },
+    onRegistrationChanged: (suspended) => {
+      if (suspended) suspendResultPanelEscape()
+      else refreshResultPanelEscape()
+    },
+    onRestored: (result) => {
+      mainWindow?.webContents.send('hotkey:capture-ended', result)
+      void readPreferencesView()
+        .then((view) => mainWindow?.webContents.send('preferences:changed', view))
+        .catch((error: unknown) => console.warn('[hotkey] safety restore refresh failed', error))
+    },
+    setMenuShortcutsIgnored: (ignored) => {
+      // Native menu equivalents would otherwise fire before the recorder's
+      // keydown: Command+Q would quit, Command+R would reload the renderer.
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.setIgnoreMenuShortcuts(ignored)
+      }
+    }
+  })
   hotkeySource.onPress(() => {
     console.log('[hotkey] event')
     toggleRecording()
@@ -1463,7 +1456,7 @@ app.whenReady().then(async () => {
 let flushingHistoryForQuit = false
 
 app.on('will-quit', (event) => {
-  clearHotkeyCaptureTimer()
+  hotkeyCapture?.dispose()
   void hotkeySource?.stop()
   if (flushingHistoryForQuit) return
   // A transcript appended just before Cmd+Q must reach disk, and the optional

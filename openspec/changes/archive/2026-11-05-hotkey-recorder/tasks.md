@@ -1,7 +1,7 @@
 ## 1. Pure capture mapping
 
 - [x] 1.1 Add `captureHotkey` with physical-key mapping, pending modifier preview, bare-Escape cancel, modifier-less rejection, and a macOS-reserved denylist; verify the accept/reject table in `tests/hotkey-capture.test.ts`.
-- [x] 1.2 Add `modifierDisplayParts` and reuse `parseAccelerator` as the only validator, so a captured chord can never be one the typed path would reject.
+- [x] 1.2 Add `modifierDisplayParts` and reuse `parseAccelerator` as the only validator, so the capture path cannot emit an accelerator the rest of the app would reject.
 
 ## 2. Capture lifecycle in main
 
@@ -18,4 +18,4 @@
 ## 4. Verification and delivery
 
 - [x] 4.1 Run `pnpm typecheck`, `pnpm test`, `pnpm build`, and `openspec validate --specs --strict`.
-- [x] 4.2 Verify the recorder in a running Electron app with `tests/e2e/hotkey-recorder.spec.ts`: record a new chord, cancel with Escape, confirm the old binding stays live, and check the modifier-less hint; the dev app was relaunched for the owner's manual key check.
+- [x] 4.2 Unit-test the lifecycle controller for stop-on-start, restore-on-cancel, timeout restore, and no-restore-on-apply; cover the recorder UI, current-binding capture, modifier-less hint, and timeout unsticking in the Electron E2E. The dev app is relaunched for the owner's real-key check.

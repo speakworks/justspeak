@@ -21,12 +21,16 @@ the chord being recorded.
   unfinished; Escape or blur cancels.
 - Add `hotkey:capture-start` / `hotkey:capture-end` in main. Starting a capture
   temporarily unregisters the dictation accelerator (otherwise the app's own
-  global shortcut swallows the chord, including the current binding) and arms a
-  15 s safety restore. Applying a new binding ends the capture directly.
+  global shortcut swallows the chord, including the current binding), suppresses
+  native menu accelerators so Command+Q/Command+R reach the recorder instead of
+  quitting or reloading, and arms a 15 s safety restore. Applying a new binding
+  ends the capture directly. The lifecycle lives in a pure
+  `HotkeyCaptureController` with an injected source and clock so stop, restore,
+  timeout, and no-restore-on-apply are unit-tested.
 - Push `hotkey:capture-ended` when main restores on its own, so an abandoned or
   crashed renderer cannot leave the recorder stuck or the dictation key dead.
 - Remove the now-unused typed-draft validator from the preferences view; the
-  parser remains the single validator for both paths.
+  parser remains the single validator for the captured chord.
 
 ## Capabilities
 
@@ -39,10 +43,14 @@ the chord being recorded.
 - `hotkey-config`: the renderer records a chord instead of accepting typed
   accelerator syntax; capture temporarily suspends the live binding and restores
   it safely.
+- `settings-surface`: inline hotkey validation now describes the recorder —
+  an invalid chord keeps the recorder armed and writes nothing, rather than
+  disabling a typed field's apply action.
 
 ## Impact
 
-- `src/core/hotkey`: new pure capture mapper and modifier display helper.
+- `src/core/hotkey`: new pure capture mapper, modifier display helper, and
+  capture lifecycle controller.
 - `src/main`: capture lifecycle, safety timeout, and two trusted IPC handlers.
 - `src/preload` / `src/shared/ipc`: capture start/end bridge plus the
   `hotkey:capture-ended` push.

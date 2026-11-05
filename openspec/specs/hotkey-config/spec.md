@@ -11,25 +11,25 @@ The accelerator parser SHALL live in `src/core` without importing Electron, SHAL
 
 #### Scenario: Valid binding is canonicalized
 
-- **WHEN** the user enters `cmdorctrl+shift+space`
+- **WHEN** the parser receives `cmdorctrl+shift+space`
 - **THEN** validation succeeds with `CommandOrControl+Shift+Space`
 - **AND** the default `CommandOrControl+Shift+Space` remains valid
 
 #### Scenario: Modifier-less binding is rejected
 
-- **WHEN** the user enters `Space` or `A`
+- **WHEN** the parser receives `Space` or `A`
 - **THEN** validation fails with a message requiring at least one modifier
 - **AND** the binding is never passed to the OS
 
 #### Scenario: Unparseable binding is rejected
 
-- **WHEN** the user enters an unknown key name, an empty token, a duplicate modifier, or two main keys
+- **WHEN** the parser receives an unknown key name, an empty token, a duplicate modifier, or two main keys
 - **THEN** validation fails with a message naming the problem
 - **AND** the previously registered accelerator stays live
 
 #### Scenario: Prototype-named tokens cannot act as modifiers
 
-- **WHEN** the user enters `constructor+Space`, `__proto__+Space`, or `Space+constructor`
+- **WHEN** the parser receives `constructor+Space`, `__proto__+Space`, or `Space+constructor`
 - **THEN** validation fails with an unknown-token error
 - **AND** no accelerator equal to a bare `Space` is produced or registered
 
@@ -123,8 +123,9 @@ registered accelerator, SHALL arm a recording when activated, SHALL display held
 modifiers while the chord is unfinished, SHALL canonicalize the next chord
 through the pure capture mapper and accelerator parser, SHALL apply a valid
 chord through the single preferences surface, SHALL cancel on bare Escape or
-blur, SHALL refuse modifier-less chords and macOS-reserved combinations with a
-message, and SHALL display fallback or registration errors returned by main.
+blur, SHALL refuse modifier-less chords and macOS-reserved combinations it
+receives with a message, and SHALL display fallback or registration errors
+returned by main.
 Manual typing SHALL NOT be required and SHALL NOT be accepted by the control.
 
 #### Scenario: Record a new binding

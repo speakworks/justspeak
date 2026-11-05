@@ -104,18 +104,18 @@ Each row SHALL show exactly one of `default`, `override`, or `unavailable`, and 
 
 ### Requirement: Validation SHALL report inline
 
-Invalid hotkey input and an unreadable vocabulary file SHALL report inside the
-surface that owns them — the settings surface for the hotkey, the 词典
-destination for the vocabulary — without a modal dialog. Applying an invalid or
-unchanged hotkey SHALL be disabled, and a refused binding SHALL name the fallback
-that is live. Reloading SHALL re-read the vocabulary file and refresh the
-post-processing stage from the same result.
+An invalid or refused hotkey chord and an unreadable vocabulary file SHALL
+report inside the surface that owns them — the settings surface for the hotkey,
+the 词典 destination for the vocabulary — without a modal dialog. An invalid
+chord SHALL keep the recorder armed, write nothing, and name the reason; a
+refused binding SHALL name the fallback that is live. Reloading SHALL re-read
+the vocabulary file and refresh the post-processing stage from the same result.
 
 #### Scenario: Invalid hotkey
 
-- **WHEN** the user types a binding without a modifier or with an unknown token
-- **THEN** the field and its message show the reason inline
-- **AND** the apply action is disabled
+- **WHEN** the user records a chord without a modifier, an unsupported key, or a macOS-reserved combination
+- **THEN** the recorder shows the reason inline and keeps waiting for another chord
+- **AND** no binding is written
 
 #### Scenario: Unreadable vocabulary
 

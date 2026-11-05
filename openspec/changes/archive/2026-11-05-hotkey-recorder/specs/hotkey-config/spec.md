@@ -41,8 +41,9 @@ registered accelerator, SHALL arm a recording when activated, SHALL display held
 modifiers while the chord is unfinished, SHALL canonicalize the next chord
 through the pure capture mapper and accelerator parser, SHALL apply a valid
 chord through the single preferences surface, SHALL cancel on bare Escape or
-blur, SHALL refuse modifier-less chords and macOS-reserved combinations with a
-message, and SHALL display fallback or registration errors returned by main.
+blur, SHALL refuse modifier-less chords and macOS-reserved combinations it
+receives with a message, and SHALL display fallback or registration errors
+returned by main.
 Manual typing SHALL NOT be required and SHALL NOT be accepted by the control.
 
 #### Scenario: Record a new binding

@@ -149,7 +149,8 @@ const PUNCTUATION = new Set([
   '|',
   '\\',
   '}',
-  '"'
+  '"',
+  "'"
 ])
 
 const LETTER = /^[a-z]$/i

@@ -14,6 +14,15 @@ over it if present, but this repository does not have one.
   review depth is chosen from the change surface and scale/risk signals
   rather than fixed in advance.
 
+## Git workflow
+
+- **Conflicts: rebase the feature branch, do not ask.** When a feature branch
+  conflicts with its target (`main`, `release/*`), rebase it onto the target
+  and resolve conflicts in place without pausing for approval. The owner
+  pre-authorized this. After rebasing, push with `--force-with-lease`; never
+  rewrite the protected target branch. Re-run the merge gates on the rebased
+  tip.
+
 ## Testing
 
 - `pnpm test` (Vitest) is the required suite; `pnpm typecheck`, `pnpm build`,

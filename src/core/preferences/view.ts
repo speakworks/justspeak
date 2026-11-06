@@ -94,7 +94,7 @@ export function describeVocabulary(vocabulary: VocabularySummary): SettingState 
 /** Why a provider row cannot be changed right now, in the user's words. */
 export const PROVIDER_NOT_READY_REASON = 'ASR 尚未就绪，暂时无法切换模型。'
 export const PROVIDER_FAKE_REASON = '测试模式下不选择模型。'
-export const PROVIDER_HEADER_HINT = '在窗口顶部的模型下拉中切换。'
+export const PROVIDER_SETTINGS_HINT = '在上方下拉中选择模型。'
 
 export interface ProviderLiveState {
   /** The mode main is running, or trying to run. */
@@ -132,7 +132,7 @@ export function summarizeProvider(state: ProviderLiveState): ProviderSummary {
     id: state.mode,
     label: state.label,
     selectable: true,
-    reason: PROVIDER_HEADER_HINT
+    reason: PROVIDER_SETTINGS_HINT
   }
 }
 

@@ -1,7 +1,7 @@
 # settings-surface Specification
 
 ## Purpose
-Defines the single settings surface: one preferences IPC path backed by `userData/preferences.json`, a panel reachable from the main window, honest default/override/unavailable labels, inline validation, a window that never gains a page scrollbar, and a read-only provider row that points at the header picker.
+Defines the single settings surface: one preferences IPC path backed by `userData/preferences.json`, a panel reachable from the main window, honest default/override/unavailable labels, inline validation, a window that never gains a page scrollbar, and an editable provider row in the settings panel.
 
 ## Requirements
 
@@ -36,13 +36,13 @@ The main process SHALL expose `preferences:get` and `preferences:set` as the onl
 ### Requirement: A settings panel SHALL be reachable and own the controls
 
 The main window SHALL provide a control at the bottom of the sidebar that opens
-one settings surface. That surface SHALL show theme and hotkey, each with its
-current value and a control where the setting is editable, and SHALL report the
-live provider with a pointer to the header picker rather than an editable control.
-The vocabulary editor SHALL live in its own sidebar destination instead. The
-three-state theme control and the hotkey editor SHALL live in the settings
-surface; the header SHALL carry the provider picker and SHALL NOT repeat the
-active appearance, which would duplicate a setting the surface already owns.
+one settings surface. That surface SHALL show theme, hotkey, and the ASR provider,
+each with its current value and a control where the setting is editable. The
+vocabulary editor SHALL live in its own sidebar destination instead. The
+three-state theme control, the hotkey editor, and the provider selector SHALL live
+in the settings surface; the sidebar footer SHALL report the live provider label
+and SHALL open the settings surface when activated rather than acting as a picker;
+no other surface SHALL repeat the active appearance.
 
 #### Scenario: Opening the panel
 
@@ -56,11 +56,18 @@ active appearance, which would duplicate a setting the surface already owns.
 - **THEN** it exposes system, light, and dark choices
 - **AND** no other surface repeats the active appearance or offers a cycling control
 
-#### Scenario: Provider stays switchable from the header
+#### Scenario: Provider is switchable from the settings panel
 
-- **WHEN** the settings surface renders the provider row
-- **THEN** the row reports the live provider and points at the header picker
-- **AND** it does not offer an editable control of its own
+- **WHEN** the settings surface renders the provider row and a provider is live
+- **THEN** the row offers the selectable providers and changing the selection
+  switches the live provider
+- **AND** the header offers no picker, so the row is the only switch point
+
+#### Scenario: Provider chip opens settings
+
+- **WHEN** the user activates the provider label in the sidebar footer
+- **THEN** the settings surface opens
+- **AND** the chip itself does not change the provider
 
 #### Scenario: Vocabulary is not part of settings
 
@@ -76,7 +83,7 @@ active appearance, which would duplicate a setting the surface already owns.
 
 ### Requirement: Every setting SHALL report default, override, or unavailable
 
-Each row SHALL show exactly one of `default`, `override`, or `unavailable`, and an unavailable row SHALL state what is missing rather than presenting an enabled control that silently fails. Theme SHALL be default when it follows the system, a hotkey SHALL be default when it equals the built-in accelerator, the vocabulary SHALL report default when no file exists, loaded when parsed, and unavailable with the parse or read reason when the file cannot be used — in the 词典 destination, which is where its row lives, and the provider row SHALL report the live provider: `default` with a pointer to the header picker when the provider can be switched, or `unavailable` with the reason when no provider is live.
+Each row SHALL show exactly one of `default`, `override`, or `unavailable`, and an unavailable row SHALL state what is missing rather than presenting an enabled control that silently fails. Theme SHALL be default when it follows the system, a hotkey SHALL be default when it equals the built-in accelerator, the vocabulary SHALL report default when no file exists, loaded when parsed, and unavailable with the parse or read reason when the file cannot be used — in the 词典 destination, which is where its row lives, and the provider row SHALL report the live provider: `default` with a detail naming the current model while the provider can be switched, or `unavailable` with the reason when no provider is live.
 
 #### Scenario: Default state
 
@@ -88,13 +95,13 @@ Each row SHALL show exactly one of `default`, `override`, or `unavailable`, and 
 - **WHEN** the user pinned an appearance, bound a different accelerator, or a vocabulary file was loaded (the last reported in 词典)
 - **THEN** the row is labelled overridden and names the current value
 
-#### Scenario: Provider row points at the header picker
+#### Scenario: Provider row names the live model
 
 - **WHEN** the panel renders the provider row and a provider is live
 - **THEN** the row is labelled default
 - **AND** it shows the live provider label
-- **AND** its control is disabled because the model is switched from the window header
-- **AND** it states that the model is switched from the header picker
+- **AND** its control is enabled and lists the selectable providers
+- **AND** the header carries no picker of its own
 
 #### Scenario: No provider is live
 

@@ -1,8 +1,9 @@
 # ASR Strategy Research for JustSpeak v0.1
 
-- Status: Pending benchmark (prior: Qwen3-ASR 0.6B through transcribe.cpp; final
-  model/quantization lock pending)
-- Date: 2026-10-26
+- Status: Superseded in part — the v0.1 shipped default is SenseVoice Small Q8_0 through
+  transcribe.cpp, chosen by owner A/B on real dictation (2026-10-31); Qwen3-ASR 0.6B
+  remains selectable. The Qwen3 prior below is kept as the original research record.
+- Date: 2026-10-26 (shipped default updated 2026-10-31)
 - Decision owner: FD2008
 - Scope: local, cloud, and hybrid automatic speech recognition (ASR) options for the
   v0.1 macOS desktop app. Research only; no code, dependencies, models, or benchmarks are
@@ -254,6 +255,11 @@ It is not a substitute for the local default: it cannot satisfy R3 or R6, and it
 account, billing, and data-residency concerns.
 
 ## Recommendation
+
+> **Shipped default (2026-10-31):** v0.1 ships SenseVoice Small Q8_0 as the default and
+> keeps Qwen3-ASR 0.6B selectable in settings. The prior below is retained as the original
+> research record; the change and its segmentation consequences live in
+> `openspec/changes/archive/2026-10-31-sensevoice-default`.
 
 Adopt a **local-first default with an optional cloud BYOK adapter**, and treat the exact
 model as **provisional until the benchmark in the next section is complete**:

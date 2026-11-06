@@ -10,9 +10,8 @@ TBD - created by archiving change app-shell. Update Purpose after archive.
 The window SHALL show a persistent sidebar listing 首页, 历史记录 and 词典, SHALL
 mark the current destination, and SHALL offer a settings entry at the bottom of
 the sidebar, next to the model the app is running. Each destination SHALL be
-named by a page header carrying its title and a one-line description; that header
-SHALL also carry the provider picker on every destination except settings. The
-window SHALL NOT keep a record button or a transcript card.
+named by a page header carrying its title and a one-line description. The window
+SHALL NOT keep a record button or a transcript card.
 
 #### Scenario: Switching destinations
 

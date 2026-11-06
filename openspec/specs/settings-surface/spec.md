@@ -40,9 +40,8 @@ one settings surface. That surface SHALL show theme, hotkey, and the ASR provide
 each with its current value and a control where the setting is editable. The
 vocabulary editor SHALL live in its own sidebar destination instead. The
 three-state theme control, the hotkey editor, and the provider selector SHALL live
-in the settings surface; the sidebar footer SHALL report the live provider label
-and SHALL open the settings surface when activated rather than acting as a picker;
-no other surface SHALL repeat the active appearance.
+in the settings surface, and no other surface SHALL repeat the active appearance
+or the live provider.
 
 #### Scenario: Opening the panel
 
@@ -63,11 +62,10 @@ no other surface SHALL repeat the active appearance.
   switches the live provider
 - **AND** the header offers no picker, so the row is the only switch point
 
-#### Scenario: Provider chip opens settings
+#### Scenario: Settings entry is the only way to the provider row
 
-- **WHEN** the user activates the provider label in the sidebar footer
-- **THEN** the settings surface opens
-- **AND** the chip itself does not change the provider
+- **WHEN** the sidebar renders without any view of the running model
+- **THEN** the settings entry is the only way to reach the provider row
 
 #### Scenario: Vocabulary is not part of settings
 

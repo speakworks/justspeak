@@ -66,6 +66,7 @@ JustSpeak 是一个 macOS 优先的本地听写应用：按全局快捷键说话
 
 | PR | 内容 | 关键点 |
 |---|---|---|
+| #33 | 侧边栏去掉模型芯片 | footer 只留设置入口；provider row 仍是唯一显示/切换点；E2E 加了 footer 结构守卫 |
 | #32 | 契约与文档一致性清理 | 设置页拥有模型选择器（settings-surface + app-shell spec 同步）、provider 提示文案、`hotkeyChangeRefusal` 状态门禁 + 单测、TECH-DECISIONS/ASR-RESEARCH/CHANGELOG 校准 |
 | #29 | 快捷键录制 | `HotkeyRecorder`、`HotkeyCaptureController`、菜单快捷键抑制、15 s 安全恢复、权威 spec 已同步 |
 | #30 | ASR 模型选择进设置 | 设置页拥有选择器；header 不再有 picker |

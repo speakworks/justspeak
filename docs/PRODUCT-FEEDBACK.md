@@ -11,6 +11,33 @@ that makes each item checkable.
 
 ---
 
+## 2026-11-07 — trial run: sidebar model chip and home input height
+
+### 1. The sidebar repeats the running model
+
+- Owner: 「左侧 设置 入口上方 还有模型的显示，个人觉得不必要，删除模型的显示」
+- **Odd before:** `.sidebar-foot` held a low-contrast `.model-chip` naming the
+  running ASR model, next to the 设置 entry. The settings panel already names the
+  same model in its provider row — the row that also switches it.
+- **Now:** the chip, its live dot, its label, and the `providerLabel` /
+  `providerLive` props are gone. The footer names destinations only.
+- **Made it in:** PR #33, `openspec/specs/settings-surface/spec.md` and
+  `openspec/specs/app-shell/spec.md` synced, guarded by
+  `tests/e2e/model-switch.spec.ts`.
+- **Trade-off accepted:** model readiness ("模型未就绪") is now only visible in
+  设置.
+
+### 2. The 首页 dictation area is too tall
+
+- Owner: 「首页右侧 的 口述内容区域 太大了，需要调整」
+- **Odd before:** the sheet was `flex: 1` inside the pane, so it filled every
+  pixel below the header — roughly 500 px of empty card at the 720×640 window.
+- **Decision:** cap the sheet at 300 px and top-align it, leaving the rest of the
+  pane empty rather than stretching one empty input.
+- **Not yet done:** see the dated section added by the change that implements it.
+
+---
+
 ## 2026-11-04 — optional LLM cleanup
 
 ### 1. Local and endpoint cleanup are available behind an opt-in switch

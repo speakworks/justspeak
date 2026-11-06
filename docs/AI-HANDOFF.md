@@ -1,7 +1,7 @@
 # AI 交接说明
 
-- 交接日期：2026-11-06
-- 当前 `main`：`72fe036`（PR #29 已合并）
+- 交接日期：2026-11-07
+- 当前 `main`：`4c3f712`（PR #31 已合并；PR #32 关闭了本文档的 P1 #3/#4/#6）
 - 当前 active OpenSpec change：无
 - 目的：让接手的 AI 在最少上下文下安全地继续工作，而不是重新摸索一遍
 
@@ -28,7 +28,7 @@ openspec list
 | 检查 | 预期 |
 |---|---|
 | `pnpm typecheck` | 通过 |
-| `pnpm test` | 755 passed / 4 skipped |
+| `pnpm test` | 757 passed / 4 skipped |
 | `pnpm build` | 通过 |
 | `pnpm exec playwright test` | 13 passed |
 | `openspec validate --specs --strict` | 14/14 |
@@ -66,6 +66,7 @@ JustSpeak 是一个 macOS 优先的本地听写应用：按全局快捷键说话
 
 | PR | 内容 | 关键点 |
 |---|---|---|
+| #32 | 契约与文档一致性清理 | 设置页拥有模型选择器（settings-surface + app-shell spec 同步）、provider 提示文案、`hotkeyChangeRefusal` 状态门禁 + 单测、TECH-DECISIONS/ASR-RESEARCH/CHANGELOG 校准 |
 | #29 | 快捷键录制 | `HotkeyRecorder`、`HotkeyCaptureController`、菜单快捷键抑制、15 s 安全恢复、权威 spec 已同步 |
 | #30 | ASR 模型选择进设置 | 设置页拥有选择器；header 不再有 picker |
 | #28 | sidecar 鉴权 | 每次启动随机 key、`--api-key-file`、0600/0700、启动后删除、失败即关闭 |
@@ -134,7 +135,7 @@ pnpm verify:mac          # 检查打包后的 runtime/LLM/catalog
 - 应用 userData：`preferences.json`、`asr-preference.json`、`history/`、`vocabulary.json`、下载的 LLM 模型、`llm-key.bin`（端点 key 的加密存储）
 - 日志：Electron `app.getPath('logs')`，1 MB × 2 轮转
 - 评测数据：`bench/llm/`（LLM 录音与报告）、`bench/real/`（真人语音录音）、`bench/results/*-real.json` 与 `bench/reports/*-real.md`（真实语音评测报告）；全部 gitignored
-- 本地架构解说（未提交）：`.explain-clearly/architecture-20261105.html`；它早于 PR #29/#30，快捷键/设置章节已过时
+- 本地架构解说（未提交）：`.explain-clearly/`；内容早于 PR #29/#30，快捷键/设置章节已过时
 
 ## 6. 工作流铁律
 
@@ -183,12 +184,12 @@ pnpm verify:mac          # 检查打包后的 runtime/LLM/catalog
 
 ### P1：工程上应尽快做
 
-3. **修一处 spec 漂移**：PR #30 把模型选择器移进设置，但 `openspec/specs/settings-surface/spec.md` 的 provider row 仍写“只读、由 header picker 切换”。需要一个新的 spec 同步 PR（可直接改主 spec，或在 OpenSpec change 里写 MODIFIED）。
-4. **修文档漂移**：`docs/TECH-DECISIONS.md` 开头仍写“No application code exists yet”，且默认 ASR 仍标 Qwen3 pending benchmark。README 的 M1 段落原本写 Qwen3 是默认，本 PR 已改为 SenseVoice；后文原本就是 SenseVoice。代码事实是 `src/main/asr/mode.ts` 的 `DEFAULT_ASR_MODE = 'sensevoice'`。`CHANGELOG.md` 也仍是初始脚手架，发版前需要补上已交付能力。
+3. ~~修 spec 漂移~~ — 已由 PR #32 完成：`settings-surface` 与 `app-shell` 都改为“设置页拥有可编辑选择器、header 不再有 picker”。
+4. ~~修文档漂移~~ — 已由 PR #32 完成：`TECH-DECISIONS.md` 与 `ASR-RESEARCH.md` 记录 SenseVoice Small 为已交付默认，`CHANGELOG.md` 补上已交付能力。
 5. **补 OS 级验证**：
    - 真机按键验证录制中 `Cmd+Q` / `Cmd+R` 被菜单抑制并显示“被 macOS 占用”，而不是退出/重载。E2E 用的是 Playwright 合成事件，不经过原生菜单。
    - 验证 Electron `globalShortcut` 是否接受 `Command+'`（解析/捕获已通过，OS 接受度未验证）。
-6. **补一个测试**：录制期间（recording/transcribing/pasting）请求 capture 的拒绝路径，目前只有代码，没有自动化覆盖（Minor）。
+6. ~~补一个测试~~ — 已由 PR #32 完成：`hotkeyChangeRefusal(state)` 落在 `src/core/hotkey`，状态表由单测覆盖，capture 与应用两条路径共用同一判断。
 
 ### P2：未来硬化 / 产品规划
 

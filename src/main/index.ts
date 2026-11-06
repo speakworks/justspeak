@@ -32,6 +32,7 @@ import type {
 import type { ModelCatalogEntry } from '../core/asr/model-catalog'
 import { DEFAULT_ACCELERATOR, parseAccelerator } from '../core/hotkey/accelerator'
 import { HotkeyCaptureController } from '../core/hotkey/capture-controller'
+import { hotkeyChangeRefusal } from '../core/hotkey/hotkey-change-guard'
 import { registerHotkeyWithFallback } from '../core/hotkey/registration'
 import type { HotkeySource } from '../core/hotkey/types'
 import { postprocess, type PostprocessOptions } from '../core/postprocess'
@@ -980,11 +981,10 @@ async function applyHotkeyPreference(payload: unknown): Promise<HotkeySetResult>
   if (!parsed.ok) return rejected(parsed.error.message)
   if (!hotkeySource) return rejected('快捷键服务尚未就绪。')
   // Re-registering unregisters the current accelerator, which would swallow
-  // the stop press mid-dictation; only a quiet session may rebind.
-  const currentState = session?.state ?? 'idle'
-  if (currentState !== 'idle' && currentState !== 'error') {
-    return rejected('录音或识别过程中不能更改快捷键。')
-  }
+  // the stop press mid-dictation; only a quiet session may rebind. This is the
+  // same gate the capture path uses, so the two can never diverge.
+  const refusal = hotkeyChangeRefusal(session?.state ?? 'idle')
+  if (refusal !== null) return rejected(refusal)
 
   // Applying is also how a press-to-record capture ends successfully: the new
   // binding supersedes the temporary unregistration, so no restore is needed.
@@ -1230,10 +1230,8 @@ app.whenReady().then(async () => {
         throw new Error('未授权的快捷键请求。')
       }
       if (!hotkeyCapture) return { ok: false, message: '快捷键服务尚未就绪。' }
-      const currentState = session?.state ?? 'idle'
-      if (currentState !== 'idle' && currentState !== 'error') {
-        return { ok: false, message: '录音或识别过程中不能更改快捷键。' }
-      }
+      const refusal = hotkeyChangeRefusal(session?.state ?? 'idle')
+      if (refusal !== null) return { ok: false, message: refusal }
       // The controller unregisters the dictation key first, so the app's own
       // global shortcut cannot swallow the chord being recorded.
       return hotkeyCapture.start()

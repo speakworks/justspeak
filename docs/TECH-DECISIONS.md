@@ -8,10 +8,10 @@ This index records the technical decisions contained in the v0.1 planning docume
 points to the document that owns each decision. The linked document is the source of truth;
 this page is a map, not a second specification.
 
-**No application code exists yet.** The repository currently contains documentation and
-project scaffolding only. Nothing described here is implemented, measured, or validated in
-a running app, and no benchmark in these documents has been executed. "Accepted" means
-accepted as a design baseline for v0.1, not shipped behavior.
+**Application code exists.** The v0.1 app is implemented and runs locally; this index still
+records design decisions rather than release notes. "Accepted" means accepted as a design
+baseline — check the owning document and the code before treating a statement as shipped
+behavior, and correct whichever of the two is stale when they disagree.
 
 ## How to use these docs
 
@@ -75,7 +75,7 @@ accepted as a design baseline for v0.1, not shipped behavior.
 | Desktop stack: Electron 45 + TypeScript + React 19 + electron-vite 6 + Swift helper | Accepted | [ADR-0002](ADR-0002-tech-stack.md) | TypeScript velocity plus an out-of-process native helper for OS I/O, with a Windows-later path | Renderer-first capture baseline (#1 decided; amendment pending); minimum macOS version; bundle/memory budget; overlay strategy; storage choice; Electron upgrade policy; telemetry scope |
 | Process model and trust boundaries: sandboxed renderer, narrow preload, orchestrating main process, framework-neutral core, OS-only helper | Accepted | [ARCHITECTURE](ARCHITECTURE.md) | Enforceable boundaries keep product logic testable and OS capabilities out of the renderer | Per-app injection compatibility; architecture amendments for renderer-first and clipboard-first (#1/#2 decided; amendments pending) |
 | Local-first ASR with optional cloud BYOK adapters | Accepted | [ASR-RESEARCH](ASR-RESEARCH.md) | On-device default preserves privacy and offline use; cloud is an explicit escape hatch, never a silent fallback | Model/runtime lock; benchmark gates (CER/WER, latency, memory, cold start); cloud provider terms |
-| Default ASR prior: Qwen3-ASR 0.6B Q8_0 via transcribe.cpp; SenseVoice Small lightweight tier; Whisper small/medium fallback | Pending benchmark | [ASR-RESEARCH](ASR-RESEARCH.md) | Best same-pipeline Chinese/Cantonese quality with a permissive Apache-2.0 default; SenseVoice is smaller/faster but needs FunASR legal review | Final model/quant lock; SenseVoice license/attribution; Whisper fallback selection; Parakeet English-only |
+| Default ASR: SenseVoice Small Q8_0 via transcribe.cpp; Qwen3-ASR 0.6B selectable as the high-quality option; Whisper small/medium fallback | Accepted (owner A/B; license review open) | [ASR-RESEARCH](ASR-RESEARCH.md) | The owner compared both on real dictation and found SenseVoice more accurate at 252 MB versus Qwen3's 850 MB; Qwen3 stays selectable for harder audio | SenseVoice FunASR license/attribution; Whisper fallback selection; Parakeet English-only |
 | Replaceable provider boundaries: `AsrProvider`, `CaptureSource`, `InjectionStrategy`, `HotkeySource` | Accepted | [ADR-0003](ADR-0003-provider-boundaries.md) | Model/runtime/platform swaps become adapter changes instead of UI/core rewrites | IPC transport; process ownership; streaming interface; model-registry signing |
 | Final-only transcripts; no live partials in v0.1 | Accepted | [ASR-RESEARCH](ASR-RESEARCH.md), [AUDIO-PIPELINE](AUDIO-PIPELINE.md) | Simplifies the provider contract and avoids hiding latency behind optimistic partials | Live partial transcripts deferred; whether v0.2 adds them (#6) |
 | Audio pipeline: renderer Web Audio capture + AudioWorklet, Silero VAD optional, final-only local ASR, `CaptureSource` fallback to Swift `AVAudioEngine` | Accepted (renderer-first; VAD/chunk parameters pending spike) | [AUDIO-PIPELINE](AUDIO-PIPELINE.md), [ADR-0003](ADR-0003-provider-boundaries.md) | One TypeScript audio stack and low stop latency; helper-side capture remains comparator and fallback behind the same interface | VAD model/thresholds, chunk size, resampler placement, audio spike gates; ARCHITECTURE/ADR-0002 amendment |
@@ -88,7 +88,7 @@ accepted as a design baseline for v0.1, not shipped behavior.
 | v0.2 SpeakPilot: reuse Electron + Swift helper with hardening; `src/agent`, isolated planner, brokered tools | Accepted (plan; performance gates) | [V0.2-SPEAKPILOT](V0.2-SPEAKPILOT.md) | Reuses the shipped shell/core while isolating privileged planning and actions behind policy and confirmation | Capabilities not frozen; v0.1 entry gate; repository split trigger; permission and audit details; native action service if hot path demands |
 | Licensing and compliance: MIT project plus per-dependency/model license matrix and legal review before commercial release | Accepted (design; legal review open) | [LICENSING](LICENSING.md) | Application dependencies are largely MIT-compatible, but model-weight terms vary and require attribution and legal review | Legal review pending; SenseVoice/Parakeet/Vosk adoption; notices filename migration (#4 decided; packaging doc pending); model-license nuance (#5) |
 
-Status roll-up: 15 Accepted, 1 Pending benchmark, 0 Proposed, 0 Open (16 decisions).
+Status roll-up: 16 Accepted, 0 Pending benchmark, 0 Proposed, 0 Open (16 decisions).
 Mixed-status rows are counted by their leading status.
 
 ## Open cross-document decisions

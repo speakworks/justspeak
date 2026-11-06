@@ -6,7 +6,7 @@ import {
   describeLlm,
   describeProvider,
   summarizeProvider,
-  PROVIDER_HEADER_HINT,
+  PROVIDER_SETTINGS_HINT,
   PROVIDER_NOT_READY_REASON,
   PROVIDER_FAKE_REASON,
   describeTheme,
@@ -186,14 +186,12 @@ describe('provider state', () => {
   })
 
   it('does not call a switchable provider unavailable, and says where to switch it', () => {
-    const state = describeProvider({
-      ...PREFERENCES.provider,
-      selectable: true,
-      reason: '在窗口顶部的模型下拉中切换。'
-    })
+    const state = describeProvider(
+      summarizeProvider({ mode: 'qwen3', live: true, label: 'Qwen3-ASR 0.6B' })
+    )
     expect(state.status).toBe('default')
     expect(state.statusLabel).toBe('默认')
-    expect(state.detail).toContain('在窗口顶部的模型下拉中切换。')
+    expect(state.detail).toBe('当前：Qwen3-ASR 0.6B。在上方下拉中选择模型。')
   })
 })
 
@@ -215,12 +213,12 @@ describe('settings rows', () => {
 })
 
 describe('provider liveness', () => {
-  it('offers the header picker only while a provider is actually live', () => {
+  it('offers the settings selector only while a provider is actually live', () => {
     expect(summarizeProvider({ mode: 'qwen3', live: true, label: 'Qwen3-ASR 0.6B' })).toEqual({
       id: 'qwen3',
       label: 'Qwen3-ASR 0.6B',
       selectable: true,
-      reason: PROVIDER_HEADER_HINT
+      reason: PROVIDER_SETTINGS_HINT
     })
   })
 

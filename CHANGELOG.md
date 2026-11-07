@@ -32,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Closing the main window now hides it and keeps JustSpeak running: the hotkey, the
+  recording pill and dictation stay live with no window on screen. Quitting is explicit
+  (`Cmd+Q`, the Dock, the application menu, or the menu-bar icon).
+- A menu-bar icon carries the actions that outlive the window: show or hide the window,
+  start or stop dictation, open settings, and quit.
+- The application menu replaces Electron's default template, which exposed 重新加载 and
+  开发者工具 in a resident app.
+- The packaged app now ships the JustSpeak icon on the Dock, in Finder and on the DMG
+  instead of Electron's default icon.
 - SenseVoice Small became the default ASR provider; Qwen3-ASR 0.6B remains selectable.
 - The settings panel owns theme, hotkey, provider, LLM, and diagnostics; the vocabulary
   editor lives in the 词典 destination; the page header no longer carries a provider

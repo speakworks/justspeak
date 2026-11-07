@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -124,6 +124,30 @@ describe('license texts travel with the app', () => {
     expect(config).toContain('from: THIRD_PARTY_NOTICES.md')
     expect(config).toContain('from: licenses')
     for (const source of ELECTRON_TEXTS) expect(config).toContain(source)
+  })
+})
+
+describe('the packaged app carries its icons', () => {
+  const config = readFileSync(path.join(ROOT, 'electron-builder.yml'), 'utf8')
+
+  it('builds with the project icon instead of Electron’s default', () => {
+    // electron-builder only picks up `mac.icon`; without it a packaged Dock,
+    // Finder and DMG all show the Electron atom.
+    expect(config).toMatch(/^\s*icon: resources\/icon\.icns$/m)
+    expect(existsSync(path.join(ROOT, 'resources/icon.icns'))).toBe(true)
+  })
+
+  it('ships the menu-bar template images where the tray reads them', () => {
+    // `src/main/tray.ts` resolves `process.resourcesPath/resources`, so the two
+    // PNGs must be copied there and not only consumed at build time.
+    expect(config).toContain('from: resources/trayTemplate.png')
+    expect(config).toContain('from: resources/trayTemplate@2x.png')
+    for (const file of ['trayTemplate.png', 'trayTemplate@2x.png']) {
+      const full = path.join(ROOT, 'resources', file)
+      expect(existsSync(full), `${file} is absent`).toBe(true)
+      // A zero-byte template renders as an empty menu-bar slot.
+      expect(statSync(full).size).toBeGreaterThan(0)
+    }
   })
 })
 

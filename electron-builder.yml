@@ -28,6 +28,14 @@ asar: true
 # The catalog ships with the app; the 850 MB model weights never do. Models are
 # downloaded on first run into the user's data directory.
 extraResources:
+  # The menu-bar template image. macOS needs the file next to the app's other
+  # resources; `src/main/tray.ts` reads it from `Contents/Resources/resources`.
+  # The application icon itself is consumed by electron-builder (`mac.icon`), so
+  # it is not copied here.
+  - from: resources/trayTemplate.png
+    to: resources/trayTemplate.png
+  - from: resources/trayTemplate@2x.png
+    to: resources/trayTemplate@2x.png
   - from: resources/models.json
     to: resources/models.json
   # Optional LLM cleanup catalog (weights are downloaded on demand).
@@ -69,6 +77,10 @@ publish: null
 
 mac:
   category: public.app-category.productivity
+  # Built from resources/icon.svg by `node scripts/build-icons.mjs`. Without
+  # this, a packaged build ships Electron's default icon on the Dock, in Finder
+  # and on the DMG.
+  icon: resources/icon.icns
   target:
     - target: dmg
       arch:

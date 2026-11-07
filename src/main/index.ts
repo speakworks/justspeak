@@ -6,6 +6,7 @@ import {
   dialog,
   globalShortcut,
   ipcMain,
+  Menu,
   nativeTheme,
   net,
   screen,
@@ -47,6 +48,7 @@ import {
 import { summarizeProvider } from '../core/preferences/view'
 import { buildDiagnosticsSummary } from '../core/diagnostics/summary'
 import { deliverTranscript } from '../core/shell/delivery'
+import { closeAction } from '../core/menubar/menu'
 import { packagedRuntimeDir, resolveModelsDir } from './asr/paths'
 import { createLevelThrottle, rmsOf } from '../core/overlay/level'
 import {
@@ -61,6 +63,7 @@ import {
   type OverlayPayload
 } from './overlay'
 import type {
+  AppState,
   AppStatus,
   AsrProviderSelection,
   DiagnosticsExportResult,
@@ -121,6 +124,7 @@ import {
   suspendResultPanelEscape
 } from './result-panel'
 import { isTrustedSender } from './ipc-sender'
+import { createTray, destroyTray, refreshTray } from './tray'
 import { PcmBuffer } from './pcm-buffer'
 import { ThemeStore } from './theme-store'
 import { VocabularyStore, type VocabularyLoadResult } from './vocabulary-store'
@@ -135,6 +139,18 @@ const PROVIDER_OPTIONS: Record<SelectableAsrProviderId, ProviderOption> = {
 
 let mainWindow: BrowserWindow | null = null
 let rendererReady = false
+/**
+ * Set while a real quit is in progress, so the window's `close` handler lets
+ * the window go instead of hiding it.
+ *
+ * This has to be set *before* `app.quit()`, not in `will-quit`: Electron closes
+ * the windows first and only emits `will-quit` once they are gone. A flag set
+ * there would arrive after the handler that consults it, and a prevented close
+ * would mean `will-quit` never fires — the app could never quit at all.
+ */
+let quitting = false
+/** The user closed the window, so `ready-to-show` must not reopen it. */
+let windowHiddenByUser = false
 /** A second launch that arrives before the first window exists focuses it on ready. */
 let pendingSecondInstanceFocus = false
 let session: SessionController | null = null
@@ -196,6 +212,11 @@ let segmenterOptions: SegmenterOptions | undefined
  * which segment was lost.
  */
 let pendingSegmentFailure: string | undefined
+/**
+ * A destination the menu bar asked for before the renderer subscribed; replayed
+ * on `renderer:ready` so a click on 设置… cannot be silently lost.
+ */
+let pendingMenuDestination: 'settings' | undefined
 
 class UnavailableAsrProvider implements AsrProvider {
   readonly id = 'unavailable'
@@ -240,6 +261,9 @@ function sendState(next: AppStatus['state'], message?: string): void {
   message = notice.message
   pendingSegmentFailure = notice.pending
   console.log('[state]', next, message ?? '')
+  // The menu bar's dictation item and the window's state must never disagree;
+  // this is the one place every transition passes through.
+  refreshTray()
   mainWindow?.webContents.send('state', next, message)
   const overlay = overlayFor(next)
   if (overlay) {
@@ -859,11 +883,162 @@ function finishRecording(): void {
   toggleRecording()
 }
 
+/**
+ * The application menu, with the product's own entry points.
+ *
+ * Electron's default template carries 视图 → 重新加载 and 开发者工具, which in a
+ * resident dictation app are two ways to break a running session from a menu
+ * item the user probably clicked by accident. The dictation entries mirror the
+ * menu-bar icon so the app is fully usable from either place. 退出 keeps its
+ * role, which sets the quit path the window's `close` handler looks for.
+ */
+function buildApplicationMenu(): void {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: app.name,
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          {
+            label: '设置…',
+            accelerator: 'Command+,',
+            click: () => {
+              showMainWindow()
+              openSettings()
+            }
+          },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit', label: '退出 JustSpeak' }
+        ]
+      },
+      {
+        label: '听写',
+        submenu: [
+          {
+            // No `accelerator` property. On macOS `registerAccelerator` is
+            // ignored (`@platform linux,win32`), so a key equivalent here would
+            // be live and double-fire with the same chord registered through
+            // `globalShortcut` — one press, two toggles, an instant stop. The
+            // live chord is named in the label instead; the binding itself is
+            // `globalShortcut`'s, refreshed by `refreshApplicationMenu()`.
+            label: `开始 / 结束听写（${activeHotkey}）`,
+            click: () => {
+              showMainWindow()
+              toggleRecording()
+            }
+          },
+          { type: 'separator' },
+          {
+            label: '显示主窗口',
+            click: () => showMainWindow()
+          }
+        ]
+      },
+      {
+        label: '编辑',
+        submenu: [
+          { role: 'undo', label: '撤销' },
+          { role: 'redo', label: '重做' },
+          { type: 'separator' },
+          { role: 'cut', label: '剪切' },
+          { role: 'copy', label: '复制' },
+          { role: 'paste', label: '粘贴' },
+          { role: 'selectAll', label: '全选' }
+        ]
+      },
+      {
+        label: '窗口',
+        submenu: [
+          { role: 'minimize', label: '最小化' },
+          { role: 'zoom', label: '缩放' },
+          { type: 'separator' },
+          { role: 'front', label: '前置全部窗口' }
+        ]
+      }
+    ])
+  )
+}
+
+/**
+ * End the app from an in-app entry point. `before-quit` also covers the paths
+ * this function never sees (`Cmd+Q`, the Dock's 退出, the menu role); setting the
+ * flag here keeps the intent local and makes the two agree.
+ */
+function quitApp(): void {
+  quitting = true
+  app.quit()
+}
+
+/**
+ * The 听写 menu item names the live hotkey, so the menu is rebuilt whenever the
+ * chord changes — at startup (from the default to the stored binding, possibly
+ * after a fallback) and on every successful rebind in settings.
+ */
+function refreshApplicationMenu(): void {
+  if (!app.isReady()) return
+  buildApplicationMenu()
+}
+
+// `before-quit` is the only hook that runs *ahead* of Electron closing the
+// windows, which is what the window's `close` handler reads. Setting `quitting`
+// in `will-quit` instead would be too late: the prevented close would mean
+// `will-quit` never fires, and the app could never quit.
+app.on('before-quit', () => {
+  quitting = true
+})
+
+/**
+ * Bring the window back from any state the menu bar can leave it in — hidden,
+ * minimized, or (between `closed` and the next `whenReady` path) absent. A
+ * resident app must never have an unreachable window.
+ */
+function showMainWindow(): void {
+  // Coming back on purpose supersedes an earlier close, so a still-pending
+  // `ready-to-show` may show the window again.
+  windowHiddenByUser = false
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow()
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+  // Electron 45's `show`/`hide` events do not fire for a programmatic
+  // `show()` (they come from occlusion-state changes), so the tray's window
+  // item would keep saying 显示主窗口 until the next state change.
+  refreshTray()
+}
+
+/** Show or hide the window, matching the tray item's current label. */
+function toggleMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+    // Going through `close()` sends it through the same hide path the title
+    // bar button uses, so `windowHiddenByUser` is set by that handler.
+    mainWindow.close()
+    return
+  }
+  showMainWindow()
+}
+
+/** Show the window on the settings destination, from any launch state. */
+function openSettings(): void {
+  pendingMenuDestination = 'settings'
+  showMainWindow()
+  // A mounted renderer receives this directly; an unmounted one picks it up
+  // from `pendingMenuDestination` on `renderer:ready`.
+  mainWindow?.webContents.send('menu:navigate', 'settings')
+}
+
 function createWindow(): void {
   const preload = preloadPath()
   if (!existsSync(preload)) {
     dialog.showErrorBox('JustSpeak', `Preload script missing: ${preload}`)
-    app.quit()
+    quitApp()
     return
   }
 
@@ -889,17 +1064,45 @@ function createWindow(): void {
       preload,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      // The microphone capture runs in this renderer (getUserMedia +
+      // AudioWorklet). Closing the window now hides it instead of destroying it,
+      // and Chromium throttles hidden renderers by default — timers slow and the
+      // audio worklet can be starved, so dictation from the hotkey or the menu
+      // bar would drop audio. This is why the flag is required, not a nicety.
+      backgroundThrottling: false
     }
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow?.show()
+    // A close that lands before the first paint must not be undone by the
+    // deferred show: the window has `show: false`, so the user could have
+    // closed it while it was still hidden and `ready-to-show` would pop it back.
+    if (!windowHiddenByUser) mainWindow?.show()
     if (!pendingSecondInstanceFocus || !mainWindow) return
     pendingSecondInstanceFocus = false
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
   })
+  /**
+   * Closing the window keeps the app resident: the hotkey, the menu-bar icon
+   * and the dictation pipeline all live in main, and the renderer that owns the
+   * microphone keeps running while hidden. A real quit (`Cmd+Q`, the Dock, or
+   * the menu bar's 退出) sets `quitting` first, so it is never turned into a
+   * hide.
+   */
+  mainWindow.on('close', (event) => {
+    if (closeAction({ quitting }) === 'hide') {
+      event.preventDefault()
+      windowHiddenByUser = true
+      mainWindow?.hide()
+      refreshTray()
+    }
+  })
+  mainWindow.on('show', () => refreshTray())
+  mainWindow.on('hide', () => refreshTray())
+  mainWindow.on('minimize', () => refreshTray())
+  mainWindow.on('restore', () => refreshTray())
   mainWindow.on('closed', () => {
     // The pill and the copy panel are extra windows; without this the app
     // would stop quitting.
@@ -907,6 +1110,7 @@ function createWindow(): void {
     destroyResultPanel()
     mainWindow = null
     rendererReady = false
+    refreshTray()
   })
 
   mainWindow.webContents.on('did-start-loading', () => {
@@ -928,14 +1132,14 @@ function createWindow(): void {
     const message = `界面加载失败：${description} (${code}) ${url}`
     session?.fail(message)
     dialog.showErrorBox('JustSpeak', message)
-    app.quit()
+    quitApp()
   })
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     rendererReady = false
     const message = `界面进程异常退出：${details.reason}`
     session?.fail(message)
     dialog.showErrorBox('JustSpeak', `${message}。请重启应用。`)
-    app.quit()
+    quitApp()
   })
   if (process.env.JUSTSPEAK_DEVTOOLS === '1') {
     mainWindow.webContents.openDevTools({ mode: 'detach' })
@@ -997,6 +1201,9 @@ async function applyHotkeyPreference(payload: unknown): Promise<HotkeySetResult>
   // The hotkey source unregisters every accelerator first; a visible copy panel
   // must get its temporary Escape back (or drop the hint if registration fails).
   refreshResultPanelEscape()
+  // The menu-bar tooltip and the 听写 menu item both name the live key.
+  refreshTray()
+  refreshApplicationMenu()
   return {
     accelerator: activeHotkey,
     requested: parsed.value.accelerator,
@@ -1016,13 +1223,13 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) app.quit()
 else
   app.on('second-instance', () => {
+    // With the window hidden rather than destroyed, a second launch is another
+    // way back to a visible window — the same path the Dock and the menu bar use.
     if (!mainWindow) {
       pendingSecondInstanceFocus = true
       return
     }
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
+    showMainWindow()
   })
 
 app.whenReady().then(async () => {
@@ -1066,6 +1273,12 @@ app.whenReady().then(async () => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) return
     rendererReady = true
     console.log('[renderer] ready')
+    // 菜单栏的 设置… may have been chosen before React mounted its listener;
+    // replay it here so the request is never silently dropped.
+    if (pendingMenuDestination) {
+      mainWindow?.webContents.send('menu:navigate', pendingMenuDestination)
+      pendingMenuDestination = undefined
+    }
   })
   ipcMain.on('recording:toggle', (event) => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) return
@@ -1406,7 +1619,20 @@ app.whenReady().then(async () => {
     rendererUrl: process.env.ELECTRON_RENDERER_URL,
     rendererFile: path.join(app.getAppPath(), 'out/renderer/index.html')
   })
+  buildApplicationMenu()
   createWindow()
+  createTray({
+    iconDir: app.isPackaged
+      ? path.join(process.resourcesPath, 'resources')
+      : path.join(app.getAppPath(), 'resources'),
+    window: () => mainWindow,
+    dictation: () => (session?.state ?? 'idle') as AppState,
+    hotkey: () => activeHotkey,
+    onToggleWindow: () => toggleMainWindow(),
+    onToggleDictation: () => toggleRecording(),
+    onOpenSettings: openSettings,
+    onQuit: () => quitApp()
+  })
   void runProviderInitialization()
 
   hotkeySource = new ElectronGlobalShortcutSource(globalShortcut)
@@ -1422,6 +1648,10 @@ app.whenReady().then(async () => {
       activeHotkey = accelerator
       hotkeyNotice = message
       if (message) console.warn('[hotkey]', message)
+      // The menu-bar tooltip and the 听写 menu item both name the live key, so
+      // every change must reach them.
+      refreshTray()
+      refreshApplicationMenu()
     },
     onRegistrationChanged: (suspended) => {
       if (suspended) suspendResultPanelEscape()
@@ -1449,11 +1679,16 @@ app.whenReady().then(async () => {
   activeHotkey = outcome.accelerator
   hotkeyNotice = outcome.message
   if (outcome.message) console.warn('[hotkey]', outcome.message)
+  refreshTray()
+  // The menu was built with the default chord; this is where it learns the
+  // real (possibly fallback) binding.
+  refreshApplicationMenu()
 })
 
 let flushingHistoryForQuit = false
 
 app.on('will-quit', (event) => {
+  destroyTray()
   hotkeyCapture?.dispose()
   void hotkeySource?.stop()
   if (flushingHistoryForQuit) return
@@ -1476,6 +1711,30 @@ app.on('will-quit', (event) => {
   ]).finally(() => app.exit(0))
 })
 
+/**
+ * A resident app has no window to close, so losing the last one is no longer a
+ * reason to quit. Quitting is explicit: `Cmd+Q`, the Dock's 退出, or the
+ * menu-bar menu, each of which sets `quitting` and reaches `will-quit`.
+ */
 app.on('window-all-closed', () => {
-  app.quit()
+  refreshTray()
+})
+
+/**
+ * Clicking the Dock icon must bring a hidden window back. Without this the app
+ * looks frozen: the icon is there, the menu bar is there, and nothing appears.
+ *
+ * While the startup chain is still running (`mainWindow` not yet assigned), the
+ * handler must record the request and return — `whenReady` is about to create
+ * the window. Creating one here would race that call: the second `createWindow`
+ * overwrites `mainWindow` and the first renderer is stranded, invisible and
+ * unreachable, for the process lifetime.
+ */
+app.on('activate', () => {
+  if (!hasSingleInstanceLock || quitting) return
+  if (!mainWindow) {
+    pendingSecondInstanceFocus = true
+    return
+  }
+  showMainWindow()
 })

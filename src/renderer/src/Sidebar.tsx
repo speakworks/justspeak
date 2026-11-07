@@ -11,23 +11,15 @@ const ITEMS: Array<{ id: Exclude<Destination, 'settings'>; label: string }> = [
 export interface SidebarProps {
   current: Destination
   onSelect: (destination: Destination) => void
-  /** Label of the ASR provider main is running; the footer chip shows it. */
-  providerLabel?: string
-  /** True only when a provider session is actually usable. */
-  providerLive: boolean
 }
 
 /**
- * Persistent destinations on the left. Settings sits with the provider chip in
- * the footer, out of the main list, so the list only ever names places the user
- * visits while working.
+ * Persistent destinations on the left. Settings sits alone in the footer, out of
+ * the main list, so the list only ever names places the user visits while
+ * working. The running model is not repeated here: the settings panel names it
+ * where it can also be switched.
  */
-export function Sidebar({
-  current,
-  onSelect,
-  providerLabel,
-  providerLive
-}: SidebarProps): React.JSX.Element {
+export function Sidebar({ current, onSelect }: SidebarProps): React.JSX.Element {
   return (
     <nav className="sidebar" aria-label="导航">
       <div className="sidebar-brand">
@@ -56,16 +48,6 @@ export function Sidebar({
       </ul>
 
       <div className="sidebar-foot">
-        <button
-          type="button"
-          className="model-chip"
-          title={providerLabel ?? '模型未就绪'}
-          aria-label={`${providerLabel ?? '模型未就绪'}，打开模型设置`}
-          onClick={() => onSelect('settings')}
-        >
-          <span className={providerLive ? 'model-dot live' : 'model-dot'} aria-hidden="true" />
-          <span className="model-name">{providerLabel ?? '模型未就绪'}</span>
-        </button>
         <button
           type="button"
           className={current === 'settings' ? 'sidebar-gear current' : 'sidebar-gear'}

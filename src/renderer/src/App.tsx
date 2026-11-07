@@ -597,12 +597,7 @@ export function App(): React.JSX.Element {
 
   return (
     <div className="shell">
-      <Sidebar
-        current={view}
-        onSelect={setView}
-        providerLabel={preferences?.provider.label}
-        providerLive={preferences?.provider.selectable ?? false}
-      />
+      <Sidebar current={view} onSelect={setView} />
       <main className="content">
         <header className="page-header">
           <div>

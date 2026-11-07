@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The settings panel owns theme, hotkey, provider, LLM, and diagnostics; the vocabulary
   editor lives in the 词典 destination; the page header no longer carries a provider
   picker.
+- The sidebar footer no longer repeats the running ASR model; the settings provider row
+  is the only place it is named and switched.
 
 ### Fixed
 

@@ -57,6 +57,14 @@ test.describe('model switching lives only in settings', () => {
       // 首页 — same header, same rule.
       await page.getByRole('button', { name: '首页', exact: true }).click()
       await expect(page.locator('.page-header select')).toHaveCount(0)
+
+      // The sidebar footer names destinations only. It used to repeat the
+      // running model in a chip that also opened settings; the provider row in
+      // 设置 is now the one place the model is named and switched.
+      const foot = page.locator('.sidebar-foot')
+      await expect(foot.locator('button')).toHaveCount(1)
+      await expect(foot).toContainText('设置')
+      await expect(page.locator('.model-chip')).toHaveCount(0)
       await page.screenshot({ path: 'test-results/model-switch-home.png' })
 
       // 设置 — the one place a picker may live. Under the fake provider main
@@ -77,7 +85,7 @@ test.describe('model switching lives only in settings', () => {
     // it reports the selectable options (qwen3 + sensevoice). This is the case
     // the header picker used to serve; it now belongs to settings alone.
     // Whether it is *enabled* depends on the model being ready on this machine,
-    // so the assertion is on the option list plus agreement with the chip.
+    // so the assertion is on the option list and whether the picker is enabled.
     const { app, page, userData } = await launch({ JUSTSPEAK_ASR: '' })
     try {
       await page.getByRole('button', { name: '设置', exact: true }).click()

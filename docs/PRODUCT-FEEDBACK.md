@@ -11,6 +11,29 @@ that makes each item checkable.
 
 ---
 
+## 2026-11-07 — trial run: memory on an 8 GB MacBook Air
+
+### 1. The local LLM sidecar never releases its model
+
+- Owner: 「那个 8G 的 Air 的话，它其实还干其他的事情啊」 — the earlier memory
+  estimate assumed the app had the machine to itself.
+- **Odd before:** `LlmCorrector` started `llama-server` and never stopped it.
+  Only a backend switch, a crash, or quitting released the ~1.1 GB model, so one
+  use of 本地 cleanup pinned a gigabyte for the rest of the session. With the
+  app otherwise idle at ~508 MB, this was the single largest cost it could
+  impose on a shared 8 GB machine.
+- **Now:** the sidecar is stopped after five minutes without a decision and
+  restarted lazily on the next utterance. Reclaim reports `idle`, not `failed`,
+  and never runs while a decision is in flight. The evaluation harness disables
+  the window (`localIdleTimeoutMs: 0`) because it scores continuously.
+- **Not changed:** the 508 MB idle footprint and the per-utterance ASR child are
+  as measured; splitting the app into a client/server pair would move memory
+  between processes on the same machine, not remove it.
+- **Contract:** `openspec/specs/llm-cleanup/spec.md` (archived change:
+  `2026-11-07-llm-sidecar-idle-reclaim`).
+
+---
+
 ## 2026-11-07 — trial run: sidebar model chip and home input height
 
 ### 1. The sidebar repeats the running model

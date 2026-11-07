@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   picker.
 - The sidebar footer no longer repeats the running ASR model; the settings provider row
   is the only place it is named and switched.
+- The 首页 dictation card is capped at 300 px and top-aligned instead of stretching to
+  fill the pane; long transcripts scroll inside the input.
 
 ### Fixed
 

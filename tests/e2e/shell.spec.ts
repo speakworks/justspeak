@@ -234,6 +234,17 @@ test.describe('JustSpeak shell', () => {
       //    composer hint is the only thing in the sheet.
       await expect(page.locator('.status')).toHaveText('就绪')
       await expect(page.locator('.composer-empty-title')).toBeVisible()
+
+      // The card holds the text, not the leftover height of the pane: it is a
+      // fixed 300 px. The pane — not the document — is the scrolling container,
+      // so that is what must stay unclipped.
+      const sheet = await page.locator('.sheet-dictation').boundingBox()
+      expect(sheet?.height).toBeLessThanOrEqual(301)
+      const pane = await page.locator('.pane').evaluate((node) => ({
+        scrollHeight: node.scrollHeight,
+        clientHeight: node.clientHeight
+      }))
+      expect(pane.scrollHeight).toBeLessThanOrEqual(pane.clientHeight)
       await hideWindow(app)
       const clipboardBefore = await app.evaluate(({ clipboard }) => clipboard.readText())
       const hasApi = await page.evaluate(
@@ -324,6 +335,24 @@ test.describe('JustSpeak shell', () => {
       const pasted = existsSync(shim.calls) ? readFileSync(shim.calls, 'utf8').trim() : ''
       expect(pasted).toBe('')
       expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(clipboardBefore)
+    })
+  })
+
+  test('long text scrolls inside the fixed-height card instead of growing it', async () => {
+    await withApp(async ({ page }) => {
+      const input = page.locator('.dictation-input')
+      await input.fill('这是一段很长很长的口述内容。'.repeat(60))
+
+      // The textarea overflows and scrolls…
+      const inside = await input.evaluate((node) => ({
+        scrollHeight: node.scrollHeight,
+        clientHeight: node.clientHeight
+      }))
+      expect(inside.scrollHeight).toBeGreaterThan(inside.clientHeight)
+
+      // …while the card stays at its 300 px height.
+      const sheet = await page.locator('.sheet-dictation').boundingBox()
+      expect(sheet?.height).toBeLessThanOrEqual(301)
     })
   })
 })

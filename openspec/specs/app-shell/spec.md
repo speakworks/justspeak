@@ -30,14 +30,15 @@ transcript card.
 
 ### Requirement: Dictation SHALL land in an editable input
 
-首页 SHALL contain exactly one editable input as its working surface. A dictated
-transcript SHALL be inserted into that input at the caret and SHALL remain
-editable afterwards. The input's value and caret SHALL live above the destination
-switch, so a transcript that arrives while another destination is shown is still
-inserted. The session state SHALL be shown as one quiet footer line inside that
-input's card — a dot, its label, and the current hotkey — and a failed session
-SHALL show its message inside the same card, below the input. The window SHALL
-NOT show a record button, a transcript card or a banner.
+首页 SHALL contain exactly one editable input as its working surface, carried by
+one card that is fixed at 300 px in height and top-aligned in the pane.
+A dictated transcript SHALL be inserted into that input at the caret and SHALL
+remain editable afterwards. The input's value and caret SHALL live above the
+destination switch, so a transcript that arrives while another destination is
+shown is still inserted. The session state SHALL be shown as one quiet footer line
+inside that input's card — a dot, its label, and the current hotkey — and a failed
+session SHALL show its message inside the same card, below the input. The window
+SHALL NOT show a record button, a transcript card or a banner.
 
 #### Scenario: Dictating on the home destination
 
@@ -56,6 +57,19 @@ NOT show a record button, a transcript card or a banner.
 - **WHEN** the session enters `error`
 - **THEN** the message is shown inside the input's card, below the input
 - **AND** no transcript is inserted
+
+#### Scenario: The card does not stretch
+
+- **WHEN** 首页 is shown with an empty or short input
+- **THEN** the card is 300 px tall instead of filling the pane
+- **AND** the space below it stays empty
+
+#### Scenario: Long text scrolls inside the input
+
+- **WHEN** the transcript is longer than the card can show at 300 px
+- **THEN** the input scrolls internally
+- **AND** the card keeps its 300 px height
+- **AND** the pane gains no scrollbar
 
 #### Scenario: No pipeline chrome
 

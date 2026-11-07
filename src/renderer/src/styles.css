@@ -299,6 +299,16 @@ textarea {
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
+/* 首页's sheet. The pane is tall (720×640), and a flexing card filled every pixel
+   below the header with empty space. A fixed height keeps the card the size of
+   the work it holds; long transcripts scroll inside the textarea. `max-height`
+   lets the card yield on a display so short that the pane could not hold it. */
+.sheet-dictation {
+  flex: none;
+  height: 300px;
+  max-height: 100%;
+}
+
 .sheet:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-card);
@@ -327,7 +337,9 @@ textarea {
 .sheet-body {
   position: relative;
   flex: 1;
-  min-height: 0;
+  /* A floor rather than zero: a long error message must not shrink the editable
+     input to nothing. */
+  min-height: 120px;
   display: flex;
   flex-direction: column;
 }
@@ -424,6 +436,10 @@ textarea {
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+  /* Bounded so a long failure message scrolls instead of pushing the footer
+     out of the fixed-height card. */
+  max-height: 72px;
+  overflow-y: auto;
 }
 
 .sheet-message.error {

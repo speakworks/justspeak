@@ -26,7 +26,11 @@ permissions:
 
 jobs:
   checks:
-    runs-on: macos-14
+    # `macos-latest` rather than a pinned `macos-14`: the pinned label resolved
+    # to a runner image this repository's plan does not offer
+    # ("macos-14-arm64-us-default is not supported"). macOS is required at all
+    # because several unit tests exercise macOS-specific path and signing logic.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 

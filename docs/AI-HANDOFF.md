@@ -1,7 +1,7 @@
 # AI 交接说明
 
 - 交接日期：2026-11-07
-- 当前 `main`：`4c3f712`（PR #31 已合并；PR #32 关闭了本文档的 P1 #3/#4/#6）
+- 当前 `main`：`3305260`（PR #36 菜单栏常驻 + #37 CI 已合并）
 - 当前 active OpenSpec change：无
 - 目的：让接手的 AI 在最少上下文下安全地继续工作，而不是重新摸索一遍
 
@@ -28,9 +28,9 @@ openspec list
 | 检查 | 预期 |
 |---|---|
 | `pnpm typecheck` | 通过 |
-| `pnpm test` | 757 passed / 4 skipped |
+| `pnpm test` | 774 passed / 4 skipped |
 | `pnpm build` | 通过 |
-| `pnpm exec playwright test` | 13 passed |
+| `pnpm exec playwright test` | 20 passed |
 | `openspec validate --specs --strict` | 14/14 |
 | `openspec list` | `No active changes found` |
 
@@ -60,12 +60,17 @@ JustSpeak 是一个 macOS 优先的本地听写应用：按全局快捷键说话
 - **词汇表**：本地替换/保护规则。
 - **可选智能清理**：默认关闭；本地 Qwen2.5-1.5B sidecar 或 OpenAI 兼容端点；规则候选 + 封闭动作 + 护栏 + 800 ms 回退。
 - **诊断导出**：用户主动导出本地 zip，不自动上传；crash dump 可能含内存中的敏感信息，已披露。
-- **打包**：`pnpm package:mac` 产出未签名 `.app`；DMG/ZIP 也可构建。签名/公证被凭证阻塞；自动更新尚未实现（没有 updater 依赖，`publish: null`）。
+- **菜单栏常驻**（PR #36）：关窗即隐藏，热键/录音/听写链路继续；菜单栏图标提供显示/隐藏、开始/结束听写、设置、退出；退出全部是显式动作（`Cmd+Q`/Dock/菜单）。
+- **打包**：`pnpm package:mac` 产出未签名 `.app`（带 JustSpeak 图标）；DMG/ZIP 也可构建。签名/公证被凭证阻塞；自动更新尚未实现（没有 updater 依赖，`publish: null`）。
 
 ## 3. 最近交付（按时间倒序）
 
 | PR | 内容 | 关键点 |
 |---|---|---|
+| #37 | GitHub Actions CI | typecheck/test/build/openspec 门槛在每次 push 与 PR 上跑；不跑 E2E 与覆盖率（原因写在 workflow 注释里） |
+| #36 | 菜单栏常驻 + 应用图标 | 关窗即隐藏（`menubar-residency` spec）；退出全部显式；`quitting` 在 `before-quit` 设；隐藏渲染进程 `backgroundThrottling: false`；打包用自带 icon；两轮独立 review（5 Important 全修复，复核 GO） |
+| #35 | LLM sidecar 闲置回收 | 5 分钟无判定请求停止 sidecar；评测 harness 用 `localIdleTimeoutMs: 0` 关闭 |
+| #34 | 首页听写卡片限高 | 300px 固定高度、内部滚动 |
 | #33 | 侧边栏去掉模型芯片 | footer 只留设置入口；provider row 仍是唯一显示/切换点；E2E 加了 footer 结构守卫 |
 | #32 | 契约与文档一致性清理 | 设置页拥有模型选择器（settings-surface + app-shell spec 同步）、provider 提示文案、`hotkeyChangeRefusal` 状态门禁 + 单测、TECH-DECISIONS/ASR-RESEARCH/CHANGELOG 校准 |
 | #29 | 快捷键录制 | `HotkeyRecorder`、`HotkeyCaptureController`、菜单快捷键抑制、15 s 安全恢复、权威 spec 已同步 |
@@ -92,7 +97,7 @@ PR 链接：`https://github.com/speakworks/justspeak/pull/<number>`。
 | `src/preload/index.ts` | 类型化 bridge | 只暴露 `JustSpeakApi`，不要加宽 |
 | `src/renderer/src` | React UI | `HotkeyRecorder.tsx`、`SettingsPanel.tsx`、`App.tsx` |
 | `src/shared/ipc.ts` | 主/渲染共享契约 | 新 IPC 同时改 preload 和类型 |
-| `openspec/specs` | 14 个权威行为 spec | 当前无 active change |
+| `openspec/specs` | 15 个权威行为 spec（含 `menubar-residency`） | 当前无 active change |
 | `tests/` | Vitest | `tests/e2e/` 是 Playwright，`pnpm test` 不跑它 |
 | `scripts/` | 评测、打包、模型下载 | `llm-eval.ts`、`verify-mac-app.ts` 等 |
 
@@ -136,7 +141,11 @@ pnpm verify:mac          # 检查打包后的 runtime/LLM/catalog
 - 应用 userData：`preferences.json`、`asr-preference.json`、`history/`、`vocabulary.json`、下载的 LLM 模型、`llm-key.bin`（端点 key 的加密存储）
 - 日志：Electron `app.getPath('logs')`，1 MB × 2 轮转
 - 评测数据：`bench/llm/`（LLM 录音与报告）、`bench/real/`（真人语音录音）、`bench/results/*-real.json` 与 `bench/reports/*-real.md`（真实语音评测报告）；全部 gitignored
-- 本地架构解说（未提交）：`.explain-clearly/`；内容早于 PR #29/#30，快捷键/设置章节已过时
+- 本地架构解说（未提交）：`.explain-clearly/`；内容早于 PR #29/#30，快捷键/设置章节已过时。永远不要提交这个目录。
+
+### CI
+
+`.github/workflows/ci.yml` 在每次 push / PR 跑 `typecheck`、`test`、`build`、`openspec validate --specs --strict`，以及「没有未归档的 active change」。**不跑** Electron E2E（需要真实 GUI/剪贴板/全局快捷键，并发启动会互相干扰）与覆盖率（`AGENTS.md` 记录的 `coverage-gate: never`）。E2E 仍是本地门槛：`pnpm e2e`。
 
 ## 6. 工作流铁律
 
@@ -191,12 +200,14 @@ pnpm verify:mac          # 检查打包后的 runtime/LLM/catalog
    - 真机按键验证录制中 `Cmd+Q` / `Cmd+R` 被菜单抑制并显示“被 macOS 占用”，而不是退出/重载。E2E 用的是 Playwright 合成事件，不经过原生菜单。
    - 验证 Electron `globalShortcut` 是否接受 `Command+'`（解析/捕获已通过，OS 接受度未验证）。
 6. ~~补一个测试~~ — 已由 PR #32 完成：`hotkeyChangeRefusal(state)` 落在 `src/core/hotkey`，状态表由单测覆盖，capture 与应用两条路径共用同一判断。
+7. **开机启动尚未实现**：仓库里没有 `setLoginItemSettings`。菜单栏常驻（PR #36）让“应用一直在”成立，但每次重启仍要手动打开。做成设置项还是默认开启是产品决策。
+8. **托盘/翻译细节遗留**（review 复核标记的 Minor，均为后续小卡片）：工具提示打印的是原始 accelerator 字符串（如 `CommandOrControl+Shift+Space`）而非 `⌘⇧Space`；应用菜单没有 `role:'close'`，`Cmd+W` 不关窗；Windows 移植时托盘左击需恢复窗口（macOS 不适用）。
 
 ### P2：未来硬化 / 产品规划
 
-7. sidecar 的 Unix socket transport，以及同用户进程抓包保护（当前是 localhost + 每次启动 API key）。
-8. Windows 移植（`docs/WINDOWS-PORT.md`，未开始）。
-9. v0.2 SpeakPilot（`docs/V0.2-SPEAKPILOT.md`，规划）。
+9. sidecar 的 Unix socket transport，以及同用户进程抓包保护（当前是 localhost + 每次启动 API key）。
+10. Windows 移植（`docs/WINDOWS-PORT.md`，未开始）。
+11. v0.2 SpeakPilot（`docs/V0.2-SPEAKPILOT.md`，规划）。
 
 ## 8. 关键设计约束（不要轻易推翻）
 
@@ -210,7 +221,7 @@ pnpm verify:mac          # 检查打包后的 runtime/LLM/catalog
 
 ## 9. 接手验收清单
 
-- [ ] `git switch main && git pull --ff-only`，确认 `git log -1` 是 `72fe036` 之后的提交
+- [ ] `git switch main && git pull --ff-only`，确认 `git log -1` 是 `3305260` 之后的提交
 - [ ] `pnpm install`
 - [ ] `pnpm typecheck && pnpm test && pnpm build`
 - [ ] `pnpm exec playwright test`（需要 GUI；`JUSTSPEAK_E2E=0` 可跳过）

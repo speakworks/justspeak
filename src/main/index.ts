@@ -212,6 +212,11 @@ let segmenterOptions: SegmenterOptions | undefined
  * which segment was lost.
  */
 let pendingSegmentFailure: string | undefined
+/**
+ * A destination the menu bar asked for before the renderer subscribed; replayed
+ * on `renderer:ready` so a click on 设置… cannot be silently lost.
+ */
+let pendingMenuDestination: 'settings' | undefined
 
 class UnavailableAsrProvider implements AsrProvider {
   readonly id = 'unavailable'
@@ -900,7 +905,7 @@ function buildApplicationMenu(): void {
             accelerator: 'Command+,',
             click: () => {
               showMainWindow()
-              mainWindow?.webContents.send('menu:navigate', 'settings')
+              openSettings()
             }
           },
           { type: 'separator' },
@@ -915,12 +920,13 @@ function buildApplicationMenu(): void {
         label: '听写',
         submenu: [
           {
-            label: '开始 / 结束听写',
-            accelerator: activeHotkey,
-            // A menu accelerator would double-fire with globalShortcut, so this
-            // item is labelled with the live key but has no accelerator of its
-            // own; the menu-bar icon is the keyboard-free equivalent.
-            registerAccelerator: false,
+            // No `accelerator` property. On macOS `registerAccelerator` is
+            // ignored (`@platform linux,win32`), so a key equivalent here would
+            // be live and double-fire with the same chord registered through
+            // `globalShortcut` — one press, two toggles, an instant stop. The
+            // live chord is named in the label instead; the binding itself is
+            // `globalShortcut`'s, refreshed by `refreshApplicationMenu()`.
+            label: `开始 / 结束听写（${activeHotkey}）`,
             click: () => {
               showMainWindow()
               toggleRecording()
@@ -968,6 +974,16 @@ function quitApp(): void {
   app.quit()
 }
 
+/**
+ * The 听写 menu item names the live hotkey, so the menu is rebuilt whenever the
+ * chord changes — at startup (from the default to the stored binding, possibly
+ * after a fallback) and on every successful rebind in settings.
+ */
+function refreshApplicationMenu(): void {
+  if (!app.isReady()) return
+  buildApplicationMenu()
+}
+
 // `before-quit` is the only hook that runs *ahead* of Electron closing the
 // windows, which is what the window's `close` handler reads. Setting `quitting`
 // in `will-quit` instead would be too late: the prevented close would mean
@@ -992,6 +1008,30 @@ function showMainWindow(): void {
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
   mainWindow.focus()
+  // Electron 45's `show`/`hide` events do not fire for a programmatic
+  // `show()` (they come from occlusion-state changes), so the tray's window
+  // item would keep saying 显示主窗口 until the next state change.
+  refreshTray()
+}
+
+/** Show or hide the window, matching the tray item's current label. */
+function toggleMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+    // Going through `close()` sends it through the same hide path the title
+    // bar button uses, so `windowHiddenByUser` is set by that handler.
+    mainWindow.close()
+    return
+  }
+  showMainWindow()
+}
+
+/** Show the window on the settings destination, from any launch state. */
+function openSettings(): void {
+  pendingMenuDestination = 'settings'
+  showMainWindow()
+  // A mounted renderer receives this directly; an unmounted one picks it up
+  // from `pendingMenuDestination` on `renderer:ready`.
+  mainWindow?.webContents.send('menu:navigate', 'settings')
 }
 
 function createWindow(): void {
@@ -1161,8 +1201,9 @@ async function applyHotkeyPreference(payload: unknown): Promise<HotkeySetResult>
   // The hotkey source unregisters every accelerator first; a visible copy panel
   // must get its temporary Escape back (or drop the hint if registration fails).
   refreshResultPanelEscape()
-  // The menu-bar tooltip names the live key.
+  // The menu-bar tooltip and the 听写 menu item both name the live key.
   refreshTray()
+  refreshApplicationMenu()
   return {
     accelerator: activeHotkey,
     requested: parsed.value.accelerator,
@@ -1232,6 +1273,12 @@ app.whenReady().then(async () => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) return
     rendererReady = true
     console.log('[renderer] ready')
+    // 菜单栏的 设置… may have been chosen before React mounted its listener;
+    // replay it here so the request is never silently dropped.
+    if (pendingMenuDestination) {
+      mainWindow?.webContents.send('menu:navigate', pendingMenuDestination)
+      pendingMenuDestination = undefined
+    }
   })
   ipcMain.on('recording:toggle', (event) => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) return
@@ -1581,12 +1628,9 @@ app.whenReady().then(async () => {
     window: () => mainWindow,
     dictation: () => (session?.state ?? 'idle') as AppState,
     hotkey: () => activeHotkey,
-    onToggleWindow: () => showMainWindow(),
+    onToggleWindow: () => toggleMainWindow(),
     onToggleDictation: () => toggleRecording(),
-    onOpenSettings: () => {
-      showMainWindow()
-      mainWindow?.webContents.send('menu:navigate', 'settings')
-    },
+    onOpenSettings: openSettings,
     onQuit: () => quitApp()
   })
   void runProviderInitialization()
@@ -1604,8 +1648,10 @@ app.whenReady().then(async () => {
       activeHotkey = accelerator
       hotkeyNotice = message
       if (message) console.warn('[hotkey]', message)
-      // The menu-bar tooltip names the live key, so every change must reach it.
+      // The menu-bar tooltip and the 听写 menu item both name the live key, so
+      // every change must reach them.
       refreshTray()
+      refreshApplicationMenu()
     },
     onRegistrationChanged: (suspended) => {
       if (suspended) suspendResultPanelEscape()
@@ -1634,6 +1680,9 @@ app.whenReady().then(async () => {
   hotkeyNotice = outcome.message
   if (outcome.message) console.warn('[hotkey]', outcome.message)
   refreshTray()
+  // The menu was built with the default chord; this is where it learns the
+  // real (possibly fallback) binding.
+  refreshApplicationMenu()
 })
 
 let flushingHistoryForQuit = false
@@ -1674,8 +1723,18 @@ app.on('window-all-closed', () => {
 /**
  * Clicking the Dock icon must bring a hidden window back. Without this the app
  * looks frozen: the icon is there, the menu bar is there, and nothing appears.
+ *
+ * While the startup chain is still running (`mainWindow` not yet assigned), the
+ * handler must record the request and return — `whenReady` is about to create
+ * the window. Creating one here would race that call: the second `createWindow`
+ * overwrites `mainWindow` and the first renderer is stranded, invisible and
+ * unreachable, for the process lifetime.
  */
 app.on('activate', () => {
-  if (!hasSingleInstanceLock) return
+  if (!hasSingleInstanceLock || quitting) return
+  if (!mainWindow) {
+    pendingSecondInstanceFocus = true
+    return
+  }
   showMainWindow()
 })

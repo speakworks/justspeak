@@ -23,7 +23,8 @@
 - [x] 4.1 Unit-test the menu model and the close decision, including that no session state drops an item.
 - [x] 4.2 Guard the icon wiring in `tests/packaging.test.ts`.
 - [x] 4.3 Drive the real Electron app: closing hides instead of destroying, the hidden renderer still captures and delivers away from itself, the Dock's `activate` restores the window, and an explicit quit exits.
-- [x] 4.4 Confirm the template image loads as a real `NativeImage` that reports `isTemplateImage()`.
+- [x] 4.4 Confirm the template image loads as a real `NativeImage` that reports `isTemplateImage()` (guarded by `tests/e2e/resident.spec.ts`).
 - [x] 4.5 Run `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm exec playwright test`, and `openspec validate --specs --strict`.
 - [x] 4.6 Mutation-test the guards: removing `preventDefault`, the `before-quit` flag, `backgroundThrottling: false`, or the `activate` handler each fails a named test.
-- [ ] 4.7 Archive the change before merging and pin the merge to the reviewed tip.
+- [x] 4.7 Address the review findings: dock-click startup race, 隐藏主窗口 wiring, tray-click focus theft, stale menu accelerator, and an audio-flow-proving hidden-capture test.
+- [ ] 4.8 Archive the change before merging and pin the merge to the reviewed tip.

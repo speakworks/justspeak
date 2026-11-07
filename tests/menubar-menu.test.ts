@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { closeAction, trayMenu, trayTooltip } from '../src/core/menubar/menu'
 import type { AppState } from '../src/shared/ipc'
@@ -68,5 +71,27 @@ describe('closing the window hides it unless the app is quitting', () => {
     // Cmd+Q and the menu's own quit item both arrive here; treating them as a
     // hide would leave the app running with no way the user asked for.
     expect(closeAction({ quitting: true })).toBe('quit')
+  })
+})
+
+describe('the tray wiring honours the menu model', () => {
+  const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+  const read = (relative: string): string => readFileSync(path.join(ROOT, relative), 'utf8')
+
+  it('wires toggle-window to a handler that both shows and hides', () => {
+    // PR 36 review: the item once read 隐藏主窗口 while the handler only ever
+    // showed the window. The wiring must be the toggle function, not show.
+    const indexSource = read('src/main/index.ts')
+    expect(indexSource).toContain('onToggleWindow: () => toggleMainWindow()')
+    // And the toggle function must actually hide: it goes through `close()`,
+    // which is what lets `windowHiddenByUser` be set.
+    expect(indexSource).toMatch(/function toggleMainWindow\(\): void \{[\s\S]*?mainWindow\.close\(\)/)
+  })
+
+  it('does not react to bare tray clicks with a focus-stealing show', () => {
+    // A bare click opens the menu AND fires Electron's `click` event; a show
+    // handler there would steal focus from the app the user is dictating into.
+    const traySource = read('src/main/tray.ts')
+    expect(traySource).not.toContain("tray.on('click'")
   })
 })

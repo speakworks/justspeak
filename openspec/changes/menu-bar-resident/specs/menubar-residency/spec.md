@@ -36,9 +36,24 @@ in this order, a window item, a dictation item, a settings item and a quit item,
 in every session state. The icon SHALL adapt to a dark menu bar and to the
 reduced-transparency setting by way of a template image.
 
+The window item SHALL actually perform the action its label names: choosing
+隐藏主窗口 while the window is visible hides it, and choosing 显示主窗口 while it
+is hidden shows it. A bare left click on the icon SHALL open the menu only and
+SHALL NOT activate the app, so dictating into another application is never
+interrupted by choosing from the icon's menu.
+
 The application menu SHALL offer the same dictation and settings entry points,
 and SHALL NOT expose renderer reload or developer tools, which in a resident app
-are two ways to break a running session from a menu item.
+are two ways to break a running session from a menu item. Its dictation item
+SHALL name the live hotkey in its label and SHALL NOT register a key equivalent,
+which on macOS would double-fire with the same chord registered through the
+global shortcut.
+
+#### Scenario: A Dock click while the app is still starting
+
+- **WHEN** the Dock icon is clicked before the startup chain has created the window
+- **THEN** no duplicate window is created
+- **AND** the window the startup chain creates is the only one
 
 The dictation item SHALL name the action it performs — start, stop, or in
 progress — and SHALL be disabled rather than silently doing nothing while a

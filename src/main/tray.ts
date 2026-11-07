@@ -89,9 +89,13 @@ export function createTray(next: TrayHost): void {
   host = next
   tray = new Tray(templateImage(next.iconDir))
   tray.setToolTip(trayTooltip(next.hotkey()))
-  // A resident app has no window to reopen once the Dock icon is gone, so a
-  // plain click has to bring the window back rather than only open the menu.
-  tray.on('click', () => dispatch('toggle-window'))
+  // No `click` handler here. With a context menu set, macOS treats a left
+  // click as "open the menu" — but Electron still also emits `click`, and a
+  // handler on it would fire *in addition to* the menu appearing. A handler
+  // that shows or focuses the main window would therefore steal focus (it
+  // activates the app) at the exact moment the user is picking an item —
+  // dictating into another app would land the transcript in JustSpeak's own
+  // input instead. The menu itself carries 显示主窗口 for reaching the window.
   renderMenu()
 }
 

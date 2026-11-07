@@ -186,8 +186,16 @@ http.createServer((req, res) => {
     if (apiKey && req.headers.authorization !== 'Bearer ' + apiKey) {
       res.writeHead(401); res.end('unauthorized'); return
     }
+    const decision = JSON.stringify({ choices: [{ message: { content: '{"action":"delete_before_keep_after"}' } }] })
+    if (mode === 'slow') {
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(decision)
+      }, 400)
+      return
+    }
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ choices: [{ message: { content: '{"action":"delete_before_keep_after"}' } }] }))
+    res.end(decision)
     return
   }
   res.writeHead(404); res.end()
@@ -207,13 +215,15 @@ afterAll(() => {
 })
 
 function localCorrector(
-  onLocalStatusChange?: (status: LlmLocalStatus) => void
+  onLocalStatusChange?: (status: LlmLocalStatus) => void,
+  localIdleTimeoutMs?: number
 ): LlmCorrector {
   return new LlmCorrector({
     runtimePath: fakeServer,
     localModelPath: modelFile,
     keyStore: { load: async () => undefined },
-    ...(onLocalStatusChange === undefined ? {} : { onLocalStatusChange })
+    ...(onLocalStatusChange === undefined ? {} : { onLocalStatusChange }),
+    ...(localIdleTimeoutMs === undefined ? {} : { localIdleTimeoutMs })
   })
 }
 
@@ -363,6 +373,102 @@ describe('LLM corrector (local lifecycle)', () => {
       text: '周二发。',
       outcome: 'applied'
     })
+    await corrector.dispose(true)
+  })
+
+  it('releases the idle sidecar and warms a fresh one on the next utterance', async () => {
+    process.env.FAKE_MODE = 'ok'
+    process.env.FAKE_PIDFILE = pidFile
+    rmSync(pidFile, { force: true })
+    const states: string[] = []
+    const corrector = localCorrector((status) => states.push(status.state), 60)
+    corrector.configure({ backend: 'local', baseUrl: '', model: '' })
+    expect(await corrector.warmup()).toBe(true)
+
+    // A decision resets the window and applies as usual.
+    expect(await corrector.refine('周一发，不对，周二发。')).toMatchObject({ outcome: 'applied' })
+
+    // Quiet for longer than the window: the child exits, and the row reports
+    // idle rather than failed because nothing is actually broken.
+    const firstPid = pids()[0] as number
+    await vi.waitFor(() => expect(corrector.localStatus.state).toBe('idle'), { timeout: 5000 })
+    await vi.waitFor(
+      () => expect(() => process.kill(firstPid, 0)).toThrow(),
+      { timeout: 5000 }
+    )
+    expect(states).not.toContain('failed')
+
+    // The next utterance uses the rule text while a replacement warms, exactly
+    // like a cold start; the one after that is corrected again.
+    expect(await corrector.refine('周一发，不对，周二发。')).toMatchObject({ outcome: 'deferred' })
+    await vi.waitFor(() => expect(corrector.localStatus.state).toBe('ready'), { timeout: 5000 })
+    expect(pids().length).toBe(2)
+    expect(await corrector.refine('周一发，不对，周二发。')).toMatchObject({
+      text: '周二发。',
+      outcome: 'applied'
+    })
+
+    await corrector.dispose(true)
+  })
+
+  it('reclaims a sidecar that warmed but was never asked to decide', async () => {
+    process.env.FAKE_MODE = 'ok'
+    process.env.FAKE_PIDFILE = pidFile
+    rmSync(pidFile, { force: true })
+    const corrector = localCorrector(undefined, 60)
+    corrector.configure({ backend: 'local', baseUrl: '', model: '' })
+    expect(await corrector.warmup()).toBe(true)
+    const pid = pids()[0] as number
+
+    // No refine() here on purpose: selecting 本地 and then not dictating is the
+    // 8 GB case this change exists for. Only the ready-time arm can reclaim it.
+    await vi.waitFor(() => expect(corrector.localStatus.state).toBe('idle'), { timeout: 5000 })
+    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 5000 })
+
+    await corrector.dispose(true)
+  })
+
+  it('keeps a replacement start that arrives while the idle child is stopping', async () => {
+    process.env.FAKE_MODE = 'ignoreterm'
+    process.env.FAKE_PIDFILE = pidFile
+    rmSync(pidFile, { force: true })
+    const states: string[] = []
+    const corrector = localCorrector((status) => states.push(status.state), 50)
+    corrector.configure({ backend: 'local', baseUrl: '', model: '' })
+    expect(await corrector.warmup()).toBe(true)
+    expect(states).toEqual(['starting', 'ready'])
+
+    // The 50 ms window fires now and the child ignores SIGTERM, so its graceful
+    // stop is still running when the next utterance arrives.
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(await corrector.refine('周一发，不对，周二发。')).toMatchObject({ outcome: 'deferred' })
+
+    await vi.waitFor(() => expect(corrector.localStatus.state).toBe('ready'), { timeout: 15000 })
+    // The reclaim must not flip the newer `starting` back to `idle`.
+    expect(states).toEqual(['starting', 'ready', 'starting', 'ready'])
+    await corrector.dispose(true)
+  })
+
+  it('does not reclaim while a decision is in flight', async () => {
+    process.env.FAKE_MODE = 'slow'
+    process.env.FAKE_PIDFILE = pidFile
+    rmSync(pidFile, { force: true })
+    const corrector = localCorrector(undefined, 50)
+    corrector.configure({ backend: 'local', baseUrl: '', model: '' })
+    expect(await corrector.warmup()).toBe(true)
+
+    const pid = pids()[0] as number
+    const refining = corrector.refine('周一发，不对，周二发。')
+    // The 50 ms window elapses while the 400 ms response is still pending.
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    // Assert the child is still alive as well as the state: a stalled CI could
+    // otherwise make the state check pass before the timer ever fired.
+    expect(() => process.kill(pid, 0)).not.toThrow()
+    expect(corrector.localStatus.state).toBe('ready')
+    expect(await refining).toMatchObject({ outcome: 'applied' })
+
+    // The window restarts once the request settles, then reclaims.
+    await vi.waitFor(() => expect(corrector.localStatus.state).toBe('idle'), { timeout: 5000 })
     await corrector.dispose(true)
   })
 })

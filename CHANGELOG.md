@@ -44,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The provider hint no longer points at a header control that no longer exists.
+- The local LLM sidecar is stopped after five minutes without a request, returning its
+  ~1.1 GB model memory to the system, and restarted lazily on the next utterance.
 
 ### Security
 

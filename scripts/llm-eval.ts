@@ -109,7 +109,10 @@ async function main(): Promise<void> {
   const corrector = new LlmCorrector({
     runtimePath: process.env.JUSTSPEAK_LLM_RUNTIME ?? path.join(ROOT, 'resources/llm/llama-server'),
     localModelPath: MODEL_PATH,
-    keyStore: { load: async () => undefined }
+    keyStore: { load: async () => undefined },
+    // Scoring is a continuous run: a gap between fixtures must never reclaim
+    // the sidecar and silently score the rule text against itself.
+    localIdleTimeoutMs: 0
   })
   corrector.configure({ backend: 'local', baseUrl: '', model: '' })
   // The corrector deliberately does not block dictation on a cold model. The

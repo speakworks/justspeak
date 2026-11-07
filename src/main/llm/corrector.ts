@@ -23,7 +23,16 @@ export interface LlmCorrectorDeps {
   fetch?: typeof fetch
   /** Called whenever the local sidecar lifecycle changes, for UI pushes. */
   onLocalStatusChange?: (status: LlmLocalStatus) => void
+  /**
+   * Stop the local sidecar after this long without a decision request, so its
+   * model memory returns to the system. `0` disables reclaim, which the
+   * evaluation harness needs because it runs continuously.
+   */
+  localIdleTimeoutMs?: number
 }
+
+/** Long enough that a dictation pause never pays a reload, short enough to free RAM. */
+export const DEFAULT_LOCAL_IDLE_TIMEOUT_MS = 5 * 60_000
 
 /** What the local backend is doing right now, for an honest settings row. */
 export interface LlmLocalStatus {
@@ -123,9 +132,22 @@ export class LlmCorrector {
   private localError?: string
   /** Bumped on every stop so an in-flight start cannot install a stale child. */
   private localGeneration = 0
+  private readonly localIdleTimeoutMs: number
+  private idleTimer?: ReturnType<typeof setTimeout>
+  /** Decisions currently awaiting a sidecar reply; reclaim must not cut one off. */
+  private decisionsInFlight = 0
 
   constructor(deps: LlmCorrectorDeps) {
     this.deps = deps
+    const idle = deps.localIdleTimeoutMs
+    // `0` disables reclaim on purpose; a NaN or negative value would otherwise
+    // arm a timer that fires immediately, so it falls back to the default.
+    this.localIdleTimeoutMs =
+      idle === undefined
+        ? DEFAULT_LOCAL_IDLE_TIMEOUT_MS
+        : Number.isFinite(idle) && idle >= 0
+          ? idle
+          : DEFAULT_LOCAL_IDLE_TIMEOUT_MS
   }
 
   get localStatus(): LlmLocalStatus {
@@ -167,7 +189,12 @@ export class LlmCorrector {
   warmup(): Promise<boolean> {
     if (this.disposed || this.config.backend !== 'local') return Promise.resolve(false)
     if (this.sidecar) {
-      if (this.sidecar.alive) return Promise.resolve(true)
+      if (this.sidecar.alive) {
+        // Keep the invariant "a live sidecar always has a reclaim window" true
+        // even if this call found it already warm rather than starting it.
+        this.armIdleReclaim()
+        return Promise.resolve(true)
+      }
       this.dropDeadSidecar()
     }
     if (!existsSync(this.deps.runtimePath)) {
@@ -241,6 +268,9 @@ export class LlmCorrector {
       }
       this.sidecar = sidecar
       this.setLocalState('ready')
+      // A fresh sidecar is idle from the moment it is ready, so the window
+      // starts here rather than only after the first decision.
+      this.armIdleReclaim()
     } catch (error) {
       if (
         !this.disposed &&
@@ -264,9 +294,63 @@ export class LlmCorrector {
     if (this.sidecar === undefined) return
     if (dead !== undefined && this.sidecar !== dead) return
     this.sidecar = undefined
+    this.clearIdleReclaim()
     if (!this.disposed) {
       this.setLocalState('failed', '本地模型进程已退出，将在下次听写时重新启动。')
     }
+  }
+
+  /**
+   * Arm the reclaim window. `0` disables it; a pending timer is replaced, so
+   * every call restarts the clock.
+   */
+  private armIdleReclaim(): void {
+    this.clearIdleReclaim()
+    if (this.localIdleTimeoutMs <= 0 || this.disposed) return
+    if (this.config.backend !== 'local' || this.sidecar === undefined) return
+    const timer = setTimeout(() => {
+      this.idleTimer = undefined
+      // A rejection here would surface as an unhandled rejection in main; the
+      // reclaim is best effort and must never affect dictation.
+      void this.reclaimIdleSidecar().catch(() => undefined)
+    }, this.localIdleTimeoutMs)
+    // Never hold the process open just for the reclaim timer.
+    timer.unref?.()
+    this.idleTimer = timer
+  }
+
+  private clearIdleReclaim(): void {
+    if (this.idleTimer === undefined) return
+    clearTimeout(this.idleTimer)
+    this.idleTimer = undefined
+  }
+
+  /**
+   * Free the model's memory after a quiet window. This is not a failure: the
+   * runtime and model files are untouched, so the row keeps reporting the local
+   * backend as available and the next request warms a fresh child.
+   */
+  private async reclaimIdleSidecar(): Promise<void> {
+    if (
+      this.disposed ||
+      this.config.backend !== 'local' ||
+      this.sidecar === undefined ||
+      this.decisionsInFlight > 0
+    ) {
+      // A decision is still running; its `finally` restarts the clock, so this
+      // callback does not re-arm and cannot spin while the request is slow.
+      return
+    }
+    await this.stopSidecar()
+    if (this.disposed || this.config.backend !== 'local') return
+    // Stopping the child can take up to the graceful window, and a request or
+    // a warmup may have landed meanwhile. Only an unchanged `ready` state with
+    // nothing new starting may be reported as idle; otherwise the newer state
+    // (starting, failed, or a replacement child) wins.
+    if (this.localState !== 'ready') return
+    if (this.sidecar !== undefined || this.startingSidecar !== undefined) return
+    if (this.warmupPromise !== undefined) return
+    this.setLocalState('idle')
   }
 
   async refine(text: string): Promise<LlmCorrectionResult | undefined> {
@@ -284,11 +368,22 @@ export class LlmCorrector {
         void this.warmup()
         return null
       }
-      const result = await sidecar.decide(text, 800)
-      // The sidecar may have crashed, or been replaced, during the request;
-      // only drop this exact instance.
-      if (!sidecar.alive) this.dropDeadSidecar(sidecar)
-      return result.action
+      // The timer is deliberately left armed: if it fires mid-request the
+      // in-flight guard below refuses the reclaim, and the `finally` restarts
+      // the window. Clearing it here would make that guard unreachable.
+      this.decisionsInFlight += 1
+      try {
+        const result = await sidecar.decide(text, 800)
+        // The sidecar may have crashed, or been replaced, during the request;
+        // only drop this exact instance.
+        if (!sidecar.alive) this.dropDeadSidecar(sidecar)
+        return result.action
+      } finally {
+        this.decisionsInFlight -= 1
+        // The clock restarts when the last in-flight request settles, never in
+        // the middle of one.
+        if (this.decisionsInFlight === 0) this.armIdleReclaim()
+      }
     }
 
     const snapshot = { ...this.config }
@@ -301,6 +396,7 @@ export class LlmCorrector {
   }
 
   private stopSidecar(force = false): Promise<void> {
+    this.clearIdleReclaim()
     this.localGeneration += 1
     // A cancelled start must not be shared by a later warmup for the same
     // backend; the next call starts a fresh child.

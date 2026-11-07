@@ -11,6 +11,50 @@ that makes each item checkable.
 
 ---
 
+## 2026-11-07 — trial run: the app dies with its window
+
+### 1. Closing the window ends the whole app
+
+- Owner: 「想在 mac 系统的 menu bar 上添加一个 icon」 — asked while reviewing
+  what the product still lacked. The menu-bar icon is the visible half; the
+  behaviour it implies is the part that was missing.
+- **Odd before:** `app.on('window-all-closed', () => app.quit())` and no
+  `mainWindow.on('close')`. The window is the app's *only* surface, so pressing
+  the red button ended the process: the global hotkey stopped responding, the
+  recording pill could no longer appear, and the LLM sidecar was torn down. A
+  dictation tool whose whole point is being available in other apps was
+  available only while its own window was on screen.
+- **Now:** closing hides the window and keeps the process alive, with the
+  hotkey, the pill and dictation still working. Quitting is explicit —
+  `Cmd+Q`, the Dock's 退出, the application menu's 退出, or the menu-bar icon's
+  退出. The renderer keeps the microphone capture, so it is marked
+  `backgroundThrottling: false`; without that, dictating with the window closed
+  would silently drop audio.
+- **Also fixed while doing it:** the `quitting` flag had to be set in
+  `before-quit`, not `will-quit`. Electron closes the windows before
+  `will-quit`, so a flag set there arrives after the handler that reads it — and
+  a prevented close means `will-quit` never fires at all, so the app could never
+  quit. The first implementation had exactly that bug and the E2E caught it as a
+  45-second teardown timeout.
+- **Menu-bar icon:** a template image drawn from the same four-bar mark as
+  `.sidebar-mark`, with 显示/隐藏主窗口, 开始/结束听写, 设置…, 退出 JustSpeak. The
+  dictation item names what it will do and disables itself mid-transcript rather
+  than doing nothing.
+- **Contract:** `openspec/changes/menu-bar-resident/` (`menubar-residency`).
+
+### 2. The packaged app ships Electron's default icon
+
+- **Odd before:** `electron-builder.yml` had no `mac.icon`, so `release/` carried
+  `electron.icns`. Nothing in `resources/` was an icon either.
+- **Now:** `resources/icon.svg` (plate + waveform bars) is built by
+  `node scripts/build-icons.mjs` into `resources/icon.icns`, and the same script
+  emits the two menu-bar template PNGs. All three are committed, so a clean
+  clone packages without `librsvg` installed.
+- **Not done:** `node scripts/build-icons.mjs` needs `rsvg-convert` and macOS
+  `iconutil`; that is a build-machine requirement, not an app one.
+
+---
+
 ## 2026-11-07 — trial run: memory on an 8 GB MacBook Air
 
 ### 1. The local LLM sidecar never releases its model

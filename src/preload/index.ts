@@ -122,6 +122,12 @@ const api: JustSpeakApi = {
       ipcRenderer.removeListener('recording:stop', stop)
     }
   },
+  onMenuNavigate: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, destination: 'settings'): void =>
+      listener(destination)
+    ipcRenderer.on('menu:navigate', handler)
+    return () => ipcRenderer.removeListener('menu:navigate', handler)
+  },
   getHistory: () => ipcRenderer.invoke('history:list') as Promise<HistoryEntry[]>,
   deleteHistoryEntry: (id: string) =>
     ipcRenderer.invoke('history:delete', id) as Promise<HistoryEntry[]>,

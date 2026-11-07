@@ -305,6 +305,11 @@ export interface JustSpeakApi {
   /** Fires instead of a paste when the app's own window holds focus. */
   onTranscriptInsert: (listener: (text: string) => void) => () => void
   onRecordingCommand: (listener: (command: RecordingCommand) => void) => () => void
+  /**
+   * Main asks the renderer to show a destination — the menu bar's 设置 item
+   * opens the window and needs the settings view, which is renderer state.
+   */
+  onMenuNavigate: (listener: (destination: 'settings') => void) => () => void
   /** Fires after main accepts a preference write or re-reads it. */
   onPreferencesChanged: (listener: (preferences: PreferencesView) => void) => () => void
   /** Transcript history, newest first. */

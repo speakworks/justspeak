@@ -18,6 +18,7 @@
     "setup:asr": "node scripts/setup-asr.mjs",
     "bench:asr": "tsx scripts/bench-asr.ts",
     "notices": "node scripts/notices.mjs",
+    "icons": "node scripts/build-icons.mjs",
     "package:runtime": "tsx scripts/package-runtime.ts",
     "package:llm": "tsx scripts/package-llm-runtime.ts",
     "llm:probe": "tsx scripts/llm-probe.ts",

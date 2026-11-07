@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    JustSpeak application icon, in the macOS idiom: a rounded-square plate that
+    follows the system icon grid (824 of 1024 px), with the product mark — four
+    waveform bars — centred on it. The bars repeat .sidebar-mark in
+    src/renderer/src/styles.css so the Dock, the DMG and the in-app brand agree.
+
+    Colours are the light-theme brand tokens: the accent #2c6a4e as the plate
+    base, darkened at the bottom edge so the icon has weight on a light Dock.
+  -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a7f61"/>
+      <stop offset="1" stop-color="#245740"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <!--
+      The plate is drawn inside the 824 px safe area macOS uses, so the icon
+      keeps the same visual weight as its neighbours in the Dock.
+    -->
+    <clipPath id="plateClip">
+      <rect x="100" y="100" width="824" height="824" rx="185"/>
+    </clipPath>
+  </defs>
+
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#plate)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#sheen)"/>
+
+  <g clip-path="url(#plateClip)">
+    <!-- A single hairline highlight along the top edge, as App icons carry. -->
+    <rect x="100" y="100" width="824" height="3" fill="#ffffff" opacity="0.22"/>
+  </g>
+
+  <!--
+    Four bars on a 16-unit grid scaled to the plate: centres at 3.4 / 6.2 / 9 /
+    11.8 on x, heights 3.6 / 8 / 5.2 / 2.8. Stroke width 1.7 of 16 keeps the
+    same optical density as the 13 px sidebar mark.
+  -->
+  <g transform="translate(512 512) scale(46) translate(-8 -8)"
+     fill="none" stroke="#ffffff" stroke-width="1.7"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3.4 6.2v3.6M6.2 4v8M9 5.4v5.2M11.8 6.6v2.8"/>
+  </g>
+</svg>

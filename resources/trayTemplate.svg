@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!--
+    The menu-bar mark: the four waveform bars from the app icon, without the
+    plate, drawn solid black on transparency.
+
+    macOS treats a file whose name ends in "Template" as a template image: it
+    ignores the colour and uses only the alpha channel, then inverts the shape
+    for a dark menu bar. Keeping it pure black with full opacity is therefore
+    required, not a style choice.
+
+    The bar geometry is the same 16-unit grid as .sidebar-mark and icon.svg, so
+    the menu bar, the Dock and the in-app brand show one mark.
+  -->
+  <g fill="none" stroke="#000000" stroke-width="1.7"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3.4 6.2v3.6M6.2 4v8M9 5.4v5.2M11.8 6.6v2.8"/>
+  </g>
+</svg>

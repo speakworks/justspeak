@@ -491,6 +491,11 @@ export function App(): React.JSX.Element {
       }
       applyInsert(text)
     })
+    // The menu bar's 设置 item runs in main, but which destination is shown is
+    // renderer state, so main forwards the request here.
+    const unsubMenu = window.justspeak.onMenuNavigate((destination) => {
+      setView(destination)
+    })
     const unsubCommand = window.justspeak.onRecordingCommand((command) => {
       if (command === 'start') {
         void controller.start().catch(reportFailure)
@@ -522,6 +527,7 @@ export function App(): React.JSX.Element {
       unsubInsert()
       unsubState()
       unsubCommand()
+      unsubMenu()
       void controller.dispose()
     }
   }, [reportFailure])

@@ -615,7 +615,7 @@ export function App(): React.JSX.Element {
 
         {view === 'home' ? (
           <section className="pane">
-            <div className={`sheet ${state}`}>
+            <div className={`sheet sheet-dictation ${state}`}>
               <label className="sheet-label" htmlFor="dictation-input">
                 口述内容
               </label>

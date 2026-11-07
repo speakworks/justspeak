@@ -32,9 +32,13 @@ that makes each item checkable.
 - Owner: 「首页右侧 的 口述内容区域 太大了，需要调整」
 - **Odd before:** the sheet was `flex: 1` inside the pane, so it filled every
   pixel below the header — roughly 500 px of empty card at the 720×640 window.
-- **Decision:** cap the sheet at 300 px and top-align it, leaving the rest of the
-  pane empty rather than stretching one empty input.
-- **Not yet done:** see the dated section added by the change that implements it.
+- **Now:** `.sheet-dictation` caps the 首页 card at 300 px and top-aligns it,
+  leaving the rest of the pane empty. Long transcripts scroll inside the
+  textarea, so the page still gains no scrollbar. `.sheet` itself is unchanged
+  because 历史记录 reuses it.
+- **Made it in:** PR that closed `cap-home-dictation-height`;
+  `openspec/specs/app-shell/spec.md` states the cap, and
+  `tests/e2e/shell.spec.ts` asserts the height and the page scroll height.
 
 ---
 

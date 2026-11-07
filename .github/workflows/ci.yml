@@ -1,0 +1,76 @@
+name: CI
+
+# The merge gates from AGENTS.md, run on every push and pull request.
+#
+# Deliberately absent: code coverage. `AGENTS.md` records `coverage-gate: never`
+# — the project has no coverage tooling configured and the owner decided against
+# adding it. Printing a number nothing enforces would be worse than not having
+# one.
+#
+# Also absent: the Electron E2E suite. It needs a real GUI session, a real
+# macOS clipboard and the global hotkey, and two concurrent launches make both
+# flaky (see playwright.config.ts). It stays a local gate, run with `pnpm e2e`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch supersedes the previous run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 24 matches the version the project is developed and released on;
+      # `packageManager` below pins the pnpm version from package.json.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The gates, in the order AGENTS.md lists them.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # The CLI is pinned to the version the repository's specs were written
+      # with. Installing it outside the project keeps it out of the pnpm
+      # workspace, where `npm install` would fight the lockfile.
+      - name: Install OpenSpec CLI
+        run: |
+          mkdir -p "$RUNNER_TEMP/openspec"
+          cd "$RUNNER_TEMP/openspec"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund @fission-ai/openspec@1.10.0
+          echo "$RUNNER_TEMP/openspec/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: OpenSpec specs
+        run: openspec validate --specs --strict
+
+      # A behaviour change must not land with an unarchived change directory:
+      # merge-discipline's Part A blocks it locally, and CI should agree.
+      - name: No active OpenSpec change
+        run: |
+          output=$(openspec list)
+          echo "$output"
+          if ! echo "$output" | grep -q "No active changes found"; then
+            echo "::error::An OpenSpec change is still active. Archive it before merging."
+            exit 1
+          fi

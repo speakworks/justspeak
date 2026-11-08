@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Diagnostics export as a local zip with redacted logs; nothing is uploaded.
 - Unsigned macOS packaging, a model bootstrap script, an LLM evaluation harness, and a
   Playwright Electron E2E suite.
+- Auto-update and release pipeline: a `v*` tag builds the pinned native runtimes from
+  source on GitHub Actions and publishes an unsigned DMG, ZIP, and update metadata as a
+  Release with the built-in token. The app can check the fixed GitHub Releases feed for
+  updates (manual by default; the automatic check is off by default and runs at most once
+  a day), asks before downloading, and states honestly in unsigned builds that auto-update
+  needs the signed build. The check sends no user content — see the privacy notes.
 
 ### Changed
 

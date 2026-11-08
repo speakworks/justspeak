@@ -1,0 +1,90 @@
+name: Release
+
+# Unsigned release builds (OpenSpec `app-update`): a `v*` tag builds the
+# pinned native runtimes from source, packages the mac app the same way a
+# checkout does (`pnpm package:mac:artifacts`), and publishes a GitHub Release
+# with the DMG, ZIP and `latest-mac.yml`. No Apple credentials are involved —
+# signing/notarisation stays blocked pending Developer ID credentials (see
+# docs/PACKAGING-RELEASE.md); the published build is the same unsigned bundle a
+# local `pnpm package:mac:artifacts` produces.
+#
+# Publishing uses the repository's built-in GITHUB_TOKEN; no secrets. The
+# electron-updater feed in electron-builder.yml's `publish:` block points at
+# this Releases feed.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# `contents: write` is what creates the Release. The main CI workflow stays
+# read-only; only this pipeline writes, and only its own tag's release.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The ASR runtime: cmake-build of the pinned transcribe.cpp checkout
+      # (tag/commit come from resources/models.json, the same source
+      # `pnpm setup:asr` uses locally). The model weights are never downloaded
+      # here — they ship on first run, verified by SHA-256, exactly as in dev.
+      - name: Build transcribe.cpp runtime
+        working-directory: models/runtime/transcribe.cpp
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DTRANSCRIBE_BUILD_CLI=ON \
+            -DTRANSCRIBE_BUILD_SHARED=ON
+          cmake --build build -j 4
+
+      # The optional local LLM cleanup runtime: llama.cpp v0.8.0, pinned to the
+      # commit the spike doc records (docs/LLM-SIDECAR-SPIKE.md).
+      - name: Build llama.cpp runtime
+        run: |
+          git clone --depth 1 \
+            https://github.com/ggml-org/llama.cpp.git models/runtime/llama.cpp
+          git -C models/runtime/llama.cpp fetch --depth 1 origin \
+            8642541b255bfb5dc39cd351a178be09013a55d6
+          git -C models/runtime/llama.cpp checkout \
+            8642541b255bfb5dc39cd351a178be09013a55d6
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLAMA_METAL=ON \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_CURL=OFF \
+            -DLLAMA_OPENSSL=OFF
+          cmake --build build --target llama-server -j 4
+
+      # Stages resources/runtime and resources/llm from the build trees, then
+      # electron-vite build + electron-builder (DMG + ZIP + latest-mac.yml).
+      - name: Package macOS app
+        run: pnpm package:mac:artifacts
+
+      # Informational only: the unsigned build must report ad-hoc/unsigned and
+      # still carry a relocatable, signed runtime (the local gate, not the
+      # release gate). --require-distribution waits for Developer ID secrets.
+      - name: Verify bundle
+        run: pnpm verify:mac release/mac-arm64/JustSpeak.app
+
+      - name: Publish GitHub Release
+        run: pnpm exec electron-builder --mac --arm64 --publish always
+        env:
+          # electron-builder's GitHub publisher requires an explicit token; the
+          # built-in one is scoped to `contents: write`, which is enough.
+          GH_TOKEN: ${{ github.token }}

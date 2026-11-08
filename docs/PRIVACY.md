@@ -24,3 +24,16 @@
 - Do not log raw audio or transcripts by default.
 - Make local-only operation a first-class option where feasible.
 - Disclose every network destination and retention period.
+
+## Network destinations (current)
+
+| Destination | When | What is sent |
+|---|---|---|
+| None | Default | Local-first; every destination below is explicit opt-in |
+| Model download hosts (per `resources/models.json`) | On first model download, with consent | An ordinary HTTPS file download |
+| OpenAI-compatible endpoint | Only when the user enables 智能清理 → 端点 | The transcript text awaiting correction |
+| `https://github.com/speakworks/justspeak/releases` | Only when the user clicks 检查更新, or turns on 自动检查更新 | The HTTP GET itself (version and architecture standard headers); no content, no identifier |
+
+The update check (OpenSpec `app-update`) is fixed and not user-configurable, never
+sends audio, transcripts, history text, vocabulary entries, keys, or any device
+identifier, and asks before downloading anything.

@@ -36,7 +36,8 @@ const PREFERENCES: PreferencesView = {
       state: 'failed',
       error: `本地运行时缺失：${USER_DATA}/resources/llm/llama-server`
     }
-  }
+  },
+  updateAutoCheck: false
 }
 
 describe('diagnostic redaction', () => {

@@ -61,6 +61,24 @@ describe('license texts travel with the app', () => {
     scheduler: ['MIT-scheduler.txt'],
     'transcribe.cpp': ['MIT-transcribe.cpp.txt'],
     'llama.cpp': ['MIT-llama.cpp.txt'],
+    // electron-updater's dependency tree (PR: app-auto-update). Each new
+    // license family ships one canonical text; family members share it.
+    'electron-updater': ['MIT-JustSpeak.txt'],
+    'builder-util-runtime': ['MIT-JustSpeak.txt'],
+    debug: ['MIT-JustSpeak.txt'],
+    'fs-extra': ['MIT-JustSpeak.txt'],
+    'js-yaml': ['MIT-JustSpeak.txt'],
+    jsonfile: ['MIT-JustSpeak.txt'],
+    'lazy-val': ['MIT-JustSpeak.txt'],
+    'lodash.escaperegexp': ['MIT-JustSpeak.txt'],
+    'lodash.isequal': ['MIT-JustSpeak.txt'],
+    ms: ['MIT-JustSpeak.txt'],
+    'tiny-typed-emitter': ['MIT-JustSpeak.txt'],
+    universalify: ['MIT-JustSpeak.txt'],
+    'graceful-fs': ['ISC.txt'],
+    semver: ['ISC.txt'],
+    sax: ['BlueOak-1.0.0.txt'],
+    argparse: ['Python-2.0.txt'],
     'Qwen2.5-1.5B-Instruct (Q4_K_M)': ['Apache-2.0.txt'],
     'Qwen3-ASR 0.6B (Q8_0)': ['Apache-2.0.txt', 'NOTICE-Qwen3-ASR-0.6B-gguf.txt'],
     'SenseVoice Small (Q8_0)': [
@@ -83,6 +101,8 @@ describe('license texts travel with the app', () => {
   it('maps every component the notices file lists to a text', () => {
     expect(components.length).toBeGreaterThan(5)
     for (const component of components) {
+      // Electron ships no repo-level text: its two files are copied from the
+      // distribution at build time (ELECTRON_TEXTS below).
       if (component === 'electron') continue
       expect(
         COMPONENT_TEXTS[component],

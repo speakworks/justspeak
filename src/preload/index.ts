@@ -17,7 +17,10 @@ import type {
   RecordingCommand,
   RecordingSummary,
   ResultPanelPayload,
-  TranscriptEvent
+  TranscriptEvent,
+  UpdateAutoCheckPatch,
+  UpdateEvent,
+  UpdateStatusView
 } from '../shared/ipc'
 
 const api: JustSpeakApi = {
@@ -55,6 +58,19 @@ const api: JustSpeakApi = {
   },
   exportDiagnostics: () =>
     ipcRenderer.invoke('diagnostics:export') as Promise<DiagnosticsExportResult>,
+  checkForUpdate: () =>
+    ipcRenderer.invoke('update:check') as Promise<UpdateStatusView>,
+  setUpdateAutoCheck: (patch: UpdateAutoCheckPatch) =>
+    ipcRenderer.invoke('update:set-auto-check', patch) as Promise<void>,
+  downloadUpdate: () => ipcRenderer.invoke('update:download') as Promise<void>,
+  installUpdate: () => ipcRenderer.send('update:install'),
+  onUpdateEvent: (listener) => {
+    const handler = (_event: unknown, payload: UpdateEvent): void => listener(payload)
+    ipcRenderer.on('update:event', handler)
+    return () => ipcRenderer.removeListener('update:event', handler)
+  },
+  getUpdateStatus: () =>
+    ipcRenderer.invoke('update:status') as Promise<UpdateStatusView>,
   getPermissions: () => ipcRenderer.invoke('permissions:get') as Promise<PermissionStatus>,
   openAccessibilitySettings: () =>
     ipcRenderer.invoke('permissions:open-accessibility') as Promise<void>,

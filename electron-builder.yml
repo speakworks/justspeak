@@ -71,9 +71,16 @@ extraResources:
 
 artifactName: ${productName}-${version}-${arch}.${ext}
 
-# Never publish from a local build. Uploading is a release-process step that
-# needs credentials and is out of scope for this configuration.
-publish: null
+# The update feed (OpenSpec `app-update`): fixed GitHub Releases. This is not a
+# publish trigger — electron-builder only uploads with `--publish always`, which
+# the release workflow passes explicitly on a `v*` tag. The entry makes
+# electron-builder write `app-update.yml` into the bundle, which is what the
+# runtime updater reads, and produces `latest-mac.yml` next to the artifacts.
+# Never publish from a local build: run only the packaging scripts locally.
+publish:
+  provider: github
+  owner: speakworks
+  repo: justspeak
 
 mac:
   category: public.app-category.productivity

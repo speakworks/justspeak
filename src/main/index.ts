@@ -82,6 +82,8 @@ import type {
   SelectableAsrProviderId,
   ThemePreference,
   TranscriptEvent,
+  UpdateAutoCheckPatch,
+  UpdateStatusView,
   VocabularySummary
 } from '../shared/ipc'
 import { MODEL_CATALOG } from './asr/catalog'
@@ -125,6 +127,7 @@ import {
 } from './result-panel'
 import { isTrustedSender } from './ipc-sender'
 import { createTray, destroyTray, refreshTray } from './tray'
+import { UpdateController, type UpdateHost } from './update'
 import { PcmBuffer } from './pcm-buffer'
 import { ThemeStore } from './theme-store'
 import { VocabularyStore, type VocabularyLoadResult } from './vocabulary-store'
@@ -174,6 +177,35 @@ const electronFetch = ((input: string | URL | Request, init?: RequestInit) =>
 
 let llmManager: LlmManager | undefined
 let diagnosticsExporting = false
+
+/**
+ * The update client and its policy (OpenSpec `app-update`). The controller is
+ * created in `whenReady`, like every store, so its codesign probe and schedule
+ * see the packaged app rather than a half-started one. Created as non-null via
+ * the same late-binding pattern as `themeStore`.
+ */
+let updateController: UpdateController
+/**
+ * Cache of the persisted update policy, refreshed on every read of the store:
+ * the scheduler's tick needs a synchronous view of the toggle.
+ */
+const cachedUpdatePolicy: { autoCheck: boolean; lastCheckAtMs: number } = {
+  autoCheck: false,
+  lastCheckAtMs: 0
+}
+
+/**
+ * The 自动检查更新 toggle and the last automatic check time live in
+ * `preferences.json` like every other preference — merged, not replaced — so a
+ * future key cannot be dropped by an update write.
+ */
+async function loadUpdatePolicy(): Promise<{ autoCheck: boolean; lastCheckAtMs: number }> {
+  const stored = await themeStore.loadPreferences()
+  return {
+    autoCheck: stored.updateAutoCheck,
+    lastCheckAtMs: stored.updateLastCheckAtMs
+  }
+}
 
 // Crashpad runs before app readiness and never uploads; the dump is only
 // collected when the user explicitly exports diagnostics.
@@ -383,7 +415,8 @@ async function readPreferencesView(): Promise<PreferencesView> {
     hotkeyMessage: hotkeyNotice,
     vocabulary: summarizeVocabulary(vocabulary),
     provider: describeProvider(),
-    llm
+    llm,
+    updateAutoCheck: stored.updateAutoCheck
   }
 }
 
@@ -1262,6 +1295,31 @@ app.whenReady().then(async () => {
   }
   providerPreference = new ProviderPreferenceStore(app.getPath('userData'))
   preferredProvider = await providerPreference.load()
+  {
+    // Seed the scheduler's cache once; the host callbacks keep it in sync.
+    const policy = await loadUpdatePolicy()
+    cachedUpdatePolicy.autoCheck = policy.autoCheck
+    cachedUpdatePolicy.lastCheckAtMs = policy.lastCheckAtMs
+  }
+  updateController = new UpdateController()
+  updateController.init({
+    // The toggle's source of truth is preferences.json; the controller re-reads
+    // it on every scheduling decision, so a write and a read never disagree.
+    autoCheckEnabled: () => cachedUpdatePolicy.autoCheck,
+    onAutoCheckChanged: (enabled, lastCheckAtMs) => {
+      cachedUpdatePolicy.autoCheck = enabled
+      cachedUpdatePolicy.lastCheckAtMs = lastCheckAtMs
+      void themeStore
+        .update({ updateAutoCheck: enabled, updateLastCheckAtMs: lastCheckAtMs })
+        .then(async () => {
+          cachedUpdatePolicy.autoCheck = (await loadUpdatePolicy()).autoCheck
+        })
+        .catch((error) => console.warn('[update] policy persist failed', error))
+    },
+    onEvent: (event) => {
+      mainWindow?.webContents.send('update:event', event)
+    }
+  })
   applyTheme()
   // Loaded once at startup; the panel's reload path refreshes this too.
   postprocessOptions = (await vocabularyStore.loadDetailed()).options
@@ -1567,6 +1625,64 @@ app.whenReady().then(async () => {
       diagnosticsExporting = false
     }
   })
+
+  // Update client (OpenSpec `app-update`): the renderer asks, main decides.
+  // An unsigned build answers 检查更新 with the honest needs-signature event and
+  // never reaches the feed — the check itself is main-side, so the renderer
+  // cannot bypass the signature gate by invoking directly.
+  ipcMain.handle('update:check', async (event): Promise<UpdateStatusView> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      console.warn('[update] rejected untrusted check')
+      throw new Error('未授权的更新请求。')
+    }
+    return updateController.check()
+  })
+
+  ipcMain.handle('update:set-auto-check', async (event, patch: unknown): Promise<void> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      console.warn('[update] rejected untrusted policy write')
+      throw new Error('未授权的更新请求。')
+    }
+    // The only writable key is the toggle; anything else is rejected rather
+    // than stored.
+    if (typeof patch !== 'object' || patch === null || !('enabled' in patch)) {
+      throw new Error('自动检查更新开关值无效。')
+    }
+    if (typeof (patch as { enabled: unknown }).enabled !== 'boolean') {
+      throw new Error('自动检查更新开关值无效。')
+    }
+    const enabled = (patch as { enabled: boolean }).enabled
+    await themeStore.update({ updateAutoCheck: enabled })
+    cachedUpdatePolicy.autoCheck = enabled
+    updateController.refreshSchedule()
+  })
+
+  ipcMain.handle('update:download', async (event): Promise<void> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      console.warn('[update] rejected untrusted download')
+      throw new Error('未授权的更新请求。')
+    }
+    // Downloading is only meaningful after the user saw and confirmed a
+    // specific version; the gate against unsigned builds is that no `available`
+    // event ever fired there.
+    await updateController.download()
+  })
+
+  ipcMain.handle('update:status', async (event): Promise<UpdateStatusView> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      throw new Error('未授权的更新请求。')
+    }
+    return updateController.status()
+  })
+
+  ipcMain.on('update:install', (event) => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      console.warn('[update] rejected untrusted install')
+      return
+    }
+    updateController.install()
+  })
+
   ipcMain.handle('permissions:open-accessibility', async (event): Promise<void> => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
       throw new Error('未授权的权限请求。')
@@ -1689,6 +1805,7 @@ let flushingHistoryForQuit = false
 
 app.on('will-quit', (event) => {
   destroyTray()
+  updateController?.teardown()
   hotkeyCapture?.dispose()
   void hotkeySource?.stop()
   if (flushingHistoryForQuit) return

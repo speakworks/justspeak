@@ -13,12 +13,15 @@ only duplicate what the Electron distribution already contains.
 
 | File | License | Applies to |
 | --- | --- | --- |
-| `MIT-JustSpeak.txt` | MIT | JustSpeak itself (`LICENSE` at the repository root) |
+| `MIT-JustSpeak.txt` | MIT | JustSpeak itself (`LICENSE` at the repository root), and the MIT components of the electron-updater dependency tree (`electron-updater`, `builder-util-runtime`, `debug`, `fs-extra`, `js-yaml`, `jsonfile`, `lazy-val`, `lodash.*`, `ms`, `tiny-typed-emitter`, `universalify`) |
 | `MIT-react.txt` | MIT | `react` |
 | `MIT-react-dom.txt` | MIT | `react-dom` |
 | `MIT-scheduler.txt` | MIT | `scheduler` |
 | `MIT-transcribe.cpp.txt` | MIT | `transcribe.cpp` ASR runtime (pinned v0.4.1) |
 | `MIT-llama.cpp.txt` | MIT | `llama.cpp` optional LLM cleanup runtime (pinned v0.8.0) |
+| `ISC.txt` | ISC | `graceful-fs`, `semver` (electron-updater dependency tree) |
+| `BlueOak-1.0.0.txt` | BlueOak-1.0.0 | `sax` (electron-updater dependency tree) |
+| `Python-2.0.txt` | Python-2.0 | `argparse` (electron-updater dependency tree) |
 | `Apache-2.0.txt` | Apache-2.0 | Qwen3-ASR 0.6B weights, and any Apache-2.0 code |
 | `FunASR-Model-License-1.1.txt` | FunASR-Model-License-1.1 | SenseVoice Small weights |
 | `NOTICE-Qwen3-ASR-0.6B-gguf.txt` | Apache-2.0 §4(d) | Qwen3-ASR GGUF conversion: reproduces the conversion repo's NOTICE (§4(b) source of the change statement) |

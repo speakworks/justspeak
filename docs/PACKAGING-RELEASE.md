@@ -410,6 +410,34 @@ The recommendation is conditional on a signing/notarization spike on a signed bu
 before the first public release. Ad-hoc or unsigned builds do not prove TCC identity,
 notarization, or auto-update behavior.
 
+## Shipped state (2026-11-09, OpenSpec `app-auto-update`)
+
+The auto-update choice of this document (electron-updater + GitHub Releases feed, fixed
+URL, disclosed as a network destination) is now implemented, together with the CI release
+pipeline — while the build itself remains unsigned pending Developer ID credentials:
+
+- **Feed:** fixed `https://github.com/speakworks/justspeak/releases` (electron-builder
+  `publish:` block writes `app-update.yml` into the bundle; the renderer cannot change
+  it). Policy: manual check by default; 自动检查更新 off by default, and when on at most
+  once per day (startup + 24 h). A found version asks before downloading; nothing is ever
+  installed silently. See `src/core/update/*`, `src/main/update.ts` and the
+  `app-update` spec.
+- **Unsigned honesty:** `UpdateController.detectDistributionSignature()` runs `codesign
+  -dv`; without a Developer ID authority 检查更新 reports
+  「自动更新需要正式签名版」 and makes no network request, and the automatic check never
+  arms. When credentials arrive and releases become signed, no client change is needed —
+  the gate is on the build's identity, not on code paths.
+- **Release pipeline:** `.github/workflows/release.yml` on a `v*` tag builds
+  transcribe.cpp v0.4.1 (pinned commit in `resources/models.json`) and llama.cpp v0.8.0
+  (pinned commit `8642541b255bfb5dc39cd351a178be09013a55d6`) from source, then
+  `pnpm package:mac:artifacts`, `pnpm verify:mac` (informational), and publishes with
+  `electron-builder --publish always` using the built-in `GITHUB_TOKEN` (`contents:
+  write` on this workflow only). Every step is reproducible from a checkout.
+- **Still blocked (the only remaining owner item):** Developer ID Application
+  certificate, team ID, notarytool credentials. Until then the published artifacts are
+  unsigned; Gatekeeper warns on first launch, and `verify:mac --require-distribution`
+  is not part of the release gate.
+
 ## Local Packaging Implementation (v0.1)
 
 The repository now contains the first slice of this design: a local, unsigned packaging

@@ -41,7 +41,8 @@ const PREFERENCES: PreferencesView = {
       modelPath: '',
       state: 'idle'
     }
-  }
+  },
+  updateAutoCheck: false
 }
 
 describe('llm state', () => {

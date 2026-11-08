@@ -55,7 +55,14 @@ export class ThemeStore {
       hotkey: parseHotkeyPreference(record.hotkey),
       llmBackend: parseLlmBackend(record.llmBackend),
       llmBaseUrl: parseLlmBaseUrl(record.llmBaseUrl),
-      llmModel: parseLlmModel(record.llmModel)
+      llmModel: parseLlmModel(record.llmModel),
+      updateAutoCheck: record.updateAutoCheck === true,
+      updateLastCheckAtMs:
+        typeof record.updateLastCheckAtMs === 'number' &&
+        Number.isFinite(record.updateLastCheckAtMs) &&
+        record.updateLastCheckAtMs > 0
+          ? record.updateLastCheckAtMs
+          : 0
     }
   }
 

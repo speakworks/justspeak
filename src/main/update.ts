@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { autoUpdater, type UpdateInfo } from 'electron-updater'
+import electronUpdater from 'electron-updater'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { isDeveloperIdSigned } from '../core/update/signature'
@@ -12,6 +12,14 @@ import type {
   UpdateEvent,
   UpdateStatusView
 } from '../shared/ipc'
+
+// electron-updater is a CommonJS package. A named import compiles fine but
+// crashes at runtime in an ESM main (`Named export 'autoUpdater' not found`),
+// so the namespace default import is the only correct form here.
+const { autoUpdater } = electronUpdater
+type UpdateInfo = Parameters<
+  Parameters<typeof autoUpdater.on<'update-available'>>[1]
+>[0]
 
 /**
  * The update client, wired behind the user's policy (OpenSpec `app-update`).

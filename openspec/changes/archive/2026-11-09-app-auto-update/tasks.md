@@ -54,7 +54,7 @@
 
 ## 7. 验证
 
-- [ ] 7.1 本机跑通全链路：`setup-asr` runtime 编译 → `package:llm` → `package:mac:artifacts` →
+- [x] 7.1 本机跑通全链路：`setup-asr` runtime 编译 → `package:llm` → `package:mac:artifacts` →
       启动打包产物 → 设置页「检查更新」（未签名提示路径）+ 一条真实网络请求确认（自动关）→
       `verify:mac` 信息性通过
 - [x] 7.2 push tag 前用本地 act 或干跑验证 workflow（若不可行，在 PR 里注明人工触发验证步骤）

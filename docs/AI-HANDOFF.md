@@ -1,8 +1,8 @@
 # AI 交接说明
 
-- 交接日期：2026-11-07
-- 当前 `main`：`3305260`（PR #36 菜单栏常驻 + #37 CI 已合并）
-- 当前 active OpenSpec change：无
+- 交接日期：2026-11-09
+- 当前 `main`：`9611b74`（PR #36/#37/#38 已合并）；PR #39（自动更新 + tag 发布）待合并
+- 当前 active OpenSpec change：无（`app-update` spec 已随 PR #39 归档）
 - 目的：让接手的 AI 在最少上下文下安全地继续工作，而不是重新摸索一遍
 
 > 先读 [AGENTS.md](../AGENTS.md)，再读这份。`AGENTS.md` 是工作流门控的第一来源；

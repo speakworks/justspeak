@@ -3,6 +3,7 @@ import { isDeveloperIdSigned } from '../src/core/update/signature'
 import {
   AUTO_CHECK_INTERVAL_MS,
   isUpdateAutoCheckEnabled,
+  nextAutoCheckDelayMs,
   shouldAutoCheck
 } from '../src/core/update/policy'
 import { compareVersions, isNewerVersion } from '../src/core/update/version'
@@ -28,6 +29,19 @@ describe('version comparison follows semver, not string order', () => {
     expect(isNewerVersion('0.1.0-alpha', '0.1.0-beta')).toBe(true)
     expect(isNewerVersion('0.1.0-demo.0', '0.1.0-demo.0.1')).toBe(true)
     expect(isNewerVersion('0.1.0-demo.1', '0.1.0-demo.1')).toBe(false)
+  })
+
+  it('gives numeric identifiers lower precedence than alphanumeric ones', () => {
+    // Review finding: the numeric/alphanumeric direction was inverted.
+    // Semver §11.4.3: numeric < alphanumeric, so '1' is older than 'alpha'.
+    expect(isNewerVersion('0.1.0-1', '0.1.0-alpha')).toBe(true)
+    expect(isNewerVersion('0.1.0-alpha', '0.1.0-1')).toBe(false)
+  })
+
+  it('ignores build metadata', () => {
+    expect(isNewerVersion('1.0.0+build.1', '1.0.0+build.2')).toBe(false)
+    expect(isNewerVersion('0.1.0', '0.2.0+sha.abc')).toBe(true)
+    expect(compareVersions('1.0.0+a', '1.0.0+b')).toBe(0)
   })
 
   it('never flags the running version itself as newer', () => {
@@ -70,20 +84,35 @@ describe('the automatic check runs at most once per day', () => {
     // a day; rechecking is harmless and once-per-day is a politeness rule.
     expect(shouldAutoCheck({ enabled: true, lastCheckAtMs: 5_000_000, nowMs: 4_000_000 })).toBe(true)
   })
+
+  it('schedules the next tick from the last check, not from app start', () => {
+    // The review finding: a fixed 24h interval armed at startup fires at
+    // 24h − 10s after the startup check and is skipped, pushing the second
+    // check to 48h. The delay must be the remainder of the window.
+    const lastCheck = 1_000_000
+    expect(nextAutoCheckDelayMs({ lastCheckAtMs: lastCheck, nowMs: lastCheck })).toBe(DAY)
+    expect(nextAutoCheckDelayMs({ lastCheckAtMs: lastCheck, nowMs: lastCheck + 10_000 })).toBe(
+      DAY - 10_000
+    )
+    expect(nextAutoCheckDelayMs({ lastCheckAtMs: 0, nowMs: lastCheck })).toBe(DAY)
+  })
 })
 
 describe('signature detection reads codesign output', () => {
-  it('recognises a Developer ID authority as a distribution signature', () => {
+  it('recognises a Developer ID Application authority', () => {
     expect(
       isDeveloperIdSigned(
-        'Authority=Developer ID Application: Example Ltd (TEAMID)\nAuthority=Developer ID Certification Authority\nSignature=adhoc from the future'
+        'Authority=Developer ID Application: Example Ltd (TEAMID)\nAuthority=Developer ID Certification Authority'
       )
     ).toBe(true)
   })
 
-  it('does not mistake ad-hoc or missing signatures for distribution ones', () => {
+  it('does not mistake ad-hoc, missing or look-alike signatures for distribution ones', () => {
     expect(isDeveloperIdSigned('code object is not signed at all')).toBe(false)
     expect(isDeveloperIdSigned('Authority=(unavailable)\nSignature=adhoc')).toBe(false)
     expect(isDeveloperIdSigned('')).toBe(false)
+    // A self-signed certificate whose CN merely contains the words must not
+    // pass: only the exact `Authority=Developer ID Application:` line counts.
+    expect(isDeveloperIdSigned('Authority=My Developer ID Test Certificate')).toBe(false)
   })
 })

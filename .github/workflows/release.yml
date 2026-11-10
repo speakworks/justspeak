@@ -1,16 +1,20 @@
 name: Release
 
-# Unsigned release builds (OpenSpec `app-update`): a `v*` tag builds the
-# pinned native runtimes from source, packages the mac app the same way a
-# checkout does (`pnpm package:mac:artifacts`), and publishes a GitHub Release
-# with the DMG, ZIP and `latest-mac.yml`. No Apple credentials are involved —
-# signing/notarisation stays blocked pending Developer ID credentials (see
-# docs/PACKAGING-RELEASE.md); the published build is the same unsigned bundle a
-# local `pnpm package:mac:artifacts` produces.
+# Unsigned release builds (OpenSpec `app-update`): a `v*` tag builds the pinned
+# native runtimes from source, packages the mac app the same way a checkout
+# does, and publishes a GitHub Release with the DMG, ZIP and `latest-mac.yml`.
+# No Apple credentials are involved — signing/notarisation stays blocked
+# pending Developer ID credentials (see docs/PACKAGING-RELEASE.md); the
+# published build is the same unsigned bundle a local
+# `pnpm package:mac:artifacts` produces.
 #
-# Publishing uses the repository's built-in GITHUB_TOKEN; no secrets. The
-# electron-updater feed in electron-builder.yml's `publish:` block points at
-# this Releases feed.
+# `workflow_dispatch` builds and uploads the artifacts to the run only. It
+# never publishes a Release: publishing is reserved for a `v*` tag push, so a
+# manual run cannot overwrite a release with a different commit's build.
+#
+# Publishing uses the repository's built-in GITHUB_TOKEN; no secrets.
+# electron-builder's `publish:` block (electron-builder.yml) points the
+# updater's `app-update.yml` at this Releases feed.
 
 on:
   push:
@@ -18,7 +22,7 @@ on:
   workflow_dispatch:
 
 # `contents: write` is what creates the Release. The main CI workflow stays
-# read-only; only this pipeline writes, and only its own tag's release.
+# read-only; only this pipeline writes, and only for its own tag.
 permissions:
   contents: write
 
@@ -40,10 +44,50 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The ASR runtime: cmake-build of the pinned transcribe.cpp checkout
-      # (tag/commit come from resources/models.json, the same source
-      # `pnpm setup:asr` uses locally). The model weights are never downloaded
-      # here — they ship on first run, verified by SHA-256, exactly as in dev.
+      # The AGENTS.md merge gates run again here: a tag can point at a commit
+      # that never passed CI on main, and publishing from it would ship an
+      # untested build.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Install OpenSpec CLI
+        run: |
+          mkdir -p "$RUNNER_TEMP/openspec"
+          cd "$RUNNER_TEMP/openspec"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund @fission-ai/openspec@1.10.0
+          echo "$RUNNER_TEMP/openspec/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: OpenSpec specs
+        run: openspec validate --specs --strict
+
+      - name: No active OpenSpec change
+        run: |
+          output=$(openspec list)
+          echo "$output"
+          if ! echo "$output" | grep -q "No active changes found"; then
+            echo "::error::An OpenSpec change is still active. Archive it before tagging."
+            exit 1
+          fi
+
+      # The ASR runtime: a cmake build of the pinned transcribe.cpp checkout.
+      # Source URL and commit come from resources/models.json — the same pin
+      # `pnpm setup:asr` uses locally — so CI cannot drift from the catalog.
+      # The model weights are never downloaded here; they download on first run
+      # with SHA-256 verification, exactly as in dev.
+      - name: Checkout pinned transcribe.cpp
+        run: |
+          RUNTIME_SOURCE=$(node -p "require('./resources/models.json').runtimes[0].sourceUrl")
+          RUNTIME_COMMIT=$(node -p "require('./resources/models.json').runtimes[0].commit")
+          git init --quiet models/runtime/transcribe.cpp
+          git -C models/runtime/transcribe.cpp remote add origin "$RUNTIME_SOURCE"
+          git -C models/runtime/transcribe.cpp fetch --depth 1 origin "$RUNTIME_COMMIT"
+          git -C models/runtime/transcribe.cpp checkout --quiet FETCH_HEAD
+          test "$(git -C models/runtime/transcribe.cpp rev-parse HEAD)" = "$RUNTIME_COMMIT"
+
       - name: Build transcribe.cpp runtime
         working-directory: models/runtime/transcribe.cpp
         run: |
@@ -54,15 +98,19 @@ jobs:
           cmake --build build -j 4
 
       # The optional local LLM cleanup runtime: llama.cpp v0.8.0, pinned to the
-      # commit the spike doc records (docs/LLM-SIDECAR-SPIKE.md).
-      - name: Build llama.cpp runtime
+      # commit docs/LLM-SIDECAR-SPIKE.md records.
+      - name: Checkout pinned llama.cpp
         run: |
           git clone --depth 1 \
             https://github.com/ggml-org/llama.cpp.git models/runtime/llama.cpp
           git -C models/runtime/llama.cpp fetch --depth 1 origin \
             8642541b255bfb5dc39cd351a178be09013a55d6
-          git -C models/runtime/llama.cpp checkout \
+          git -C models/runtime/llama.cpp checkout --quiet \
             8642541b255bfb5dc39cd351a178be09013a55d6
+
+      - name: Build llama.cpp runtime
+        working-directory: models/runtime/llama.cpp
+        run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DLLAMA_METAL=ON \
@@ -73,6 +121,9 @@ jobs:
 
       # Stages resources/runtime and resources/llm from the build trees, then
       # electron-vite build + electron-builder (DMG + ZIP + latest-mac.yml).
+      # The script pins `--publish never`: on CI, electron-builder's default
+      # publish policy is onTagOrDraft, and without an explicit token that
+      # throws. Publishing is the separate step below, with GH_TOKEN set.
       - name: Package macOS app
         run: pnpm package:mac:artifacts
 
@@ -82,7 +133,18 @@ jobs:
       - name: Verify bundle
         run: pnpm verify:mac release/mac-arm64/JustSpeak.app
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: JustSpeak-${{ github.ref_name }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/latest-mac.yml
+          if-no-files-found: error
+
       - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         run: pnpm exec electron-builder --mac --arm64 --publish always
         env:
           # electron-builder's GitHub publisher requires an explicit token; the

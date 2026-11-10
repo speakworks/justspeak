@@ -82,7 +82,6 @@ import type {
   SelectableAsrProviderId,
   ThemePreference,
   TranscriptEvent,
-  UpdateAutoCheckPatch,
   UpdateStatusView,
   VocabularySummary
 } from '../shared/ipc'
@@ -127,7 +126,7 @@ import {
 } from './result-panel'
 import { isTrustedSender } from './ipc-sender'
 import { createTray, destroyTray, refreshTray } from './tray'
-import { UpdateController, type UpdateHost } from './update'
+import { UpdateController } from './update'
 import { PcmBuffer } from './pcm-buffer'
 import { ThemeStore } from './theme-store'
 import { VocabularyStore, type VocabularyLoadResult } from './vocabulary-store'
@@ -1303,18 +1302,16 @@ app.whenReady().then(async () => {
   }
   updateController = new UpdateController()
   updateController.init({
-    // The toggle's source of truth is preferences.json; the controller re-reads
-    // it on every scheduling decision, so a write and a read never disagree.
+    // The toggle and the last-check time live in preferences.json; the host
+    // cache makes them synchronous reads for the scheduler, and every write
+    // goes back through the merge so no other key is dropped.
     autoCheckEnabled: () => cachedUpdatePolicy.autoCheck,
-    onAutoCheckChanged: (enabled, lastCheckAtMs) => {
-      cachedUpdatePolicy.autoCheck = enabled
-      cachedUpdatePolicy.lastCheckAtMs = lastCheckAtMs
+    lastCheckAtMs: () => cachedUpdatePolicy.lastCheckAtMs,
+    onAutoCheckRan: (atMs) => {
+      cachedUpdatePolicy.lastCheckAtMs = atMs
       void themeStore
-        .update({ updateAutoCheck: enabled, updateLastCheckAtMs: lastCheckAtMs })
-        .then(async () => {
-          cachedUpdatePolicy.autoCheck = (await loadUpdatePolicy()).autoCheck
-        })
-        .catch((error) => console.warn('[update] policy persist failed', error))
+        .update({ updateLastCheckAtMs: atMs })
+        .catch((error) => console.warn('[update] last check persist failed', error))
     },
     onEvent: (event) => {
       mainWindow?.webContents.send('update:event', event)
@@ -1652,7 +1649,12 @@ app.whenReady().then(async () => {
       throw new Error('自动检查更新开关值无效。')
     }
     const enabled = (patch as { enabled: boolean }).enabled
-    await themeStore.update({ updateAutoCheck: enabled })
+    const merged = await themeStore.update({ updateAutoCheck: enabled })
+    if (!merged.ok) {
+      // Never report success for a write that was rejected: the row would
+      // show the toggle on while disk kept the old value.
+      throw new Error(merged.rejected[0]?.reason ?? '保存自动检查更新开关失败。')
+    }
     cachedUpdatePolicy.autoCheck = enabled
     updateController.refreshSchedule()
   })
@@ -1680,7 +1682,16 @@ app.whenReady().then(async () => {
       console.warn('[update] rejected untrusted install')
       return
     }
-    updateController.install()
+    try {
+      updateController.install()
+    } catch (error) {
+      // This is a `send` channel, so a throw here would be an uncaught main
+      // exception. Report the refusal to the row instead.
+      mainWindow?.webContents.send('update:event', {
+        type: 'error',
+        message: error instanceof Error ? error.message : String(error)
+      })
+    }
   })
 
   ipcMain.handle('permissions:open-accessibility', async (event): Promise<void> => {

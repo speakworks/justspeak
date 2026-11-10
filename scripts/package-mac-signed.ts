@@ -56,7 +56,11 @@ function main(): void {
     '-c.mac.hardenedRuntime=true',
     `-c.mac.entitlements=${entitlements}`,
     `-c.mac.entitlementsInherit=${entitlements}`,
-    '-c.mac.notarize=true'
+    '-c.mac.notarize=true',
+    // Same rule as the unsigned scripts: a local/signed build never uploads.
+    // Publishing is the release workflow's explicit final step.
+    '--publish',
+    'never'
   ]
   if (unpackedOnly) args.push('--dir')
 

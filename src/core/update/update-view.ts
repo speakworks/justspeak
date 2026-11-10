@@ -46,5 +46,5 @@ export function canInstallAfterEvent(event: UpdateEvent | null): boolean {
 /** The privacy sentence, built from the fixed feed so docs and UI agree. */
 export function updatePrivacySentence(status: UpdateStatusView | null): string {
   const feed = status?.feedUrl ?? 'https://github.com/speakworks/justspeak/releases'
-  return `检查更新只会向更新源 ${feed} 发送一次普通页面请求，不包含任何听写内容、录音或设备标识。`
+  return `检查更新只会向更新源 ${feed} 请求版本元数据（普通页面请求），不包含任何听写内容、录音或设备标识。`
 }

@@ -13,12 +13,14 @@ only duplicate what the Electron distribution already contains.
 
 | File | License | Applies to |
 | --- | --- | --- |
-| `MIT-JustSpeak.txt` | MIT | JustSpeak itself (`LICENSE` at the repository root), and the MIT components of the electron-updater dependency tree (`electron-updater`, `builder-util-runtime`, `debug`, `fs-extra`, `js-yaml`, `jsonfile`, `lazy-val`, `lodash.*`, `ms`, `tiny-typed-emitter`, `universalify`) |
+| `MIT-JustSpeak.txt` | MIT | JustSpeak itself (`LICENSE` at the repository root) |
 | `MIT-react.txt` | MIT | `react` |
 | `MIT-react-dom.txt` | MIT | `react-dom` |
 | `MIT-scheduler.txt` | MIT | `scheduler` |
 | `MIT-transcribe.cpp.txt` | MIT | `transcribe.cpp` ASR runtime (pinned v0.4.1) |
 | `MIT-llama.cpp.txt` | MIT | `llama.cpp` optional LLM cleanup runtime (pinned v0.8.0) |
+| `MIT-electron-updater.txt`, `MIT-builder-util-runtime.txt`, `MIT-debug.txt`, `MIT-fs-extra.txt`, `MIT-js-yaml.txt`, `MIT-jsonfile.txt`, `MIT-lodash.escaperegexp.txt`, `MIT-lodash.isequal.txt`, `MIT-ms.txt`, `MIT-tiny-typed-emitter.txt`, `MIT-universalify.txt` | MIT | The matching npm package (electron-updater dependency tree); each text carries that package's own copyright notice, as MIT requires |
+| `MIT-lazy-val.txt` | MIT | `lazy-val` — its npm package ships no LICENSE file; the text is the standard MIT license for the declared author (Vladimir Krivosheev, per package.json) |
 | `ISC.txt` | ISC | `graceful-fs`, `semver` (electron-updater dependency tree) |
 | `BlueOak-1.0.0.txt` | BlueOak-1.0.0 | `sax` (electron-updater dependency tree) |
 | `Python-2.0.txt` | Python-2.0 | `argparse` (electron-updater dependency tree) |

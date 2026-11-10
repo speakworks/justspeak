@@ -40,9 +40,12 @@ export function compareVersions(current: string, candidate: string): number {
       const diff = Number(right) - Number(left)
       if (diff !== 0) return diff > 0 ? 1 : -1
     } else if (lnum !== rnum) {
-      // Numeric identifiers sort before alphanumeric ones.
-      return lnum ? -1 : 1
+      // Semver: numeric identifiers have LOWER precedence than alphanumeric
+      // ones. A numeric `left` therefore makes the candidate (right) newer.
+      return lnum ? 1 : -1
     } else if (left !== right) {
+      // Both alphanumeric: plain string order, with the sign flipped because
+      // we report the candidate's position relative to the current version.
       return left < right ? 1 : -1
     }
   }
@@ -64,7 +67,10 @@ interface ParsedVersion {
 }
 
 function parseVersion(value: string): ParsedVersion | null {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:-(.*))?$/.exec(value.trim())
+  // Build metadata (`+sha.abc`) does not participate in precedence; strip it
+  // before parsing so `1.0.0+build` is a valid 1.0.0.
+  const withoutBuild = value.trim().split('+')[0] ?? ''
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-(.*))?$/.exec(withoutBuild)
   if (!match) return null
   const core: [number, number, number] = [
     Number(match[1]),

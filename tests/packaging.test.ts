@@ -42,6 +42,36 @@ describe('packaging configuration and generated artifacts', () => {
     expect(licensing).toContain('- [x] Create `THIRD_PARTY_NOTICES.md` at the repository root')
     expect(licensing).not.toMatch(/`THIRD_PARTY_NOTICES\.md` does \*\*not\*\* exist/)
   })
+
+  it('never publishes from the packaging scripts', () => {
+    // Review finding: with a `publish:` block in electron-builder.yml, CI's
+    // default policy is onTagOrDraft, so an unqualified electron-builder call
+    // throws without a token. Every local/CI build path pins --publish never;
+    // only the release workflow's final step passes --publish always.
+    for (const script of ['package:mac', 'package:mac:artifacts'] as const) {
+      expect(packageJson.scripts[script], `${script} must pin --publish never`).toContain(
+        '--publish never'
+      )
+    }
+    const signed = readFileSync(path.join(ROOT, 'scripts', 'package-mac-signed.ts'), 'utf8')
+    expect(signed.length).toBeGreaterThan(0)
+  })
+
+  it('release workflow builds the pinned sources it packages', () => {
+    // Review finding: the workflow pointed cmake at gitignored directories
+    // that a fresh checkout does not have. The guard fails if the checkout
+    // steps or the working directories disappear.
+    const workflow = readFileSync(path.join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8')
+    expect(workflow).toContain('Checkout pinned transcribe.cpp')
+    expect(workflow).toContain("require('./resources/models.json').runtimes[0].commit")
+    expect(workflow).toContain('Checkout pinned llama.cpp')
+    expect(workflow).toContain('8642541b255bfb5dc39cd351a178be09013a55d6')
+    expect(workflow).toMatch(/working-directory: models\/runtime\/transcribe\.cpp/)
+    expect(workflow).toMatch(/working-directory: models\/runtime\/llama\.cpp/)
+    // Publishing is tag-only; a manual dispatch must not create a Release.
+    expect(workflow).toContain("if: startsWith(github.ref, 'refs/tags/v')")
+    expect(workflow).toContain('--publish always')
+  })
 })
 
 describe('license texts travel with the app', () => {
@@ -61,20 +91,22 @@ describe('license texts travel with the app', () => {
     scheduler: ['MIT-scheduler.txt'],
     'transcribe.cpp': ['MIT-transcribe.cpp.txt'],
     'llama.cpp': ['MIT-llama.cpp.txt'],
-    // electron-updater's dependency tree (PR: app-auto-update). Each new
-    // license family ships one canonical text; family members share it.
-    'electron-updater': ['MIT-JustSpeak.txt'],
-    'builder-util-runtime': ['MIT-JustSpeak.txt'],
-    debug: ['MIT-JustSpeak.txt'],
-    'fs-extra': ['MIT-JustSpeak.txt'],
-    'js-yaml': ['MIT-JustSpeak.txt'],
-    jsonfile: ['MIT-JustSpeak.txt'],
-    'lazy-val': ['MIT-JustSpeak.txt'],
-    'lodash.escaperegexp': ['MIT-JustSpeak.txt'],
-    'lodash.isequal': ['MIT-JustSpeak.txt'],
-    ms: ['MIT-JustSpeak.txt'],
-    'tiny-typed-emitter': ['MIT-JustSpeak.txt'],
-    universalify: ['MIT-JustSpeak.txt'],
+    // electron-updater's dependency tree (PR: app-auto-update). Each MIT
+    // package carries its own upstream text — MIT requires the copyright
+    // notice of the actual holder, which a shared JustSpeak text does not
+    // satisfy.
+    'electron-updater': ['MIT-electron-updater.txt'],
+    'builder-util-runtime': ['MIT-builder-util-runtime.txt'],
+    debug: ['MIT-debug.txt'],
+    'fs-extra': ['MIT-fs-extra.txt'],
+    'js-yaml': ['MIT-js-yaml.txt'],
+    jsonfile: ['MIT-jsonfile.txt'],
+    'lazy-val': ['MIT-lazy-val.txt'],
+    'lodash.escaperegexp': ['MIT-lodash.escaperegexp.txt'],
+    'lodash.isequal': ['MIT-lodash.isequal.txt'],
+    ms: ['MIT-ms.txt'],
+    'tiny-typed-emitter': ['MIT-tiny-typed-emitter.txt'],
+    universalify: ['MIT-universalify.txt'],
     'graceful-fs': ['ISC.txt'],
     semver: ['ISC.txt'],
     sax: ['BlueOak-1.0.0.txt'],

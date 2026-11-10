@@ -87,14 +87,38 @@ export function UpdateRow(): React.JSX.Element {
       ) : null}
       {canDownloadAfterEvent(event) ? (
         <div className="settings-control">
-          <button type="button" className="hotkey-apply" onClick={() => void window.justspeak.downloadUpdate()}>
+          <button
+            type="button"
+            className="hotkey-apply"
+            onClick={() =>
+              void window.justspeak.downloadUpdate().catch((error: unknown) =>
+                setEvent({
+                  type: 'error',
+                  message: error instanceof Error ? error.message : String(error)
+                })
+              )
+            }
+          >
             下载并安装
           </button>
         </div>
       ) : null}
       {canInstallAfterEvent(event) ? (
         <div className="settings-control">
-          <button type="button" className="hotkey-apply" onClick={() => window.justspeak.installUpdate()}>
+          <button
+            type="button"
+            className="hotkey-apply"
+            onClick={() => {
+              try {
+                window.justspeak.installUpdate()
+              } catch (error) {
+                setEvent({
+                  type: 'error',
+                  message: error instanceof Error ? error.message : String(error)
+                })
+              }
+            }}
+          >
             立即安装并重启
           </button>
         </div>

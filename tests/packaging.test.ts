@@ -54,7 +54,8 @@ describe('packaging configuration and generated artifacts', () => {
       )
     }
     const signed = readFileSync(path.join(ROOT, 'scripts', 'package-mac-signed.ts'), 'utf8')
-    expect(signed.length).toBeGreaterThan(0)
+    expect(signed).toContain("'--publish'")
+    expect(signed).toContain("'never'")
   })
 
   it('release workflow builds the pinned sources it packages', () => {

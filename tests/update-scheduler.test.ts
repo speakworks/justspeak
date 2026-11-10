@@ -179,6 +179,21 @@ describe('the scheduler honours the once-per-day policy', () => {
     expect(attempts).toBe(2)
   })
 
+  it('does not check instantly when the window already elapsed at startup', async () => {
+    // Review follow-up: an app closed for two days must still wait the settle
+    // delay, not fire at T+0.
+    const { timers, advance } = fakeTimers()
+    const staleCheck = 1_000_000 - DAY * 2
+    const { state, host } = buildHost({ lastCheckAtMs: staleCheck })
+    const scheduler = new AutoCheckScheduler(host, timers)
+    scheduler.arm()
+
+    await advance(AUTO_CHECK_START_DELAY_MS - 1)
+    expect(state.checks).toBe(0)
+    await advance(1)
+    expect(state.checks).toBe(1)
+  })
+
   it('stops on teardown', async () => {
     const { timers, advance } = fakeTimers()
     const { state, host } = buildHost()

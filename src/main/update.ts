@@ -56,10 +56,11 @@ export class UpdateController {
   init(host: UpdateHost): void {
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = false
-    // The running version is a prerelease (`0.1.0-demo.0`), and the app must
-    // still see a future stable release (e.g. `0.2.0`). Without this,
-    // electron-updater pins the channel to "demo" and the GitHub provider
-    // searches only `-demo` tags.
+    // Stated explicitly rather than left to electron-updater's inference: the
+    // running version is a prerelease (`0.1.0-demo.0`). Known limitation: the
+    // GitHub provider still derives the lookup channel from the version's
+    // prerelease segment, so a demo install may not see a later stable release;
+    // moving off the demo channel is a product decision, not a code toggle.
     autoUpdater.allowPrerelease = true
 
     autoUpdater.on('checking-for-update', () => {

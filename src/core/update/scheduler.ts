@@ -55,7 +55,15 @@ export class AutoCheckScheduler {
       this.startupTimer = undefined
       void this.tick()
     }, AUTO_CHECK_START_DELAY_MS)
-    this.armNextDaily()
+    // If the day's window already elapsed (e.g. the app was closed for two
+    // days), the startup timer will run the check and re-arm — arming a
+    // zero-delay daily timer here would check instantly, before the intended
+    // settle delay.
+    const delay = nextAutoCheckDelayMs({
+      lastCheckAtMs: this.host.lastCheckAtMs(),
+      nowMs: this.timers.now()
+    })
+    if (delay > 0) this.armNextDaily()
   }
 
   stop(): void {

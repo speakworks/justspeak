@@ -76,6 +76,12 @@ pnpm bench:asr   # provider-driven benchmark; writes bench/reports/<date>-qwen3-
   and endpoint URLs; crash dumps are OS-generated process memory and may contain transient
   content or in-memory secrets (including a local sidecar API key or a decrypted endpoint
   key), so inspect the zip before sharing it.
+- **检查更新** (Settings) queries the fixed feed
+  `https://github.com/speakworks/justspeak/releases` — an ordinary page request that sends
+  no audio, transcripts, history, vocabulary, keys, or device identifiers, and asks before
+  downloading anything. 自动检查更新 is off by default; when enabled the app checks at most
+  once a day (startup and every 24 h). Unsigned builds state honestly that auto-update
+  needs the signed build and make no request. See [Privacy](docs/PRIVACY.md).
 - Segmentation defaults to `auto`: an utterance inside the selected provider's own limit
   takes the unchanged one-shot path, and only a longer one is segmented. That is what makes
   SenseVoice's 30-second ceiling usable. `JUSTSPEAK_SEGMENTED=single` forces one-shot and

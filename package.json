@@ -22,8 +22,8 @@
     "package:runtime": "tsx scripts/package-runtime.ts",
     "package:llm": "tsx scripts/package-llm-runtime.ts",
     "llm:probe": "tsx scripts/llm-probe.ts",
-    "package:mac": "tsx scripts/package-runtime.ts && tsx scripts/package-llm-runtime.ts && electron-vite build && electron-builder --mac --arm64 --dir",
-    "package:mac:artifacts": "tsx scripts/package-runtime.ts && tsx scripts/package-llm-runtime.ts && electron-vite build && electron-builder --mac --arm64",
+    "package:mac": "tsx scripts/package-runtime.ts && tsx scripts/package-llm-runtime.ts && electron-vite build && electron-builder --mac --arm64 --dir --publish never",
+    "package:mac:artifacts": "tsx scripts/package-runtime.ts && tsx scripts/package-llm-runtime.ts && electron-vite build && electron-builder --mac --arm64 --publish never",
     "package:mac:signed": "tsx scripts/package-runtime.ts && tsx scripts/package-llm-runtime.ts && electron-vite build && tsx scripts/package-mac-signed.ts",
     "verify:mac": "tsx scripts/verify-mac-app.ts",
     "postinstall": "node node_modules/electron/install.js",
@@ -31,6 +31,7 @@
     "llm:eval:smoke": "tsx scripts/llm-eval-smoke.ts"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },

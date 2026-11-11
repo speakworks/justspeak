@@ -18,6 +18,10 @@ export interface StoredPreferences {
   llmBackend: LlmBackend
   llmBaseUrl: string
   llmModel: string
+  /** 自动检查更新 toggle; `false` is the default and the only first run. */
+  updateAutoCheck: boolean
+  /** Epoch ms of the last automatic check; `0` means the app never checked. */
+  updateLastCheckAtMs: number
 }
 
 /** The validated subset a write may apply. */
@@ -27,6 +31,8 @@ export interface PreferenceUpdate {
   llmBackend?: LlmBackend
   llmBaseUrl?: string
   llmModel?: string
+  updateAutoCheck?: boolean
+  updateLastCheckAtMs?: number
 }
 
 export function parseLlmBackend(value: unknown): LlmBackend {
@@ -55,7 +61,15 @@ export interface MergeResult {
   ok: boolean
 }
 
-const WRITABLE_KEYS = new Set(['theme', 'hotkey', 'llmBackend', 'llmBaseUrl', 'llmModel'])
+const WRITABLE_KEYS = new Set([
+  'theme',
+  'hotkey',
+  'llmBackend',
+  'llmBaseUrl',
+  'llmModel',
+  'updateAutoCheck',
+  'updateLastCheckAtMs'
+])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -133,6 +147,28 @@ export function mergePreferences(existing: unknown, patch: unknown): MergeResult
       rejected.push({ key: 'llmModel', reason: '模型名称无效。' })
     } else {
       accepted.llmModel = patch.llmModel.trim()
+    }
+  }
+
+  if ('updateAutoCheck' in patch) {
+    if (typeof patch.updateAutoCheck === 'boolean') {
+      accepted.updateAutoCheck = patch.updateAutoCheck
+    } else {
+      rejected.push({ key: 'updateAutoCheck', reason: '自动检查更新开关值无效。' })
+    }
+  }
+
+  if ('updateLastCheckAtMs' in patch) {
+    // Written by main alone (the renderer never sends this key); a non-number
+    // or a negative value falls back to "never checked".
+    if (
+      typeof patch.updateLastCheckAtMs === 'number' &&
+      Number.isFinite(patch.updateLastCheckAtMs) &&
+      patch.updateLastCheckAtMs >= 0
+    ) {
+      accepted.updateLastCheckAtMs = patch.updateLastCheckAtMs
+    } else {
+      rejected.push({ key: 'updateLastCheckAtMs', reason: '上次检查时间无效。' })
     }
   }
 

@@ -145,6 +145,35 @@ export interface DiagnosticsExportResult {
   message?: string
 }
 
+/**
+ * Update-client state transitions pushed to the settings row (OpenSpec
+ * `app-update`). The feed result is honest: a needs-signature event means the
+ * running bundle is not Developer ID signed, so no check ran.
+ */
+export type UpdateEvent =
+  | { type: 'checking' }
+  | { type: 'up-to-date'; version: string }
+  | { type: 'available'; version: string }
+  | { type: 'downloading'; percent: number }
+  | { type: 'ready-to-install' }
+  | { type: 'needs-signature' }
+  | { type: 'error'; message: string }
+
+/** The only writable part of the update policy: the automatic check toggle. */
+export interface UpdateAutoCheckPatch {
+  enabled: boolean
+}
+
+/** The settings row's read view of the updater. */
+export interface UpdateStatusView {
+  /** The fixed feed; the renderer displays it in the privacy note. */
+  feedUrl: string
+  /** Whether the bundle carries a Developer ID signature. */
+  signed: boolean
+  /** True while a check's HTTP request is in flight. */
+  checking: boolean
+}
+
 /** Everything the settings panel renders, read from one place in main. */
 export interface PreferencesView {
   theme: ThemePreference
@@ -155,6 +184,8 @@ export interface PreferencesView {
   vocabulary: VocabularySummary
   provider: ProviderSummary
   llm: LlmPreferencesView
+  /** The 自动检查更新 toggle, from the stored preference (`false` default). */
+  updateAutoCheck: boolean
 }
 
 /** `systemPreferences.getMediaAccessStatus` on macOS. */
@@ -271,6 +302,21 @@ export interface JustSpeakApi {
   onLlmDownload: (listener: (event: LlmDownloadEvent) => void) => () => void
   /** Writes a local zip of versions, logs, and crash dumps; never uploads. */
   exportDiagnostics: () => Promise<DiagnosticsExportResult>
+  /**
+   * Queries the fixed update feed. In an unsigned build no request is made:
+   * the row instead states 自动更新需要正式签名版.
+   */
+  checkForUpdate: () => Promise<UpdateStatusView>
+  /** Persists the 自动检查更新 toggle; the schedule re-arms from policy. */
+  setUpdateAutoCheck: (patch: UpdateAutoCheckPatch) => Promise<void>
+  /** Downloads the update after the user confirmed this specific version. */
+  downloadUpdate: () => Promise<void>
+  /** Installs a downloaded update (restarts the app). */
+  installUpdate: () => void
+  /** Update-client events; pushed by main, the row never polls. */
+  onUpdateEvent: (listener: (event: UpdateEvent) => void) => () => void
+  /** The row's initial view of the updater, so it renders before any check. */
+  getUpdateStatus: () => Promise<UpdateStatusView>
   /** Reads the two permissions the dictation path needs. Never prompts. */
   getPermissions: () => Promise<PermissionStatus>
   /** Opens System Settings → Privacy & Security → Accessibility. */

@@ -9,6 +9,7 @@ import type {
   ThemePreference
 } from '../../shared/ipc'
 import { HotkeyRecorder } from './HotkeyRecorder'
+import { UpdateRow } from './UpdateRow'
 
 export interface SettingsPanelProps {
   preferences: PreferencesView | null
@@ -204,6 +205,7 @@ export function SettingsPanel({
           ) : null}
           {vocabularyOnly ? null : (
           <>
+          <UpdateRow />
           <div className="settings-row">
             <div className="settings-row-head">
               <span className="settings-label">模型</span>

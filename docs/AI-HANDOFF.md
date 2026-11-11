@@ -1,8 +1,8 @@
 # AI 交接说明
 
-- 交接日期：2026-11-07
-- 当前 `main`：`3305260`（PR #36 菜单栏常驻 + #37 CI 已合并）
-- 当前 active OpenSpec change：无
+- 交接日期：2026-11-09
+- 当前 `main`：`9611b74`（PR #36/#37/#38 已合并）；PR #39（自动更新 + tag 发布）待合并
+- 当前 active OpenSpec change：无（`app-update` spec 已随 PR #39 归档）
 - 目的：让接手的 AI 在最少上下文下安全地继续工作，而不是重新摸索一遍
 
 > 先读 [AGENTS.md](../AGENTS.md)，再读这份。`AGENTS.md` 是工作流门控的第一来源；
@@ -67,6 +67,7 @@ JustSpeak 是一个 macOS 优先的本地听写应用：按全局快捷键说话
 
 | PR | 内容 | 关键点 |
 |---|---|---|
+| （本 PR） | 自动更新 + tag 发布流水线 | electron-updater（feed 固定 GitHub Releases；手动默认/自动 opt-in 每天一次；未签名构建如实提示不发请求）；`release.yml`：`v*` tag → 源码构建 transcribe.cpp+llama.cpp → DMG/ZIP/latest-mac.yml → 自动发布（GITHUB_TOKEN，无 secrets）；OpenSpec `app-update` |
 | #37 | GitHub Actions CI | typecheck/test/build/openspec 门槛在每次 push 与 PR 上跑；不跑 E2E 与覆盖率（原因写在 workflow 注释里） |
 | #36 | 菜单栏常驻 + 应用图标 | 关窗即隐藏（`menubar-residency` spec）；退出全部显式；`quitting` 在 `before-quit` 设；隐藏渲染进程 `backgroundThrottling: false`；打包用自带 icon；两轮独立 review（5 Important 全修复，复核 GO） |
 | #35 | LLM sidecar 闲置回收 | 5 分钟无判定请求停止 sidecar；评测 harness 用 `localIdleTimeoutMs: 0` 关闭 |
@@ -186,11 +187,10 @@ pnpm verify:mac          # 检查打包后的 runtime/LLM/catalog
    - 在数据出来前，默认保持 `off`；不要放宽护栏来“改善”指标。
    - 详细 SOP：`docs/LLM-EVAL-SOP.md`；合成基线：`docs/LLM-EVAL-SMOKE.md`。
 
-2. **签名、公证、自动更新**
-   - 签名/公证需要 Developer ID Application 证书、team ID、notarytool 凭证。
-   - 自动更新尚未实现：代码里没有 electron-updater/autoUpdater，`publish: null`；需要更新客户端 + 发布 feed + 凭证，不只是打开一个开关。
-   - 当前打包能出未签名 `.app`，不能发正式版。
-   - 见 `docs/PACKAGING-RELEASE.md`。
+2. **签名、公证（自动更新已就位）**
+   - 自动更新与 CI 发布已交付（PR：`app-auto-update`）：electron-updater + GitHub Releases feed 固定为 `https://github.com/speakworks/justspeak/releases`；`push v*` tag 触发 `.github/workflows/release.yml` 从源码构建两个原生 runtime 并发布未签名 DMG/ZIP/`latest-mac.yml`（内置 GITHUB_TOKEN，无 secrets）。更新检查默认手动，自动检查默认 off（最多一天一次）；未签名构建如实提示「自动更新需要正式签名版」且不发请求。OpenSpec 能力：`app-update`。
+   - 剩余的 Only owner 一项：Developer ID Application 证书、team ID、notarytool 凭证 → 配置后 `verify:mac --require-distribution` 变成发布门禁，electron-updater 无需改代码即生效。
+   - 见 `docs/PACKAGING-RELEASE.md` 与 `docs/PRIVACY.md`（update check 的网络目的地披露）。
 
 ### P1：工程上应尽快做
 

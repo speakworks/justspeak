@@ -1,7 +1,7 @@
 # AI 交接说明
 
 - 交接日期：2026-11-09
-- 当前 `main`：`9611b74`（PR #36/#37/#38 已合并）；PR #39（自动更新 + tag 发布）待合并
+- 当前 `main`：`9fe4809`（PR #39 自动更新 + tag 发布已合并）
 - 当前 active OpenSpec change：无（`app-update` spec 已随 PR #39 归档）
 - 目的：让接手的 AI 在最少上下文下安全地继续工作，而不是重新摸索一遍
 
@@ -67,7 +67,7 @@ JustSpeak 是一个 macOS 优先的本地听写应用：按全局快捷键说话
 
 | PR | 内容 | 关键点 |
 |---|---|---|
-| （本 PR） | 自动更新 + tag 发布流水线 | electron-updater（feed 固定 GitHub Releases；手动默认/自动 opt-in 每天一次；未签名构建如实提示不发请求）；`release.yml`：`v*` tag → 源码构建 transcribe.cpp+llama.cpp → DMG/ZIP/latest-mac.yml → 自动发布（GITHUB_TOKEN，无 secrets）；OpenSpec `app-update` |
+| #39 | 自动更新 + tag 发布流水线 | electron-updater（feed 固定 GitHub Releases；手动默认/自动 opt-in 每天一次；未签名构建如实提示不发请求）；`release.yml`：`v*` tag → 源码构建 transcribe.cpp+llama.cpp → DMG/ZIP/latest-mac.yml → 自动发布（GITHUB_TOKEN，无 secrets）；OpenSpec `app-update` |
 | #37 | GitHub Actions CI | typecheck/test/build/openspec 门槛在每次 push 与 PR 上跑；不跑 E2E 与覆盖率（原因写在 workflow 注释里） |
 | #36 | 菜单栏常驻 + 应用图标 | 关窗即隐藏（`menubar-residency` spec）；退出全部显式；`quitting` 在 `before-quit` 设；隐藏渲染进程 `backgroundThrottling: false`；打包用自带 icon；两轮独立 review（5 Important 全修复，复核 GO） |
 | #35 | LLM sidecar 闲置回收 | 5 分钟无判定请求停止 sidecar；评测 harness 用 `localIdleTimeoutMs: 0` 关闭 |

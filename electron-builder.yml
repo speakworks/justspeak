@@ -83,6 +83,10 @@ publish:
   provider: github
   owner: speakworks
   repo: justspeak
+  # electron-builder defaults to a draft and, with no existing release, two
+  # concurrent publishers can each create one (duplicate drafts). The workflow
+  # creates the release first; declaring `release` lets publishers adopt it.
+  releaseType: release
 
 mac:
   category: public.app-category.productivity

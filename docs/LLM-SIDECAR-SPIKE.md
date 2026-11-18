@@ -26,11 +26,14 @@
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release \
   -DLLAMA_METAL=ON -DLLAMA_BUILD_SERVER=ON \
-  -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF
+  -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF \
+  -DLLAMA_USE_PREBUILT_UI=OFF
 cmake --build build --target llama-server -j 8
 ```
 
 `LLAMA_OPENSSL=OFF` 很关键：默认构建会链接 Homebrew 的 `/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib`，绝对路径不可随包分发；关闭后只剩 `@rpath` 和系统库。
+
+`LLAMA_USE_PREBUILT_UI=OFF` 同样必须显式给出：默认的 ON 会在构建期从 Hugging Face 拉取**可变**的 UI 资产，构建结果因此不可复现，2026-11-17 的 CI 就因它失败（b1 的 SHA-256 拉取失败后回退到 `latest`，而 `latest` 里缺 `workbox[hash].js`，被 `ui-assets.cmake` 判为缺件）。本项目 sidecar 启动时用 `--no-ui` 且打包只复制 `llama-server` 与 dylib，不需要内嵌 UI，所以关掉它不影响任何交付物。CI 的 `release.yml` 用同一组参数，两处必须同步。
 
 ## 打包
 

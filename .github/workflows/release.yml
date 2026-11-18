@@ -109,13 +109,13 @@ jobs:
             8642541b255bfb5dc39cd351a178be09013a55d6
 
       # LLAMA_USE_PREBUILT_UI=OFF: the upstream default (ON) fetches the
-      # embedded web UI from Hugging Face at configure time, which makes this
+      # embedded web UI from Hugging Face at build time, which makes this
       # step depend on mutable upstream assets. On 2026-11-17 the pinned build
       # requested the b1 bucket first; fetching b1's SHA-256 returned an HTTP
       # error, so cmake fell back to the mutable `latest` archive, which lacked
       # `workbox[hash].js` and tripped ui-assets.cmake's required-asset check
       # (FATAL_ERROR, exit 2). This app never uses that UI: the sidecar starts
-      # llama-server with `--no-webui` and packaging copies only the server
+      # llama-server with `--no-ui` and packaging copies only the server
       # binary and its dylibs, so disabling the prebuilt UI changes nothing
       # that ships and removes the dependency on unreproducible HF assets.
       - name: Build llama.cpp runtime

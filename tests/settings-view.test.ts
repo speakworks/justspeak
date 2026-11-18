@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_ACCELERATOR } from '../src/core/hotkey/accelerator'
 import {
   buildSettingsRows,
+  describeAutostart,
   describeHotkey,
   describeLlm,
   describeProvider,
@@ -42,6 +43,7 @@ const PREFERENCES: PreferencesView = {
       state: 'idle'
     }
   },
+  loginItem: { available: true, openAtLogin: true, status: 'enabled' },
   updateAutoCheck: false
 }
 
@@ -108,6 +110,67 @@ describe('theme state', () => {
   it('labels a pinned light or dark choice as an override', () => {
     expect(describeTheme('light')).toMatchObject({ status: 'override', statusLabel: '已修改' })
     expect(describeTheme('dark')).toMatchObject({ status: 'override', statusLabel: '已修改' })
+  })
+})
+
+describe('autostart state', () => {
+  it('labels an enabled login item as the built-in default', () => {
+    expect(
+      describeAutostart({ available: true, openAtLogin: true, status: 'enabled' })
+    ).toMatchObject({
+      status: 'default',
+      statusLabel: '默认'
+    })
+  })
+
+  it('labels a system-reported off state as an override and points at System Settings', () => {
+    const state = describeAutostart({
+      available: true,
+      openAtLogin: false,
+      status: 'not-registered'
+    })
+    expect(state.status).toBe('override')
+    expect(state.statusLabel).toBe('已修改')
+    expect(state.detail).toContain('系统设置')
+  })
+
+  it('reports requires-approval as its own pending state, not as a refusal', () => {
+    const state = describeAutostart({
+      available: true,
+      openAtLogin: false,
+      status: 'requires-approval'
+    })
+    expect(state.status).toBe('pending')
+    expect(state.statusLabel).toBe('待允许')
+    expect(state.detail).toContain('允许开机自启')
+  })
+
+  it('labels an unreadable login item as unavailable with the reason', () => {
+    const state = describeAutostart({
+      available: false,
+      openAtLogin: false,
+      status: 'not-registered',
+      message: '无法读取登录项状态：boom'
+    })
+    expect(state).toMatchObject({
+      status: 'unavailable',
+      statusLabel: '不可用',
+      detail: '无法读取登录项状态：boom'
+    })
+  })
+
+  it('labels an available but unapplied change as pending, not unavailable', () => {
+    const state = describeAutostart({
+      available: true,
+      openAtLogin: false,
+      status: 'not-registered',
+      message: '系统没有接受开机自启设置。'
+    })
+    expect(state).toMatchObject({
+      status: 'pending',
+      statusLabel: '未生效',
+      detail: '系统没有接受开机自启设置。'
+    })
   })
 })
 
@@ -204,9 +267,17 @@ describe('settings rows', () => {
       hotkey: 'Command+Shift+K',
       hotkeyMessage: 'Command+Shift+K 被占用，已回退。'
     })
-    expect(Object.keys(rows)).toEqual(['theme', 'hotkey', 'vocabulary', 'provider', 'llm'])
+    expect(Object.keys(rows)).toEqual([
+      'theme',
+      'hotkey',
+      'autostart',
+      'vocabulary',
+      'provider',
+      'llm'
+    ])
     expect(rows.theme.status).toBe('override')
     expect(rows.hotkey.status).toBe('unavailable')
+    expect(rows.autostart.status).toBe('default')
     expect(rows.vocabulary.status).toBe('default')
     expect(rows.provider.status).toBe('unavailable')
     expect(rows.llm.status).toBe('default')

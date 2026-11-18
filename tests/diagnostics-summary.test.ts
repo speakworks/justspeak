@@ -37,6 +37,7 @@ const PREFERENCES: PreferencesView = {
       error: `本地运行时缺失：${USER_DATA}/resources/llm/llama-server`
     }
   },
+  loginItem: { available: true, openAtLogin: true, status: 'enabled' },
   updateAutoCheck: false
 }
 

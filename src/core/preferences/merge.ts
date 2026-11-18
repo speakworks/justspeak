@@ -22,6 +22,11 @@ export interface StoredPreferences {
   updateAutoCheck: boolean
   /** Epoch ms of the last automatic check; `0` means the app never checked. */
   updateLastCheckAtMs: number
+  /**
+   * The recorded 开机自动启动 choice. `undefined` means the first-run default has
+   * not been applied yet; the setting itself is always read from the OS.
+   */
+  launchAtLogin: boolean | undefined
 }
 
 /** The validated subset a write may apply. */
@@ -33,6 +38,7 @@ export interface PreferenceUpdate {
   llmModel?: string
   updateAutoCheck?: boolean
   updateLastCheckAtMs?: number
+  launchAtLogin?: boolean
 }
 
 export function parseLlmBackend(value: unknown): LlmBackend {
@@ -68,7 +74,8 @@ const WRITABLE_KEYS = new Set([
   'llmBaseUrl',
   'llmModel',
   'updateAutoCheck',
-  'updateLastCheckAtMs'
+  'updateLastCheckAtMs',
+  'launchAtLogin'
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -79,8 +86,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * Merge `patch` over `existing`.
  *
  * - Unknown keys already in `existing` (including non-object input) are kept.
- * - Only `theme`, `hotkey` and the three LLM settings are writable; any other
- *   patch key is rejected.
+ * - Only the keys in `WRITABLE_KEYS` are writable (theme, hotkey, the three LLM
+ *   settings, the update toggles, and `launchAtLogin`); any other patch key is
+ *   rejected.
  * - An invalid theme or hotkey rejects the whole patch: nothing is partially
  *   applied, so a typo can never leave the file in a half-updated state.
  */
@@ -169,6 +177,14 @@ export function mergePreferences(existing: unknown, patch: unknown): MergeResult
       accepted.updateLastCheckAtMs = patch.updateLastCheckAtMs
     } else {
       rejected.push({ key: 'updateLastCheckAtMs', reason: '上次检查时间无效。' })
+    }
+  }
+
+  if ('launchAtLogin' in patch) {
+    if (typeof patch.launchAtLogin === 'boolean') {
+      accepted.launchAtLogin = patch.launchAtLogin
+    } else {
+      rejected.push({ key: 'launchAtLogin', reason: '开机自启开关值无效。' })
     }
   }
 

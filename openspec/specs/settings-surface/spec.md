@@ -146,3 +146,58 @@ scroll inside its own region instead of the page.
 - **WHEN** the settings surface, 首页 with a long transcript, and 词典 are each open in light and in dark mode
 - **THEN** `document.documentElement.scrollHeight` is less than or equal to `window.innerHeight`
 - **AND** the growth area scrolls internally instead of the page
+
+### Requirement: Autostart SHALL report the OS login-item state
+
+The settings surface SHALL render an 开机自动启动 row whose switch value comes
+from `app.getLoginItemSettings()` on every preferences read, including its macOS
+`status`. The row SHALL NOT display a value cached in `preferences.json`. It
+SHALL use the honest labels: `default` when the system reports `enabled` (the
+built-in default is on), `override` when the system reports `not-registered` or
+`not-found`, `unavailable` with a reason only when the login-item API is missing
+or the read throws, and `pending` when the API works but the last change did not
+take effect (`未生效`). A `requires-approval` status SHALL be reported as its own
+`pending` state labelled 「待允许」 with a System Settings approval instruction; it
+SHALL NOT be presented as an unavailable API or a failed registration. Toggling
+SHALL call `app.setLoginItemSettings({ openAtLogin })` and then re-read the
+system; the UI SHALL adopt the read-back value, and a value the system did not
+accept SHALL be reported as not applied instead of being displayed as applied.
+
+#### Scenario: External disable is reflected
+
+- **WHEN** the user turns the app's login item off in 系统设置 → 通用 → 登录项
+  and then refreshes the settings surface
+- **THEN** the in-app 开机自动启动 switch shows off
+- **AND** the row is labelled 已修改 (`override`)
+
+#### Scenario: Read-back wins over the request
+
+- **WHEN** the user toggles 开机自动启动
+- **THEN** main calls `setLoginItemSettings` with the requested boolean and then
+  calls `getLoginItemSettings`
+- **AND** the row renders the value from that read, not the requested value
+
+#### Scenario: The login-item API is unavailable
+
+- **WHEN** `getLoginItemSettings` is missing or throws
+- **THEN** the row is labelled 不可用 (`unavailable`) with the reason
+- **AND** its switch is disabled rather than shown as off
+
+#### Scenario: macOS requires approval
+
+- **WHEN** `getLoginItemSettings().status` is `requires-approval`
+- **THEN** the row is labelled 待允许 (`pending`) with the System Settings instruction
+- **AND** it is not labelled 不可用 and does not claim the build is unsigned
+
+#### Scenario: The API works but the change did not take effect
+
+- **WHEN** the read succeeds and the last `setLoginItemSettings` was not confirmed
+- **THEN** the row is labelled 未生效 (`pending`) with the refusal reason
+- **AND** it is not labelled 不可用, because the control can be retried
+
+#### Scenario: A refused change is not claimed as applied
+
+- **WHEN** `getLoginItemSettings` still reports the previous value after
+  `setLoginItemSettings` (for example in an unsigned build)
+- **THEN** the write result is a failure with a message naming the likely cause
+- **AND** the switch reflects the value the system actually reports

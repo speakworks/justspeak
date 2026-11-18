@@ -200,7 +200,7 @@ pnpm verify:mac          # 检查打包后的 runtime/LLM/catalog
    - 真机按键验证录制中 `Cmd+Q` / `Cmd+R` 被菜单抑制并显示“被 macOS 占用”，而不是退出/重载。E2E 用的是 Playwright 合成事件，不经过原生菜单。
    - 验证 Electron `globalShortcut` 是否接受 `Command+'`（解析/捕获已通过，OS 接受度未验证）。
 6. ~~补一个测试~~ — 已由 PR #32 完成：`hotkeyChangeRefusal(state)` 落在 `src/core/hotkey`，状态表由单测覆盖，capture 与应用两条路径共用同一判断。
-7. **开机启动尚未实现**：仓库里没有 `setLoginItemSettings`。菜单栏常驻（PR #36）让“应用一直在”成立，但每次重启仍要手动打开。做成设置项还是默认开启是产品决策。
+7. ~~开机启动尚未实现~~ — 已由 `login-item-autostart` 完成：首次运行默认开启（写入系统后回读），设置页「开机自动启动」开关始终显示 `getLoginItemSettings().openAtLogin`，系统设置里手动关闭后应用内同步为 off；未签名/未放入 `/Applications` 的构建可能不生效，界面会如实显示不可用或失败原因。
 8. **托盘/翻译细节遗留**（review 复核标记的 Minor，均为后续小卡片）：工具提示打印的是原始 accelerator 字符串（如 `CommandOrControl+Shift+Space`）而非 `⌘⇧Space`；应用菜单没有 `role:'close'`，`Cmd+W` 不关窗；Windows 移植时托盘左击需恢复窗口（macOS 不适用）。
 
 ### P2：未来硬化 / 产品规划

@@ -9,18 +9,23 @@
 
 import { DEFAULT_ACCELERATOR } from '../hotkey/accelerator'
 import { THEME_LABEL } from '../theme/theme'
+import {
+  LOGIN_ITEM_REQUIRES_APPROVAL_REASON,
+  LOGIN_ITEM_UNAVAILABLE_REASON
+} from './autostart'
 import type {
+  LoginItemView,
   PreferencesView,
   ProviderSummary,
   ThemePreference,
   VocabularySummary
 } from '../../shared/ipc'
 
-export type SettingStatus = 'default' | 'override' | 'unavailable'
+export type SettingStatus = 'default' | 'override' | 'unavailable' | 'pending'
 
 export interface SettingState {
   status: SettingStatus
-  /** Short chip text: 默认 / 已修改 / 不可用. */
+  /** Short chip text: 默认 / 已修改 / 不可用 / 待允许 / 未生效. */
   statusLabel: string
   /** One line explaining the current value or what is missing. */
   detail: string
@@ -29,7 +34,8 @@ export interface SettingState {
 const STATUS_LABEL: Record<SettingStatus, string> = {
   default: '默认',
   override: '已修改',
-  unavailable: '不可用'
+  unavailable: '不可用',
+  pending: '未生效'
 }
 
 export function describeTheme(theme: ThemePreference): SettingState {
@@ -40,6 +46,50 @@ export function describeTheme(theme: ThemePreference): SettingState {
     status: 'override',
     statusLabel: STATUS_LABEL.override,
     detail: `固定为${THEME_LABEL[theme]}。`
+  }
+}
+
+/**
+ * The 开机自动启动 row. The value is the OS's answer, so an external change in
+ * 系统设置 → 通用 → 登录项 shows up as off; the built-in default is on, which
+ * makes an enabled login item `default` and a disabled one an `override`.
+ */
+export function describeAutostart(loginItem: LoginItemView): SettingState {
+  if (!loginItem.available) {
+    return {
+      status: 'unavailable',
+      statusLabel: STATUS_LABEL.unavailable,
+      detail: loginItem.message ?? LOGIN_ITEM_UNAVAILABLE_REASON
+    }
+  }
+  if (loginItem.status === 'requires-approval') {
+    // A real intermediate macOS state, not a failed registration.
+    return {
+      status: 'pending',
+      statusLabel: '待允许',
+      detail: LOGIN_ITEM_REQUIRES_APPROVAL_REASON
+    }
+  }
+  if (loginItem.message) {
+    // The API works but this change did not take effect; the switch stays
+    // clickable so the user can retry, and the chip must not claim success.
+    return {
+      status: 'pending',
+      statusLabel: STATUS_LABEL.pending,
+      detail: loginItem.message
+    }
+  }
+  if (loginItem.openAtLogin) {
+    return {
+      status: 'default',
+      statusLabel: STATUS_LABEL.default,
+      detail: '登录时自动启动。'
+    }
+  }
+  return {
+    status: 'override',
+    statusLabel: STATUS_LABEL.override,
+    detail: '已关闭；可在系统设置 → 通用 → 登录项中重新开启。'
   }
 }
 
@@ -186,6 +236,7 @@ export function describeLlm(preferences: PreferencesView['llm']): SettingState {
 export interface SettingsRows {
   theme: SettingState
   hotkey: SettingState
+  autostart: SettingState
   vocabulary: SettingState
   provider: SettingState
   llm: SettingState
@@ -195,6 +246,7 @@ export function buildSettingsRows(preferences: PreferencesView): SettingsRows {
   return {
     theme: describeTheme(preferences.theme),
     hotkey: describeHotkey(preferences.hotkey, preferences.hotkeyMessage),
+    autostart: describeAutostart(preferences.loginItem),
     vocabulary: describeVocabulary(preferences.vocabulary),
     provider: describeProvider(preferences.provider),
     llm: describeLlm(preferences.llm)

@@ -11,6 +11,20 @@
 export const PASTE_LOCK_TIMEOUT_MS = 1_500
 export const PASTE_LOCK_BUSY_MESSAGE =
   '撤销正在进行，暂时无法插入文本。请稍后再试。'
+export const PASTE_LOCK_BUSY_NOTICE =
+  '未插入到目标应用，已放入剪贴板与结果面板。'
+
+/** A paste that timed out waiting for the shared write lock. */
+export class PasteLockBusyError extends Error {
+  constructor() {
+    super(PASTE_LOCK_BUSY_MESSAGE)
+    this.name = 'PasteLockBusyError'
+  }
+}
+
+export function isPasteLockBusyError(error: unknown): error is PasteLockBusyError {
+  return error instanceof PasteLockBusyError
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -71,7 +85,7 @@ export function createLockedPaste(
 ): (text: string) => Promise<void> {
   return async (text: string): Promise<void> => {
     const acquired = await lock.acquire(timeoutMs)
-    if (!acquired) throw new Error(PASTE_LOCK_BUSY_MESSAGE)
+    if (!acquired) throw new PasteLockBusyError()
     try {
       await paste(text)
     } finally {

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   PASTE_LOCK_BUSY_MESSAGE,
+  PasteLockBusyError,
   UndoLock,
-  createLockedPaste
+  createLockedPaste,
+  isPasteLockBusyError
 } from '../src/core/injection/undo-lock'
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -81,13 +83,25 @@ describe('undo lock', () => {
     expect(events).toEqual(['delete-start', 'delete-end', 'paste'])
   })
 
+  it('is not reentrant: a holder that calls acquire again times out', async () => {
+    // This is the hazard the held-lock fallback bypasses: the same logical
+    // caller must never re-enter createLockedPaste while holding the lock.
+    const lock = new UndoLock()
+    expect(lock.tryAcquire()).toBe(true)
+    await expect(lock.acquire(25)).resolves.toBe(false)
+    expect(lock.locked).toBe(true)
+    lock.release()
+  })
+
   it('refuses a paste at the deadline instead of writing into the delete', async () => {
     const lock = new UndoLock()
     const paste = vi.fn(async () => {})
     const lockedPaste = createLockedPaste(lock, paste, 20)
 
     expect(lock.tryAcquire()).toBe(true)
-    await expect(lockedPaste('text')).rejects.toThrow(PASTE_LOCK_BUSY_MESSAGE)
+    const error = await lockedPaste('text').catch((cause: unknown) => cause)
+    expect(isPasteLockBusyError(error)).toBe(true)
+    expect((error as Error).message).toBe(PASTE_LOCK_BUSY_MESSAGE)
     expect(paste).not.toHaveBeenCalled()
     lock.release()
   })

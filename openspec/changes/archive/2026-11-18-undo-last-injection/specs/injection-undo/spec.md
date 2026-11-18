@@ -66,6 +66,13 @@ bounded time, then proceed only after the deletion settles; if the wait
 expires, it SHALL be refused with 撤销正在进行 and SHALL NOT write. It SHALL NOT
 write while the Backspace loop is still running.
 
+A paste refused because the lock is still held at the deadline SHALL NOT drop
+the text: the app SHALL write it to the clipboard and place it in the result
+panel with a notice that it was not inserted and is available in both. The
+session SHALL report the refusal. A caller that already holds the write lock
+SHALL NOT acquire it again; its fallback delivery SHALL paste directly. The
+lock is not reentrant.
+
 Only one guarded deletion SHALL be in flight. The slot SHALL be marked consumed
 before the script starts; a second concurrent request SHALL be refused without
 sending a key, and a request whose slot was already consumed or replaced SHALL
@@ -149,6 +156,22 @@ still be made on a fresh probe after the app is frontmost.
   cannot delete the new text
 - **AND** if the wait expires, the paste is refused with 撤销正在进行 and writes
   nothing
+
+#### Scenario: A paste times out on the write lock
+
+- **WHEN** a paste's bounded wait expires because a deletion is still running
+- **THEN** the text is written to the clipboard
+- **AND** it is placed in the result panel with a notice that it was not
+  inserted into the target app and is available in the clipboard and panel
+- **AND** the session reports the refusal
+
+#### Scenario: A fallback runs while the caller already holds the lock
+
+- **WHEN** a re-say delivery acquires the lock and then discovers its slot was
+  already consumed or replaced
+- **THEN** its fallback delivery pastes directly without acquiring the lock again
+- **AND** the new text is inserted (or placed in the panel), never lost to a
+  self-wait timeout
 
 #### Scenario: A loop-body error is distinct from a pre-loop error
 

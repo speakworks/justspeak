@@ -90,8 +90,16 @@ script's own check is the one immediately before the keys.
 `UndoLock` is the shared write mutex: deletions and every paste into a target
 app take it. `createLockedPaste` waits a bounded 1.5 s for an in-flight
 deletion, then proceeds or refuses with 撤销正在进行; it never writes while the
-Backspace loop is running. The lock is released in `finally` on every path,
-including exec failures and thrown pastes.
+Backspace loop is running. A lock-busy refusal still writes the text to the
+clipboard and shows the result panel with 「未插入到目标应用，已放入剪贴板与结果面板」
+before the delivery reports the refusal, so the words are never only in a
+history row. The lock is released in `finally` on every path, including exec
+failures and thrown pastes.
+
+The lock is not reentrant. The one branch that discovers a stale slot after it
+already acquired the lock (a re-say fallback) passes `{ ...deliveryPorts(),
+paste: pasteText }` so its delivery pastes directly instead of waiting 1.5 s on
+itself and losing the new text.
 
 The slot is marked consumed before the script starts; a concurrent request is
 refused with 撤销正在进行. A script abort **before** the first key (app, bundle,

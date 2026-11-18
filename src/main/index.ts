@@ -49,7 +49,13 @@ import {
   type InjectionRecord
 } from '../core/injection/undo'
 import { isPreKeyRefusal } from '../core/injection/delete'
-import { UndoLock, createLockedPaste } from '../core/injection/undo-lock'
+import {
+  PASTE_LOCK_BUSY_MESSAGE,
+  PASTE_LOCK_BUSY_NOTICE,
+  UndoLock,
+  createLockedPaste,
+  isPasteLockBusyError
+} from '../core/injection/undo-lock'
 import { postprocess, type PostprocessOptions } from '../core/postprocess'
 import type { FocusTarget } from '../core/focus/editability'
 import { SessionController } from '../core/session/session-controller'
@@ -313,6 +319,26 @@ const undoLock = new UndoLock()
  */
 const lockedPaste = createLockedPaste(undoLock, pasteText)
 
+/**
+ * The delivery-port paste. A lock-busy refusal must not hide the text: write
+ * it to the clipboard and show the result panel before re-throwing, so the
+ * session's error path is honest and the words remain visible and copyable.
+ */
+async function pasteWithVisibility(text: string): Promise<void> {
+  try {
+    await lockedPaste(text)
+  } catch (error) {
+    if (isPasteLockBusyError(error)) {
+      clipboard.writeText(text)
+      showResultPanel(text, effectiveTheme(), {
+        title: '撤销正在进行，未插入',
+        notice: PASTE_LOCK_BUSY_NOTICE
+      })
+    }
+    throw error
+  }
+}
+
 class UnavailableAsrProvider implements AsrProvider {
   readonly id = 'unavailable'
   readonly capabilities: AsrCapabilities = {
@@ -451,7 +477,7 @@ function deliveryPorts(): DeliveryPorts {
     appFocused: () => mainWindow?.isFocused() ?? false,
     probeTarget: probeFocusTarget,
     insert: (out) => mainWindow?.webContents.send('transcript:insert', out),
-    paste: lockedPaste,
+    paste: pasteWithVisibility,
     showPanel: (out) => showResultPanel(out, effectiveTheme())
   }
 }
@@ -484,9 +510,10 @@ function deleteExpectation(record: InjectionRecord) {
 async function deliverReSayFallback(
   text: string,
   candidate: InjectionRecord,
-  reasonText: string
+  reasonText: string,
+  ports: DeliveryPorts = deliveryPorts()
 ): Promise<DeliveryTarget> {
-  const outcome = await deliverTranscriptDetailed(text, deliveryPorts())
+  const outcome = await deliverTranscriptDetailed(text, ports)
   if (outcome.target === 'panel' && outcome.focus !== null) {
     setResultPanelTarget(outcome.focus)
   }
@@ -655,12 +682,16 @@ async function replaceTranscript(
   }
 
   try {
-    // A stale snapshot (already consumed or replaced) must not delete.
+    // A stale snapshot (already consumed or replaced) must not delete. This
+    // branch already holds the write lock, so its fallback paste must bypass
+    // the lock: re-entering createLockedPaste would self-deadlock until the
+    // timeout and lose the new text.
     if (lastInjection !== candidate) {
       return deliverReSayFallback(
         text,
         candidate,
-        '另一次撤销正在进行或已完成，本次未删除旧文本。'
+        '另一次撤销正在进行或已完成，本次未删除旧文本。',
+        { ...deliveryPorts(), paste: pasteText }
       )
     }
     // Mark the slot consumed before the script starts so a concurrent caller
@@ -760,6 +791,17 @@ async function reinsertPanelText(input: unknown): Promise<ReinsertResult> {
       // deletion rather than letting its tail Backspaces eat the new text.
       await lockedPaste(text)
     } catch (error) {
+      if (isPasteLockBusyError(error)) {
+        // The reinsertion was refused by an in-flight deletion; keep the text
+        // visible and copyable instead of losing it with the error.
+        clipboard.writeText(text)
+        showResultPanel(text, effectiveTheme(), {
+          title: '撤销正在进行，未插入',
+          notice: PASTE_LOCK_BUSY_NOTICE
+        })
+        scheduleResultPanelHide(2_500)
+        return { inserted: false, message: PASTE_LOCK_BUSY_MESSAGE }
+      }
       const message = error instanceof Error ? error.message : String(error)
       showResultPanel(text, effectiveTheme(), {
         title: '重新插入失败',

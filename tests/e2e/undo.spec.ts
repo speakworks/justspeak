@@ -26,6 +26,7 @@ interface Harness {
   dir: string
   probeFile: string
   probeDelayFile: string
+  probeDelayCountFile: string
   deleteModeFile: string
   deleteDelayFile: string
   pasteFailFile: string
@@ -52,6 +53,7 @@ function makeHarness(): Harness {
   const dir = mkdtempSync(path.join(tmpdir(), 'justspeak-undo-'))
   const probeFile = path.join(dir, 'probe-mode')
   const probeDelayFile = path.join(dir, 'probe-delay')
+  const probeDelayCountFile = path.join(dir, 'probe-delay-count')
   const deleteModeFile = path.join(dir, 'delete-mode')
   const deleteDelayFile = path.join(dir, 'delete-delay')
   const pasteFailFile = path.join(dir, 'paste-fail')
@@ -72,6 +74,7 @@ const baseArgs = process.argv.slice(2)
 const script = baseArgs[1] || ''
 const probeFile = process.env.JUSTSPEAK_E2E_PROBE_FILE
 const probeDelayFile = process.env.JUSTSPEAK_E2E_PROBE_DELAY_FILE
+const probeDelayCountFile = process.env.JUSTSPEAK_E2E_PROBE_DELAY_COUNT_FILE
 const deleteModeFile = process.env.JUSTSPEAK_E2E_DELETE_MODE_FILE
 const deleteDelayFile = process.env.JUSTSPEAK_E2E_DELETE_DELAY_FILE
 const pasteFailFile = process.env.JUSTSPEAK_E2E_PASTE_FAIL_FILE
@@ -92,7 +95,9 @@ if (script.includes('key code 51')) {
   log('delete-args:' + expected.join('|'))
   if (fs.existsSync(deleteDelayFile)) {
     log('delete-start')
-    try { execFileSync('sleep', ['0.7']) } catch {}
+    const raw = fs.readFileSync(deleteDelayFile, 'utf8').trim()
+    const delayMs = Number.isFinite(Number(raw)) && Number(raw) > 0 ? Number(raw) : 700
+    try { execFileSync('sleep', [String(delayMs / 1000)]) } catch {}
   }
   if (deletionMode === 'partial') {
     const partialCount = Math.max(1, Math.floor(count / 2))
@@ -135,6 +140,11 @@ if (script.includes('AXFocusedUIElement')) {
   if (fs.existsSync(probeDelayFile)) {
     try { execFileSync('sleep', ['0.15']) } catch {}
   }
+  const remainingDelays = Number(readMode(probeDelayCountFile, '0'))
+  if (Number.isFinite(remainingDelays) && remainingDelays > 0) {
+    try { fs.writeFileSync(probeDelayCountFile, String(remainingDelays - 1)) } catch {}
+    try { execFileSync('sleep', ['0.5']) } catch {}
+  }
   if (probeMode === 'unknown') process.stdout.write('UNKNOWN\\n')
   else if (probeMode === 'noneditable') process.stdout.write('Safari\\ncom.apple.Safari\\nAXTextArea\\n0\\nmain-editor\\n')
   else if (probeMode === 'other') process.stdout.write('Notes\\ncom.apple.Notes\\nAXTextArea\\n1\\nmain-editor\\n')
@@ -158,6 +168,7 @@ process.exit(0)
     dir,
     probeFile,
     probeDelayFile,
+    probeDelayCountFile,
     deleteModeFile,
     deleteDelayFile,
     pasteFailFile,
@@ -183,6 +194,7 @@ async function launch(
       JUSTSPEAK_ASR: 'fake',
       JUSTSPEAK_E2E_PROBE_FILE: harness.probeFile,
       JUSTSPEAK_E2E_PROBE_DELAY_FILE: harness.probeDelayFile,
+      JUSTSPEAK_E2E_PROBE_DELAY_COUNT_FILE: harness.probeDelayCountFile,
       JUSTSPEAK_E2E_DELETE_MODE_FILE: harness.deleteModeFile,
       JUSTSPEAK_E2E_DELETE_DELAY_FILE: harness.deleteDelayFile,
       JUSTSPEAK_E2E_PASTE_FAIL_FILE: harness.pasteFailFile,
@@ -555,6 +567,135 @@ test.describe('JustSpeak correction path', () => {
       )
       expect(deleteAt).toBeGreaterThan(-1)
       expect(pasteAt).toBeGreaterThan(deleteAt)
+    } finally {
+      if (app) {
+        await restoreClipboard(app).catch(() => {})
+        await app.close().catch(() => {})
+      }
+      rmSync(userData, { recursive: true, force: true })
+      rmSync(harness.dir, { recursive: true, force: true })
+    }
+  })
+
+  test('A: a re-say fallback that already holds the lock pastes directly', async () => {
+    const userData = mkdtempSync(path.join(tmpdir(), 'justspeak-undo-userdata-'))
+    const harness = makeHarness()
+    let app: ElectronApplication | undefined
+    try {
+      const launched = await launch(userData, harness)
+      app = launched.app
+      const page = launched.page
+      await snapshotClipboard(app)
+      await expect(page.locator('.status')).toHaveText('就绪')
+      await hideWindow(app)
+
+      setProbe(harness, 'editable')
+      await dictate(app, page)
+      await expect
+        .poll(() => page.evaluate(() =>
+          (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
+        ))
+        .toMatchObject({ available: true })
+      expect(targetText(harness)).toBe(FAKE_TRANSCRIPT)
+
+      // The second run's delivery probe takes 0.5 s; a fast undo consumes the
+      // slot while it waits. The fallback then runs while it already holds the
+      // lock and must paste directly instead of re-acquiring it.
+      await startRecording(app, page)
+      writeFileSync(harness.probeDelayCountFile, '1')
+      const panelPromise = app.waitForEvent('window', { timeout: 10_000 })
+      await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakPage).justspeak.toggleRecording()
+      )
+      await expect
+        .poll(() => readFileSync(harness.probeDelayCountFile, 'utf8').trim(), {
+          timeout: 5_000
+        })
+        .toBe('0')
+
+      const undo = await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakPage).justspeak.undoLastInjection()
+      )
+      expect(undo.ok).toBe(true)
+
+      const panel = await panelPromise
+      await panel.waitForLoadState('domcontentloaded')
+      await expect(panel.locator('.result-panel-title')).toHaveText('旧文本未删除')
+      await expect(panel.locator('.result-panel-text')).toHaveValue(FAKE_TRANSCRIPT)
+      await expect(page.locator('.status')).toHaveText('就绪', { timeout: 10_000 })
+
+      // The new text was inserted after the delete, not lost to a self-lock.
+      expect(targetText(harness)).toBe(FAKE_TRANSCRIPT)
+      const lines = calls(harness)
+      const deleteAt = lines.findIndex((line) => line.startsWith('delete:'))
+      const lastPasteAt = lines.reduce(
+        (latest, line, index) => (line.startsWith('paste:') ? index : latest),
+        -1
+      )
+      expect(deleteAt).toBeGreaterThan(-1)
+      expect(lastPasteAt).toBeGreaterThan(deleteAt)
+    } finally {
+      if (app) {
+        await restoreClipboard(app).catch(() => {})
+        await app.close().catch(() => {})
+      }
+      rmSync(userData, { recursive: true, force: true })
+      rmSync(harness.dir, { recursive: true, force: true })
+    }
+  })
+
+  test('A: a lock-busy paste is copied and shown in the panel', async () => {
+    const userData = mkdtempSync(path.join(tmpdir(), 'justspeak-undo-userdata-'))
+    const harness = makeHarness()
+    let app: ElectronApplication | undefined
+    try {
+      const launched = await launch(userData, harness)
+      app = launched.app
+      const page = launched.page
+      await snapshotClipboard(app)
+      await expect(page.locator('.status')).toHaveText('就绪')
+      await hideWindow(app)
+
+      setProbe(harness, 'editable')
+      await dictate(app, page)
+      await expect
+        .poll(() => page.evaluate(() =>
+          (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
+        ))
+        .toMatchObject({ available: true })
+
+      // A delete longer than the paste's 1.5 s budget makes the concurrent
+      // delivery hit the lock-busy path deterministically.
+      writeFileSync(harness.deleteDelayFile, '2500')
+      await startRecording(app, page)
+      const undoPromise = page.evaluate(() =>
+        (globalThis as unknown as JustSpeakPage).justspeak.undoLastInjection()
+      )
+      await expect
+        .poll(() => calls(harness).includes('delete-start'), { timeout: 10_000 })
+        .toBe(true)
+
+      const panelPromise = app.waitForEvent('window', { timeout: 10_000 })
+      await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakPage).justspeak.toggleRecording()
+      )
+      await expect(page.locator('.status')).toHaveText('出错了', { timeout: 10_000 })
+
+      const panel = await panelPromise
+      await panel.waitForLoadState('domcontentloaded')
+      await expect(panel.locator('.result-panel-title')).toHaveText('撤销正在进行，未插入')
+      await expect(panel.locator('.result-panel-text')).toHaveValue(FAKE_TRANSCRIPT)
+      await expect(panel.locator('.result-panel-notice').first()).toContainText(
+        '未插入到目标应用，已放入剪贴板与结果面板。'
+      )
+      expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(
+        FAKE_TRANSCRIPT
+      )
+
+      const undo = await undoPromise
+      expect(undo.ok).toBe(true)
+      expect(targetText(harness)).toBe('')
+      expect(calls(harness).filter((line) => line.startsWith('paste:'))).toHaveLength(1)
     } finally {
       if (app) {
         await restoreClipboard(app).catch(() => {})

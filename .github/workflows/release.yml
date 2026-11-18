@@ -115,7 +115,7 @@ jobs:
       # error, so cmake fell back to the mutable `latest` archive, which lacked
       # `workbox[hash].js` and tripped ui-assets.cmake's required-asset check
       # (FATAL_ERROR, exit 2). This app never uses that UI: the sidecar starts
-      # llama-server with `--no-webui` and packaging copies only the server
+      # llama-server with `--no-ui` and packaging copies only the server
       # binary and its dylibs, so disabling the prebuilt UI changes nothing
       # that ships and removes the dependency on unreproducible HF assets.
       - name: Build llama.cpp runtime

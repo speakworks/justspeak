@@ -39,13 +39,17 @@ import type { HotkeySource } from '../core/hotkey/types'
 import {
   DEFAULT_UNDO_WINDOW_MINUTES,
   buildInjectionRecord,
+  compareTargetIdentity,
   evaluateUndoGuard,
+  identityCopyMessage,
   isReSayCandidate,
   undoRefusalTitle,
   undoWindowMs,
   undoWindowOpen,
   type InjectionRecord
 } from '../core/injection/undo'
+import { isPreKeyRefusal } from '../core/injection/delete'
+import { UndoLock } from '../core/injection/undo-lock'
 import { postprocess, type PostprocessOptions } from '../core/postprocess'
 import type { FocusTarget } from '../core/focus/editability'
 import { SessionController } from '../core/session/session-controller'
@@ -137,7 +141,7 @@ import { DiagnosticsLog } from './diagnostics/log'
 import { resolveDiagnosticsTarget } from './diagnostics/target'
 import { HistoryStore } from './history-store'
 import { LlmManager } from './llm/manager'
-import { deleteCharacters, activateRunningApp, pasteText } from './injection'
+import { deleteIfTargetMatches, activateRunningApp, pasteText } from './injection'
 import {
   attachResultPanelEntry,
   copyResultPanelText,
@@ -300,6 +304,8 @@ let lastDelivery: { target: DeliveryTarget; focus: FocusTarget | null; atMs: num
  * window and consumed by the next delivery; `undefined` means a normal run.
  */
 let reSayCandidate: InjectionRecord | undefined
+/** Only one guarded deletion may be in flight at a time. */
+const undoLock = new UndoLock()
 
 class UnavailableAsrProvider implements AsrProvider {
   readonly id = 'unavailable'
@@ -421,9 +427,10 @@ function currentUndoState(): UndoStateView {
   const windowMs = undoWindowMs(undoWindowMinutes)
   const available =
     record.method === 'paste' &&
-    // Without an identity the guard always refuses; do not advertise an action
-    // that cannot run.
+    // Without an identity or a known grapheme count the guard always refuses;
+    // do not advertise an action that cannot run.
     record.focusIdentity !== '' &&
+    record.length !== null &&
     undoWindowOpen(record, Date.now(), windowMs)
   return {
     available,
@@ -454,11 +461,54 @@ function recordAsTarget(record: InjectionRecord): FocusTarget {
   }
 }
 
+/** The argv the atomic delete script receives for a recorded insertion. */
+function deleteExpectation(record: InjectionRecord) {
+  return {
+    appName: record.appName,
+    bundleId: record.bundleId,
+    role: record.focusRole,
+    identity: record.focusIdentity
+  }
+}
+
+/**
+ * Deliver only the new text and keep the old text copyable. Shared by every
+ * re-say path that must not delete (guard refusal or a concurrent undo).
+ */
+async function deliverReSayFallback(
+  text: string,
+  candidate: InjectionRecord,
+  reasonText: string
+): Promise<DeliveryTarget> {
+  const outcome = await deliverTranscriptDetailed(text, deliveryPorts())
+  if (outcome.target === 'panel' && outcome.focus !== null) {
+    setResultPanelTarget(outcome.focus)
+  }
+  lastDelivery = { target: outcome.target, focus: outcome.focus, atMs: Date.now() }
+  if (outcome.target === 'panel') {
+    showResultPanel(`${text}\n\n${candidate.text}`, effectiveTheme(), {
+      title: '旧文本未删除',
+      notice: `${reasonText} 新文本无法插入，两段文本都在这里。`
+    })
+  } else {
+    showResultPanel(candidate.text, effectiveTheme(), {
+      title: '旧文本未删除',
+      notice: `${reasonText} 新文本已插入；上一条文本在这里，可复制。`,
+      ...(candidate.entryId === undefined ? {} : { entryId: candidate.entryId }),
+      target: recordAsTarget(candidate)
+    })
+  }
+  return outcome.target
+}
+
 /**
  * B1: the guarded 撤销上一次插入. Every entry point funnels through here.
- * A refusal never sends a delete key; it preserves the text in the panel.
+ *
+ * The slot is consumed before the first key press, and only one deletion may be
+ * in flight. A refusal never sends a delete key; it preserves the text.
  */
 async function performUndoLastInjection(): Promise<UndoResult> {
+  if (undoLock.locked) return { ok: false, message: '撤销正在进行，请稍候。' }
   // Undo during a re-say recording must not leave the snapshot pointing at
   // text this action may be deleting.
   reSayCandidate = undefined
@@ -481,9 +531,10 @@ async function performUndoLastInjection(): Promise<UndoResult> {
     !decision.ok &&
     record !== undefined &&
     record.bundleId !== null &&
-    // No identity means the guard can never pass; do not bring an app forward
-    // for a deletion that will be refused anyway.
+    // No identity or no count means the guard can never pass; do not bring an
+    // app forward for a deletion that will be refused anyway.
     record.focusIdentity !== '' &&
+    record.length !== null &&
     (decision.reason === 'app-changed' || decision.reason === 'focus-changed')
   ) {
     if (await activateRunningApp(record.bundleId)) {
@@ -505,20 +556,58 @@ async function performUndoLastInjection(): Promise<UndoResult> {
     return { ok: false, message: decision.message }
   }
 
-  try {
-    await deleteCharacters(decision.count)
-  } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : String(error) }
+  // The check and the acquisition are synchronous: a second caller that passed
+  // the guard during the probe delay is refused here, before any key. The slot
+  // identity is re-checked as well: a caller whose snapshot was already
+  // consumed or replaced must never delete against stale text.
+  if (!undoLock.tryAcquire()) {
+    return { ok: false, message: '撤销正在进行，请稍候。' }
   }
-  lastInjection = undefined
-  notifyUndoChanged()
-  return { ok: true }
+  try {
+    if (lastInjection !== record) {
+      return { ok: false, message: '撤销正在进行或已完成，未发送删除键。' }
+    }
+    const consumed = record
+    if (consumed === undefined) {
+      return { ok: false, message: '没有可撤销的插入。' }
+    }
+    // Consume before the first key. A failed or partial deletion is never
+    // retried against the same record.
+    lastInjection = undefined
+    notifyUndoChanged()
+
+    const outcome = await deleteIfTargetMatches(
+      deleteExpectation(consumed),
+      decision.count
+    )
+    if (!outcome.ok) {
+      const partial = !isPreKeyRefusal(outcome.reason)
+      showResultPanel(consumed.text, effectiveTheme(), {
+        title: partial ? '撤销可能未完整完成' : '撤销未完成',
+        notice: partial
+          ? `删除可能未完整完成：${outcome.message}。请手动检查目标应用；原文备份在这里。`
+          : `${outcome.message}。未做自动删除；原文在这里，可复制。`,
+        ...(consumed.entryId === undefined ? {} : { entryId: consumed.entryId }),
+        target: recordAsTarget(consumed)
+      })
+      return {
+        ok: false,
+        message: partial
+          ? `撤销可能未完整完成：${outcome.message}`
+          : `撤销未完成：${outcome.message}`
+      }
+    }
+    return { ok: true }
+  } finally {
+    undoLock.release()
+  }
 }
 
 /**
- * B2: a re-say delivery. The guard is the same function B1 uses. On a pass the
- * old text is deleted first and the new text pasted once; on a refusal only the
- * new text is delivered and the old text is moved to the panel.
+ * B2: a re-say delivery. The guard and the identity/delete machinery are the
+ * same ones B1 uses. On a pass the old text is deleted first and the new text
+ * pasted once; on a refusal or a concurrent undo only the new text is
+ * delivered and the old text is moved to the panel.
  */
 async function replaceTranscript(
   text: string,
@@ -533,46 +622,79 @@ async function replaceTranscript(
     target
   })
 
-  if (decision.ok) {
-    await deleteCharacters(decision.count)
-    // Clear after the deletion: if the key press itself failed, the record is
-    // still accurate and can be retried. If the paste then fails, no stale
-    // record points at text that no longer exists.
-    lastInjection = undefined
-    notifyUndoChanged()
-    await pasteText(text)
-    lastDelivery = { target: 'paste', focus: target, atMs: Date.now() }
-    return 'paste'
+  if (!decision.ok) {
+    return deliverReSayFallback(
+      text,
+      candidate,
+      `${undoRefusalTitle(decision.reason)}。`
+    )
   }
 
-  const outcome = await deliverTranscriptDetailed(text, deliveryPorts())
-  if (outcome.target === 'panel' && outcome.focus !== null) {
-    setResultPanelTarget(outcome.focus)
+  if (!undoLock.tryAcquire()) {
+    return deliverReSayFallback(
+      text,
+      candidate,
+      '另一次撤销正在进行，本次未删除旧文本。'
+    )
   }
-  lastDelivery = { target: outcome.target, focus: outcome.focus, atMs: Date.now() }
-  const title = '旧文本未删除'
-  const reason = undoRefusalTitle(decision.reason)
-  if (outcome.target === 'panel') {
-    showResultPanel(`${text}\n\n${candidate.text}`, effectiveTheme(), {
-      title,
-      notice: `${reason}。新文本无法插入，两段文本都在这里。`
-    })
-  } else {
-    showResultPanel(candidate.text, effectiveTheme(), {
-      title,
-      notice: `${reason}。新文本已插入；上一条文本在这里，可复制。`,
-      ...(candidate.entryId === undefined ? {} : { entryId: candidate.entryId }),
-      target: recordAsTarget(candidate)
-    })
+
+  try {
+    // A stale snapshot (already consumed or replaced) must not delete.
+    if (lastInjection !== candidate) {
+      return deliverReSayFallback(
+        text,
+        candidate,
+        '另一次撤销正在进行或已完成，本次未删除旧文本。'
+      )
+    }
+    // Consume before any key: a failed deletion is never retried.
+    lastInjection = undefined
+    notifyUndoChanged()
+
+    const deletion = await deleteIfTargetMatches(
+      deleteExpectation(candidate),
+      decision.count
+    )
+    if (!deletion.ok) {
+      const partial = !isPreKeyRefusal(deletion.reason)
+      showResultPanel(`${text}\n\n${candidate.text}`, effectiveTheme(), {
+        title: partial ? '旧文本删除未完成' : '旧文本未删除',
+        notice: partial
+          ? `删除可能未完整完成：${deletion.message}。未插入新文本；这里是新旧两段文本。`
+          : `${deletion.message}。未插入新文本；这里是新旧两段文本。`
+      })
+      throw new Error(
+        partial
+          ? `旧文本删除可能未完整完成：${deletion.message}`
+          : `旧文本未删除：${deletion.message}`
+      )
+    }
+
+    try {
+      await pasteText(text)
+    } catch (error) {
+      // The old text is already gone; show it as an explicit backup instead of
+      // leaving only the raw paste error.
+      showResultPanel(candidate.text, effectiveTheme(), {
+        title: '旧文本已删除，粘贴失败',
+        notice: '旧文本已在目标中删除，这里是备份；新文本留在剪贴板。',
+        ...(candidate.entryId === undefined ? {} : { entryId: candidate.entryId }),
+        target: recordAsTarget(candidate)
+      })
+      throw error
+    }
+    lastDelivery = { target: 'paste', focus: target, atMs: Date.now() }
+    return 'paste'
+  } finally {
+    undoLock.release()
   }
-  return outcome.target
 }
 
 /**
  * B3: the result panel's 重新插入. History is rewritten in place first (best
  * effort), then the panel is hidden so macOS can return focus, and the text is
- * inserted only when the same app reports an editable element. Otherwise the
- * action degrades to copy, which is always safe.
+ * inserted only when the target passes the same identity check the undo guard
+ * uses. Otherwise the action degrades to copy, which is always safe.
  */
 async function reinsertPanelText(input: unknown): Promise<ReinsertResult> {
   if (typeof input !== 'string' || input.trim() === '' || input.length > 20_000) {
@@ -595,12 +717,19 @@ async function reinsertPanelText(input: unknown): Promise<ReinsertResult> {
   await delay(200)
   const target = await probeFocusTarget()
   const original = context?.target
-  const sameApp =
-    original !== undefined &&
-    original.appName !== null &&
-    target.appName === original.appName
+  // One identity implementation for undo and reinsertion: app, bundle, role,
+  // and a non-empty element identity. A different field in the same app is a
+  // mismatch, not a paste target.
+  const identity =
+    original === undefined
+      ? {
+          ok: false as const,
+          reason: 'unverifiable-target' as const,
+          message: '无法确认原来的输入位置，未做自动删除。'
+        }
+      : compareTargetIdentity(original, target)
 
-  if (sameApp && target.kind === 'editable') {
+  if (identity.ok && target.kind === 'editable') {
     try {
       await pasteText(text)
     } catch (error) {
@@ -624,13 +753,14 @@ async function reinsertPanelText(input: unknown): Promise<ReinsertResult> {
     return { inserted: true }
   }
 
+  const reason = identity.ok ? '焦点不再可编辑' : identityCopyMessage(identity.reason)
   clipboard.writeText(text)
   showResultPanel(text, effectiveTheme(), {
     title: '已复制',
-    notice: '焦点已失效，文本已复制到剪贴板。'
+    notice: `${reason}，文本已复制到剪贴板。`
   })
   scheduleResultPanelHide(1_500)
-  return { inserted: false, message: '焦点已失效，文本已复制到剪贴板。' }
+  return { inserted: false, message: `${reason}，文本已复制到剪贴板。` }
 }
 
 /**
@@ -909,8 +1039,13 @@ function makeSession(provider: AsrProvider, fake: boolean): SessionController {
           // identity: the history row still exists and an edit must rewrite it.
           if (delivered?.target === 'panel') attachResultPanelEntry(entry.id, event.text)
           if (base !== null) {
-            lastInjection = { ...base, entryId: entry.id }
-            notifyUndoChanged()
+            // Mutate the existing record instead of replacing it: an undo that
+            // captured the slot before this append resolved must still see the
+            // same object and pass the stale-snapshot check. Only notify while
+            // this is still the current slot; a consumed or replaced slot must
+            // never be resurrected by a late history write.
+            base.entryId = entry.id
+            if (lastInjection === base) notifyUndoChanged()
           }
           mainWindow?.webContents.send('history:changed')
         })

@@ -25,6 +25,9 @@ const SKIP = process.env.JUSTSPEAK_E2E === '0' || process.env.JUSTSPEAK_E2E === 
 interface Harness {
   dir: string
   probeFile: string
+  probeDelayFile: string
+  deleteModeFile: string
+  pasteFailFile: string
   targetFile: string
   logFile: string
 }
@@ -47,9 +50,14 @@ interface JustSpeakPage {
 function makeHarness(): Harness {
   const dir = mkdtempSync(path.join(tmpdir(), 'justspeak-undo-'))
   const probeFile = path.join(dir, 'probe-mode')
+  const probeDelayFile = path.join(dir, 'probe-delay')
+  const deleteModeFile = path.join(dir, 'delete-mode')
+  const pasteFailFile = path.join(dir, 'paste-fail')
   const targetFile = path.join(dir, 'target-buffer')
   const logFile = path.join(dir, 'calls.log')
   writeFileSync(probeFile, 'editable')
+  writeFileSync(deleteModeFile, '')
+  writeFileSync(pasteFailFile, '')
   writeFileSync(targetFile, '')
   writeFileSync(logFile, '')
   const shim = path.join(dir, 'osascript')
@@ -58,33 +66,80 @@ function makeHarness(): Harness {
     `#!${process.execPath}
 const fs = require('node:fs')
 const { execFileSync } = require('node:child_process')
-const script = process.argv.slice(2).join('\\n')
+const baseArgs = process.argv.slice(2)
+const script = baseArgs[1] || ''
 const probeFile = process.env.JUSTSPEAK_E2E_PROBE_FILE
+const probeDelayFile = process.env.JUSTSPEAK_E2E_PROBE_DELAY_FILE
+const deleteModeFile = process.env.JUSTSPEAK_E2E_DELETE_MODE_FILE
+const pasteFailFile = process.env.JUSTSPEAK_E2E_PASTE_FAIL_FILE
 const targetFile = process.env.JUSTSPEAK_E2E_TARGET_FILE
 const logFile = process.env.JUSTSPEAK_E2E_LOG_FILE
 const log = (line) => { try { fs.appendFileSync(logFile, line + '\\n') } catch {} }
-if (script.includes('AXFocusedUIElement')) {
-  const mode = fs.existsSync(probeFile) ? fs.readFileSync(probeFile, 'utf8').trim() : 'editable'
-  if (mode === 'unknown') process.stdout.write('UNKNOWN\\n')
-  else if (mode === 'noneditable') process.stdout.write('Safari\\ncom.apple.Safari\\nAXGroup\\n1\\n\\n')
-  else if (mode === 'other') process.stdout.write('Notes\\ncom.apple.Notes\\nAXTextArea\\n1\\nmain-editor\\n')
-  else process.stdout.write('Safari\\ncom.apple.Safari\\nAXTextArea\\n1\\nmain-editor\\n')
-  process.exit(0)
+const readMode = (file, fallback) => {
+  try {
+    const value = fs.readFileSync(file, 'utf8').trim()
+    return value || fallback
+  } catch { return fallback }
 }
-if (script.includes('keystroke "v"')) {
-  let text = ''
-  try { text = execFileSync('pbpaste', { encoding: 'utf8' }) } catch { log('pbpaste-failed') }
-  fs.appendFileSync(targetFile, text)
-  log('paste:' + Array.from(text).length)
-  process.exit(0)
-}
-const match = script.match(/repeat\\s+(\\d+)\\s+times/)
-if (match) {
-  const count = Number(match[1])
+const probeMode = readMode(probeFile, 'editable')
+if (script.includes('key code 51')) {
+  const expected = baseArgs.slice(2)
+  const count = Number(expected[4])
+  const deletionMode = readMode(deleteModeFile, probeMode)
+  log('delete-args:' + expected.join('|'))
+  if (deletionMode === 'partial') {
+    const partialCount = Math.max(1, Math.floor(count / 2))
+    const current = fs.existsSync(targetFile) ? fs.readFileSync(targetFile, 'utf8') : ''
+    const units = Array.from(current)
+    fs.writeFileSync(
+      targetFile,
+      units.slice(0, Math.max(0, units.length - partialCount)).join('')
+    )
+    log('delete-partial:' + partialCount)
+    process.stdout.write('MISMATCH|app-changed-mid-delete\\n')
+    process.exit(0)
+  }
+  const actual = deletionMode === 'other'
+    ? { app: 'Notes', bundle: 'com.apple.Notes', role: 'AXTextArea', identity: 'main-editor', editable: true }
+    : deletionMode === 'editable'
+      ? { app: 'Safari', bundle: 'com.apple.Safari', role: 'AXTextArea', identity: 'main-editor', editable: true }
+      : { app: 'Safari', bundle: 'com.apple.Safari', role: 'AXTextArea', identity: 'main-editor', editable: false }
+  const mismatch = (reason) => {
+    process.stdout.write('MISMATCH|' + reason + '\\n')
+    process.exit(0)
+  }
+  if (expected[0] !== actual.app) mismatch('app-changed')
+  if (expected[1] && expected[1] !== actual.bundle) mismatch('bundle-changed')
+  if (expected[2] !== actual.role) mismatch('role-changed')
+  if (!actual.editable) mismatch('not-editable')
+  if (!expected[3] || actual.identity !== expected[3]) mismatch('identity-changed')
+  if (!Number.isFinite(count) || count <= 0) {
+    process.stdout.write('ERROR|count\\n')
+    process.exit(0)
+  }
   const current = fs.existsSync(targetFile) ? fs.readFileSync(targetFile, 'utf8') : ''
   const units = Array.from(current)
   fs.writeFileSync(targetFile, units.slice(0, Math.max(0, units.length - count)).join(''))
   log('delete:' + count)
+  process.stdout.write('OK\\n')
+  process.exit(0)
+}
+if (script.includes('AXFocusedUIElement')) {
+  if (fs.existsSync(probeDelayFile)) {
+    try { execFileSync('sleep', ['0.15']) } catch {}
+  }
+  if (probeMode === 'unknown') process.stdout.write('UNKNOWN\\n')
+  else if (probeMode === 'noneditable') process.stdout.write('Safari\\ncom.apple.Safari\\nAXTextArea\\n0\\nmain-editor\\n')
+  else if (probeMode === 'other') process.stdout.write('Notes\\ncom.apple.Notes\\nAXTextArea\\n1\\nmain-editor\\n')
+  else process.stdout.write('Safari\\ncom.apple.Safari\\nAXTextArea\\n1\\nmain-editor\\n')
+  process.exit(0)
+}
+if (script.includes('keystroke "v"')) {
+  if (readMode(pasteFailFile, '') === 'fail') process.exit(1)
+  let text = ''
+  try { text = execFileSync('pbpaste', { encoding: 'utf8' }) } catch { log('pbpaste-failed') }
+  fs.appendFileSync(targetFile, text)
+  log('paste:' + Array.from(text).length)
   process.exit(0)
 }
 process.exit(0)
@@ -92,7 +147,15 @@ process.exit(0)
     { mode: 0o755 }
   )
   chmodSync(shim, 0o755)
-  return { dir, probeFile, targetFile, logFile }
+  return {
+    dir,
+    probeFile,
+    probeDelayFile,
+    deleteModeFile,
+    pasteFailFile,
+    targetFile,
+    logFile
+  }
 }
 
 async function launch(
@@ -111,6 +174,9 @@ async function launch(
       ...process.env,
       JUSTSPEAK_ASR: 'fake',
       JUSTSPEAK_E2E_PROBE_FILE: harness.probeFile,
+      JUSTSPEAK_E2E_PROBE_DELAY_FILE: harness.probeDelayFile,
+      JUSTSPEAK_E2E_DELETE_MODE_FILE: harness.deleteModeFile,
+      JUSTSPEAK_E2E_PASTE_FAIL_FILE: harness.pasteFailFile,
       JUSTSPEAK_E2E_TARGET_FILE: harness.targetFile,
       JUSTSPEAK_E2E_LOG_FILE: harness.logFile,
       PATH: `${harness.dir}:${process.env.PATH ?? ''}`
@@ -294,6 +360,231 @@ test.describe('JustSpeak correction path', () => {
       // The fake target lost exactly the inserted text, character by character.
       expect(targetText(harness)).toBe('')
       expect(calls(harness)).toContain(`delete:${Array.from(FAKE_TRANSCRIPT).length}`)
+      expect(calls(harness)).toContain(
+        `delete-args:Safari|com.apple.Safari|AXTextArea|main-editor|${Array.from(FAKE_TRANSCRIPT).length}`
+      )
+      await expect
+        .poll(() => page.evaluate(() =>
+          (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
+        ))
+        .toMatchObject({ available: false })
+    } finally {
+      if (app) {
+        await restoreClipboard(app).catch(() => {})
+        await app.close().catch(() => {})
+      }
+      rmSync(userData, { recursive: true, force: true })
+      rmSync(harness.dir, { recursive: true, force: true })
+    }
+  })
+
+  test('B1: the atomic script refuses when the target changes after the probe', async () => {
+    const userData = mkdtempSync(path.join(tmpdir(), 'justspeak-undo-userdata-'))
+    const harness = makeHarness()
+    let app: ElectronApplication | undefined
+    try {
+      const launched = await launch(userData, harness)
+      app = launched.app
+      const page = launched.page
+      await snapshotClipboard(app)
+      await expect(page.locator('.status')).toHaveText('就绪')
+      await hideWindow(app)
+
+      setProbe(harness, 'editable')
+      await dictate(app, page)
+      await expect
+        .poll(() => page.evaluate(() =>
+          (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
+        ))
+        .toMatchObject({ available: true })
+
+      // The app-level probe still matches; the atomic script sees a different
+      // target and must abort without pressing a key.
+      writeFileSync(harness.deleteModeFile, 'other')
+      const panelPromise = app.waitForEvent('window', { timeout: 15_000 })
+      const result = await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakPage).justspeak.undoLastInjection()
+      )
+      expect(result.ok).toBe(false)
+
+      const panel = await panelPromise
+      await panel.waitForLoadState('domcontentloaded')
+      await expect(panel.locator('.result-panel-title')).toHaveText('撤销未完成')
+      await expect(panel.locator('.result-panel-text')).toHaveValue(FAKE_TRANSCRIPT)
+
+      const length = Array.from(FAKE_TRANSCRIPT).length
+      expect(calls(harness)).toContain(
+        `delete-args:Safari|com.apple.Safari|AXTextArea|main-editor|${length}`
+      )
+      expect(calls(harness).some((line) => line.startsWith('delete:'))).toBe(false)
+      expect(targetText(harness)).toBe(FAKE_TRANSCRIPT)
+      // The slot was consumed by the attempt; it is not retried.
+      await expect
+        .poll(() => page.evaluate(() =>
+          (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
+        ))
+        .toMatchObject({ available: false })
+    } finally {
+      if (app) {
+        await restoreClipboard(app).catch(() => {})
+        await app.close().catch(() => {})
+      }
+      rmSync(userData, { recursive: true, force: true })
+      rmSync(harness.dir, { recursive: true, force: true })
+    }
+  })
+
+  test('B1: two concurrent undo requests delete exactly once', async () => {
+    const userData = mkdtempSync(path.join(tmpdir(), 'justspeak-undo-userdata-'))
+    const harness = makeHarness()
+    let app: ElectronApplication | undefined
+    try {
+      const launched = await launch(userData, harness)
+      app = launched.app
+      const page = launched.page
+      await snapshotClipboard(app)
+      await expect(page.locator('.status')).toHaveText('就绪')
+      await hideWindow(app)
+
+      setProbe(harness, 'editable')
+      await dictate(app, page)
+      await expect
+        .poll(() => page.evaluate(() =>
+          (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
+        ))
+        .toMatchObject({ available: true })
+
+      // Hold both probes open so both callers read the slot before either
+      // consumes it; the lock must still allow only one deletion.
+      writeFileSync(harness.probeDelayFile, 'delay')
+      const results = await page.evaluate(async () => {
+        const api = (globalThis as unknown as JustSpeakPage).justspeak
+        return Promise.all([api.undoLastInjection(), api.undoLastInjection()])
+      })
+      expect(results.filter((result) => result.ok)).toHaveLength(1)
+      expect(
+        results.some((result) => (result.message ?? '').includes('撤销正在进行'))
+      ).toBe(true)
+      expect(calls(harness).filter((line) => line.startsWith('delete:'))).toHaveLength(1)
+      expect(targetText(harness)).toBe('')
+      await expect
+        .poll(() => page.evaluate(() =>
+          (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
+        ))
+        .toMatchObject({ available: false })
+    } finally {
+      if (app) {
+        await restoreClipboard(app).catch(() => {})
+        await app.close().catch(() => {})
+      }
+      rmSync(userData, { recursive: true, force: true })
+      rmSync(harness.dir, { recursive: true, force: true })
+    }
+  })
+
+  test('B1: a partial deletion consumes the slot and is not retried', async () => {
+    const userData = mkdtempSync(path.join(tmpdir(), 'justspeak-undo-userdata-'))
+    const harness = makeHarness()
+    let app: ElectronApplication | undefined
+    try {
+      const launched = await launch(userData, harness)
+      app = launched.app
+      const page = launched.page
+      await snapshotClipboard(app)
+      await expect(page.locator('.status')).toHaveText('就绪')
+      await hideWindow(app)
+
+      setProbe(harness, 'editable')
+      await dictate(app, page)
+      await expect
+        .poll(() => page.evaluate(() =>
+          (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
+        ))
+        .toMatchObject({ available: true })
+
+      writeFileSync(harness.deleteModeFile, 'partial')
+      const panelPromise = app.waitForEvent('window', { timeout: 15_000 })
+      const first = await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakPage).justspeak.undoLastInjection()
+      )
+      expect(first.ok).toBe(false)
+
+      const panel = await panelPromise
+      await panel.waitForLoadState('domcontentloaded')
+      await expect(panel.locator('.result-panel-title')).toHaveText('撤销可能未完整完成')
+      await expect(panel.locator('.result-panel-text')).toHaveValue(FAKE_TRANSCRIPT)
+
+      const remaining = targetText(harness)
+      expect(remaining.length).toBeGreaterThan(0)
+      expect(remaining.length).toBeLessThan(FAKE_TRANSCRIPT.length)
+      const partialCalls = calls(harness).filter((line) =>
+        line.startsWith('delete-partial:')
+      )
+      expect(partialCalls).toHaveLength(1)
+
+      // The slot was consumed by the failed attempt; a second request cannot
+      // delete another N characters.
+      const second = await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakPage).justspeak.undoLastInjection()
+      )
+      expect(second.ok).toBe(false)
+      expect(
+        calls(harness).filter((line) => line.startsWith('delete-partial:'))
+      ).toHaveLength(1)
+      await expect
+        .poll(() => page.evaluate(() =>
+          (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
+        ))
+        .toMatchObject({ available: false })
+    } finally {
+      if (app) {
+        await restoreClipboard(app).catch(() => {})
+        await app.close().catch(() => {})
+      }
+      rmSync(userData, { recursive: true, force: true })
+      rmSync(harness.dir, { recursive: true, force: true })
+    }
+  })
+
+  test('B2: a failed paste after deletion shows the old text as a backup', async () => {
+    const userData = mkdtempSync(path.join(tmpdir(), 'justspeak-undo-userdata-'))
+    const harness = makeHarness()
+    let app: ElectronApplication | undefined
+    try {
+      const launched = await launch(userData, harness)
+      app = launched.app
+      const page = launched.page
+      await snapshotClipboard(app)
+      await expect(page.locator('.status')).toHaveText('就绪')
+      await hideWindow(app)
+
+      setProbe(harness, 'editable')
+      await dictate(app, page)
+      await expect
+        .poll(() => page.evaluate(() =>
+          (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
+        ))
+        .toMatchObject({ available: true })
+      expect(targetText(harness)).toBe(FAKE_TRANSCRIPT)
+
+      // Start the re-say run, then make the paste keystroke fail.
+      await startRecording(app, page)
+      writeFileSync(harness.pasteFailFile, 'fail')
+      const panelPromise = app.waitForEvent('window', { timeout: 15_000 })
+      await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakPage).justspeak.toggleRecording()
+      )
+      await expect(page.locator('.status')).toHaveText('出错了', { timeout: 15_000 })
+
+      const panel = await panelPromise
+      await panel.waitForLoadState('domcontentloaded')
+      await expect(panel.locator('.result-panel-title')).toHaveText(
+        '旧文本已删除，粘贴失败'
+      )
+      await expect(panel.locator('.result-panel-text')).toHaveValue(FAKE_TRANSCRIPT)
+      // The old text was deleted and the new paste never landed.
+      expect(targetText(harness)).toBe('')
+      expect(calls(harness).filter((line) => line.startsWith('delete:'))).toHaveLength(1)
       await expect
         .poll(() => page.evaluate(() =>
           (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()

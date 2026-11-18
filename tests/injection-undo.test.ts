@@ -3,8 +3,11 @@ import type { FocusTarget } from '../src/core/focus/editability'
 import {
   DEFAULT_UNDO_WINDOW_MS,
   buildInjectionRecord,
+  compareTargetIdentity,
   evaluateUndoGuard,
   graphemeLength,
+  graphemeLengthStrict,
+  identityCopyMessage,
   isReSayCandidate,
   isValidUndoWindowMinutes,
   undoRefusalTitle,
@@ -51,6 +54,12 @@ describe('grapheme length', () => {
   it('counts a combining sequence as one cluster and empty text as zero', () => {
     expect(graphemeLength('é')).toBe(1)
     expect(graphemeLength('')).toBe(0)
+  })
+
+  it('returns null rather than guessing when Intl.Segmenter is unavailable', () => {
+    expect(graphemeLengthStrict('你好', null)).toBeNull()
+    // The non-delete helper may still fall back for display purposes.
+    expect(graphemeLength('你好')).toBe(2)
   })
 })
 
@@ -250,6 +259,68 @@ describe('the undo guard', () => {
   it('refuses when the clock moved backwards', () => {
     expect(undoWindowOpen(record({ atMs: 5_000 }), 4_000, DEFAULT_UNDO_WINDOW_MS)).toBe(false)
   })
+
+  it('refuses when the grapheme count is unknown', () => {
+    const decision = evaluateUndoGuard({
+      record: record({ length: null }),
+      nowMs: 2_000,
+      windowMs: DEFAULT_UNDO_WINDOW_MS,
+      appFocused: false,
+      target: TARGET
+    })
+    expect(decision).toMatchObject({ ok: false, reason: 'unverifiable-length' })
+  })
+})
+
+describe('shared target identity', () => {
+  const EXPECTED = {
+    appName: 'Safari',
+    bundleId: 'com.apple.Safari',
+    role: 'AXTextArea',
+    identity: 'main-editor'
+  }
+
+  it('accepts only the same verifiable identity', () => {
+    expect(compareTargetIdentity(EXPECTED, EXPECTED)).toEqual({ ok: true })
+  })
+
+  it('refuses a different app, bundle, role, or identity', () => {
+    expect(compareTargetIdentity(EXPECTED, { ...EXPECTED, appName: 'Notes' })).toMatchObject({
+      ok: false,
+      reason: 'app-changed'
+    })
+    expect(
+      compareTargetIdentity(EXPECTED, { ...EXPECTED, bundleId: 'com.example.safari' })
+    ).toMatchObject({ ok: false, reason: 'app-changed' })
+    expect(compareTargetIdentity(EXPECTED, { ...EXPECTED, role: 'AXTextField' })).toMatchObject({
+      ok: false,
+      reason: 'focus-changed'
+    })
+    expect(
+      compareTargetIdentity(EXPECTED, { ...EXPECTED, identity: 'other-editor' })
+    ).toMatchObject({ ok: false, reason: 'focus-changed' })
+  })
+
+  it('refuses an empty or unknown identity', () => {
+    expect(compareTargetIdentity({ ...EXPECTED, identity: '' }, EXPECTED)).toMatchObject({
+      ok: false,
+      reason: 'unverifiable-target'
+    })
+    expect(compareTargetIdentity(EXPECTED, { ...EXPECTED, identity: '' })).toMatchObject({
+      ok: false,
+      reason: 'unverifiable-target'
+    })
+    expect(compareTargetIdentity(EXPECTED, { ...EXPECTED, appName: null })).toMatchObject({
+      ok: false,
+      reason: 'unverifiable-target'
+    })
+  })
+
+  it('provides copy wording without delete language', () => {
+    expect(identityCopyMessage('app-changed')).not.toContain('删除')
+    expect(identityCopyMessage('focus-changed')).not.toContain('删除')
+    expect(identityCopyMessage('unverifiable-target')).not.toContain('删除')
+  })
 })
 
 describe('re-say candidacy', () => {
@@ -264,6 +335,10 @@ describe('re-say candidacy', () => {
     expect(
       isReSayCandidate(record({ focusIdentity: '' }), 2_000, DEFAULT_UNDO_WINDOW_MS)
     ).toBe(false)
+    // An unknown grapheme count can never pass the guard either.
+    expect(isReSayCandidate(record({ length: null }), 2_000, DEFAULT_UNDO_WINDOW_MS)).toBe(
+      false
+    )
   })
 })
 
@@ -290,5 +365,6 @@ describe('refusal titles', () => {
     expect(undoRefusalTitle('focus-changed')).toContain('焦点')
     expect(undoRefusalTitle('nothing-inserted')).toContain('插入')
     expect(undoRefusalTitle('unverifiable-target')).toContain('输入位置')
+    expect(undoRefusalTitle('unverifiable-length')).toContain('删除长度')
   })
 })

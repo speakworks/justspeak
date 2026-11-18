@@ -2,6 +2,12 @@ import { clipboard, ClipboardItem } from 'electron'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
+  buildDeleteArgs,
+  parseDeleteResult,
+  type DeleteExpectation,
+  type DeleteOutcome
+} from '../core/injection/delete'
+import {
   pasteTranscript,
   type ClipboardSnapshot,
   type PastePorts
@@ -102,26 +108,38 @@ export async function activateRunningApp(bundleId: string): Promise<boolean> {
   }
 }
 
+/** The exec port is injectable so the adapter can be exercised without keys. */
+export type DeleteExec = (
+  command: string,
+  args: string[],
+  options: { timeout: number }
+) => Promise<{ stdout: string | Buffer }>
+
 /**
- * Delete exactly `count` grapheme clusters with Backspace.
+ * Delete exactly the recorded grapheme count, but only if the target still
+ * matches inside the same Accessibility script that presses the keys.
  *
- * This is the only delete path in the app, and it is called only after the
- * undo guard positively confirms the same editable target. A non-positive or
- * non-finite count is a no-op rather than an unbounded key storm.
+ * A non-positive count is a no-op. Any exec failure is reported as an outcome,
+ * never as success: the caller consumes the slot and tells the user the
+ * deletion may be incomplete. The script itself re-checks the frontmost app
+ * before every key and aborts on a mismatch.
  */
-export async function deleteCharacters(count: number): Promise<void> {
+export async function deleteIfTargetMatches(
+  expected: DeleteExpectation,
+  count: number,
+  exec: DeleteExec = execFileAsync
+): Promise<DeleteOutcome> {
   const presses = Math.floor(count)
-  if (!Number.isFinite(presses) || presses <= 0) return
-  const script = `
-tell application "System Events"
-  repeat ${presses} times
-    key code 51
-  end repeat
-end tell
-`
+  if (!Number.isFinite(presses) || presses <= 0) {
+    return { ok: false, reason: 'invalid-count', message: '删除字符数无效，未做自动删除' }
+  }
   try {
-    await execFileAsync('osascript', ['-e', script], { timeout: 20_000 })
-  } catch (cause) {
-    throw new Error(DELETE_PERMISSION_MESSAGE, { cause })
+    const { stdout } = await exec('osascript', buildDeleteArgs(expected, presses), {
+      timeout: 20_000
+    })
+    return parseDeleteResult(String(stdout))
+  } catch (error) {
+    console.warn('[undo] delete script failed', error)
+    return { ok: false, reason: 'exec-failed', message: DELETE_PERMISSION_MESSAGE }
   }
 }

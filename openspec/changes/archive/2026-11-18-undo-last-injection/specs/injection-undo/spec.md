@@ -10,8 +10,9 @@ the delivered text, its grapheme length, the insertion timestamp, the method,
 and the history entry id once the entry exists. A newer delivery SHALL replace
 the previous record; a successful undo SHALL clear it. Nothing SHALL be
 persisted, so the slot does not survive a restart. A paste record whose element
-identity is empty SHALL remain available to history but SHALL NOT be offered as
-undoable or used as a re-say candidate, because the guard can never verify it.
+identity is empty, or whose grapheme count could not be computed, SHALL remain
+available to history but SHALL NOT be offered as undoable or used as a re-say
+candidate, because the guard can never verify or size the deletion.
 
 The character length SHALL count grapheme clusters, not UTF-16 code units, so
 one Backspace removes one visible character.
@@ -38,16 +39,31 @@ one Backspace removes one visible character.
 
 The app SHALL send a delete keystroke only when all of the following hold:
 the record exists and its method was a paste; the current time is within the
-configured undo window; JustSpeak's own window is not focused; the
-Accessibility probe reports the same target app as the record; when both the
-record and the probe carry a bundle identifier, they are equal; the probe
-reports an editable element whose role and identity match the record; and both
-the record and the probe carry a non-empty element identity. The number of
-Backspace keystrokes SHALL equal the recorded grapheme length, and no other
-deletion method SHALL be used. If any guard fails, if the element identity is
-empty on either side, or if the probe cannot answer, the app SHALL send no
-delete keystroke at all. There SHALL be no fallback to matching on app and role
-alone.
+configured undo window; the recorded grapheme length is known; JustSpeak's own
+window is not focused; the Accessibility probe reports the same target app as
+the record; when both the record and the probe carry a bundle identifier, they
+are equal; the probe reports an editable element whose role and identity match
+the record; and both the record and the probe carry a non-empty element
+identity. The number of Backspace keystrokes SHALL equal the recorded grapheme
+length, and no other deletion method SHALL be used. If any guard fails, if the
+element identity is empty on either side, if the grapheme count is unknown, or
+if the probe cannot answer, the app SHALL send no delete keystroke at all. There
+SHALL be no fallback to matching on app and role alone, and no fallback to
+counting code points when grapheme segmentation is unavailable.
+
+The final identity check and the keystrokes SHALL live in one Accessibility
+script: the script SHALL re-read the frontmost app, bundle, role, identity and
+editability, SHALL compare them against the expected values passed as separate
+script arguments (never interpolated into the script text), and SHALL press a
+key only when every value matches. It SHALL re-check the frontmost app before
+each key and abort if it changes.
+
+Only one guarded deletion SHALL be in flight. The slot SHALL be consumed before
+the first key is pressed; a second concurrent request SHALL be refused without
+sending a key, and a request whose recorded slot was already consumed or
+replaced SHALL also be refused. A deletion that fails, times out, or partially
+completes SHALL consume the slot too and SHALL NOT be retried against the same
+record; the user SHALL be told the deletion may be incomplete.
 
 Because invoking undo from JustSpeak's own menu, panel, or history makes
 JustSpeak frontmost, the action SHALL first bring a still-running recorded app
@@ -99,6 +115,34 @@ still be made on a fresh probe after the app is frontmost.
 - **WHEN** both the record and the probe carry a bundle identifier and they
   differ, even though the app names match
 - **THEN** no delete keystroke is sent
+
+#### Scenario: The target changes between the probe and the script
+
+- **WHEN** the app-level probe passed but the frontmost app, bundle, role or
+  identity has changed by the time the atomic script runs
+- **THEN** the script presses no key
+- **AND** the slot is consumed
+- **AND** the recorded text is placed in the result panel with 撤销未完成
+
+#### Scenario: Two undo requests overlap
+
+- **WHEN** two entry points invoke undo during the same probe delay
+- **THEN** exactly one sends the recorded count of Backspace keystrokes
+- **AND** the other is refused with 撤销正在进行 and sends no key
+
+#### Scenario: Deletion fails or is only partly completed
+
+- **WHEN** the atomic script errors, times out, or aborts after some keys
+- **THEN** the slot is consumed and cannot be retried
+- **AND** the user is told the deletion may be incomplete
+- **AND** the recorded text is preserved in the result panel
+
+#### Scenario: The grapheme count is unavailable
+
+- **WHEN** the runtime cannot compute grapheme clusters for the recorded text
+- **THEN** no delete keystroke is sent
+- **AND** the refusal is labelled 无法计算删除长度
+- **AND** the recorded text is placed in the result panel for copying
 
 #### Scenario: The target can no longer be probed
 
@@ -161,33 +205,47 @@ the target app.
 
 - **WHEN** deletion succeeded and the subsequent paste keystroke fails
 - **THEN** the slot is already cleared, so undo cannot target deleted text
+- **AND** the old text is shown in the result panel with the notice
+  「旧文本已删除，这里是备份」
 - **AND** the existing paste-permission error is reported and the new text is
   left on the clipboard
+
+#### Scenario: The old-text deletion fails during re-say
+
+- **WHEN** the atomic script errors, times out, aborts, or partially deletes
+- **THEN** the slot is consumed and cannot be retried
+- **AND** the new text is not pasted into the target
+- **AND** the panel shows both the new and old text with a notice that the
+  deletion may be incomplete
 
 ### Requirement: The result panel SHALL support editing and reinsertion
 
 The result panel's text SHALL be a controlled editable field. It SHALL offer
 重新插入, which sends the edited text to main. Main SHALL validate the text,
 rewrite the matching history row in place when the panel carries a history
-entry id, and then, after hiding the panel, insert the text only when the probe
-reports the same app as when the panel was shown and an editable element. When
-that check fails, main SHALL copy the edited text to the clipboard instead. The
-edited text SHALL replace the history row's text; the app SHALL NOT keep a
-separate copy of the pre-edit text.
+entry id, and then, after hiding the panel, insert the text only when the
+current target passes the same identity comparison the undo guard uses: same
+app, equal bundle identifiers when both are present, same role, and a non-empty
+element identity equal to the one recorded when the panel was shown. Reinsertion
+SHALL NOT use a separate app-only check. When the comparison fails, or the
+element is not editable, main SHALL copy the edited text to the clipboard
+instead and SHALL name the reason. The edited text SHALL replace the history
+row's text; the app SHALL NOT keep a separate copy of the pre-edit text.
 
 #### Scenario: Reinsert into the original target
 
 - **WHEN** the user edits the panel and activates 重新插入 while the original
-  app again reports an editable focused element
-- **THEN** the edited text is pasted into that app
+  app and the same verifiable element are editable again
+- **THEN** the edited text is pasted into that element
 - **AND** the history row for that delivery shows the edited text
 
 #### Scenario: Focus is no longer valid
 
-- **WHEN** the probe reports a different app, or a non-editable or unknown
-  element, at reinsert time
+- **WHEN** the probe reports a different app, bundle, role or identity, an empty
+  identity, or a non-editable or unknown element at reinsert time
 - **THEN** no keystroke is sent
-- **AND** the edited text is copied to the clipboard and a notice says so
+- **AND** the edited text is copied to the clipboard and the notice names the
+  reason
 
 #### Scenario: History cannot be rewritten
 

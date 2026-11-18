@@ -74,28 +74,41 @@ Main stores exactly one record in memory. A successful paste replaces it; a
 successful undo clears it. Nothing is persisted, so quitting the app forgets
 the slot.
 
-### 3. Deletion is a guarded port, never a fallback
+### 3. Deletion is one atomic script, guarded twice
 
-`src/main/injection.ts` gains `deleteCharacters(count)` which sends
-`key code 51` (Backspace) exactly `count` times through the same System Events
-path the paste already uses. It is called only after `evaluateUndoGuard`
-returns `ok`, and only with the recorded grapheme count. If the probe cannot
-answer, or the app/role/identity changed, the code path shows the panel and
-sends no key at all.
+`src/core/injection/delete.ts` owns the AppleScript, its argv builder and its
+result parser; `src/main/injection.ts` supplies the `osascript` exec port. The
+script re-reads the frontmost app, bundle, role, identity and editability and
+presses `key code 51` only when every value matches the expected values passed
+as separate argv items (never interpolated into the script). It re-checks the
+frontmost app before every key. The app-level guard still runs first because it
+also decides whether a still-running app should be activated, but the script's
+own check is the one immediately before the keys.
+
+`UndoLock` permits one deletion in flight. The slot is consumed before the
+first key; a concurrent request is refused with 撤销正在进行. Every deletion
+attempt — success, mismatch, timeout, exec failure or partial run — consumes the
+slot, so the same record can never be retried. A non-OK outcome tells the user
+whether the script aborted before the first key or may have partially deleted,
+and preserves the text in the panel.
 
 `kind` must be `editable` for the guard to pass: a non-editable or unknown
-target is a refusal, even if the app name matches.
+target is a refusal, even if the app name matches. A record whose grapheme count
+is `null` (no `Intl.Segmenter` at insertion time) is refused as
+`unverifiable-length`; the delete path never falls back to code points.
 
 ### 4. Re-say snapshots the candidate at start, re-checks at delivery
 
 `toggleRecording` reads the current slot when a recording starts inside the
 window and stores it as the run's replace candidate (method `paste` only). At
 delivery time main re-probes and runs the same `evaluateUndoGuard` against that
-snapshot. On success it clears the slot, deletes the recorded count, then pastes
-the new text. On refusal it delivers the new text through the normal path,
-shows the recorded text in the panel with the title 旧文本未删除, and reports the
-refusal. The slot is cleared before the new paste so a failed paste cannot
-leave a stale delete target pointing at already-deleted text.
+snapshot. On success it acquires the lock, consumes the slot, calls the atomic
+delete, then pastes the new text. If the paste then fails, the old text is shown
+in the panel with 旧文本已删除，这里是备份. If the delete fails or is partial,
+the slot stays consumed, the new text is not pasted, and the panel shows both
+texts with an incomplete-deletion warning. On refusal or a concurrent undo it
+delivers the new text through the normal path and shows the recorded text in the
+panel with 旧文本未删除.
 
 ### 5. Result panel becomes editable but stays non-activating
 
@@ -110,9 +123,11 @@ Reinsertion:
 2. Rewrite the matching history row in place when the panel still carries the
    history entry id (best effort; a failed write is logged and does not block
    insertion).
-3. Hide the panel, wait briefly, re-probe, and insert only when the probe names
-   the same app as when the panel was shown and reports an editable element.
-4. Otherwise copy the edited text and show a short notice.
+3. Hide the panel, wait briefly, re-probe, and insert only when the target
+   passes the same `compareTargetIdentity` the undo guard uses (same app, equal
+   bundles when both are present, same role, and the same non-empty identity)
+   and the element is editable.
+4. Otherwise copy the edited text and name the reason.
 
 The panel's original target app/bundle is captured from the delivery probe; it
 is never used to activate another app through AppleScript, which would require
@@ -150,5 +165,12 @@ changed target correctly lands on the refusal path.
   panel was hidden. (B1 undo instead uses LaunchServices `open -b`, which adds
   no permission, and never for a closed app.)
 - A paste that succeeds at the clipboard step but fails at the keystroke step
-  leaves the old text deleted and the new text on the clipboard; the session
-  still reports the existing paste-permission error.
+  leaves the old text deleted and the new text on the clipboard; the panel now
+  shows the old text with 旧文本已删除，这里是备份, and the existing
+  paste-permission error is still reported.
+- The atomic script re-checks the frontmost app before every key, but a user can
+  still switch apps in the microseconds between that check and the key. This is
+  the smallest window AppleScript permits; the remaining risk is documented
+  rather than hidden behind a second probe.
+- A mid-delete abort or timeout is reported as 删除可能未完整完成 and the slot is
+  consumed; the user must inspect the target and use the panel backup.

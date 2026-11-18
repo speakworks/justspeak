@@ -43,8 +43,12 @@ export interface InjectionRecord {
   /** AXIdentifier or AXTitle, or '' when the element exposed neither. */
   focusIdentity: string
   text: string
-  /** Grapheme cluster count, matching one Backspace per visible character. */
-  length: number
+  /**
+   * Grapheme cluster count, matching one Backspace per visible character.
+   * `null` when the runtime cannot segment graphemes: the deletion path refuses
+   * rather than guessing with code points.
+   */
+  length: number | null
   atMs: number
   method: InjectionMethod
 }
@@ -56,6 +60,7 @@ export type UndoRefusalReason =
   | 'app-changed'
   | 'focus-changed'
   | 'unverifiable-target'
+  | 'unverifiable-length'
 
 export type UndoDecision =
   | { ok: true; count: number }
@@ -65,25 +70,46 @@ interface Segmenter {
   segment(input: string): Iterable<unknown>
 }
 
+type SegmenterCtor = new (
+  locale?: string,
+  options?: { granularity: 'grapheme' }
+) => Segmenter
+
 /**
  * Count visible characters, not UTF-16 code units: macOS Backspace removes one
  * grapheme cluster, so a surrogate pair or a ZWJ emoji is one press.
+ *
+ * `ctor` is injectable so a test can simulate a runtime without
+ * `Intl.Segmenter`. A `null` answer means the count is unknown; the delete path
+ * refuses it instead of falling back to code points, which would undercount
+ * combining sequences and over-delete.
+ */
+export function graphemeLengthStrict(
+  text: string,
+  ctor?: SegmenterCtor | null
+): number | null {
+  if (text.length === 0) return 0
+  const Ctor =
+    ctor === undefined
+      ? (Intl as unknown as { Segmenter?: SegmenterCtor }).Segmenter
+      : ctor
+  if (Ctor === undefined || Ctor === null) return null
+  try {
+    const segmenter = new Ctor('zh', { granularity: 'grapheme' })
+    let count = 0
+    for (const _ of segmenter.segment(text)) count += 1
+    return count
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Display-oriented count with a code-point fallback. The delete path must use
+ * `graphemeLengthStrict`; this helper is only for non-destructive uses.
  */
 export function graphemeLength(text: string): number {
-  if (text.length === 0) return 0
-  const ctor = (Intl as unknown as { Segmenter?: new (locale?: string, options?: { granularity: 'grapheme' }) => Segmenter })
-    .Segmenter
-  if (ctor !== undefined) {
-    try {
-      const segmenter = new ctor('zh', { granularity: 'grapheme' })
-      let count = 0
-      for (const _ of segmenter.segment(text)) count += 1
-      return count
-    } catch {
-      // Fall through to code points on a runtime without grapheme data.
-    }
-  }
-  return Array.from(text).length
+  return graphemeLengthStrict(text) ?? Array.from(text).length
 }
 
 /**
@@ -109,7 +135,7 @@ export function buildInjectionRecord(input: {
     focusRole: target.role,
     focusIdentity: target.identity,
     text: input.text,
-    length: graphemeLength(input.text),
+    length: graphemeLengthStrict(input.text),
     atMs: input.atMs,
     method: input.method
   }
@@ -133,11 +159,95 @@ export function isReSayCandidate(
   return (
     record !== undefined &&
     record.method === 'paste' &&
-    // An empty identity can never pass the guard, so offering re-say would
-    // only produce a guaranteed refusal.
+    // An empty identity or an unknown grapheme count can never pass the guard,
+    // so offering re-say would only produce a guaranteed refusal.
     record.focusIdentity !== '' &&
+    record.length !== null &&
     undoWindowOpen(record, nowMs, windowMs)
   )
+}
+
+/**
+ * The identity comparison shared by undo and the result panel's reinsertion.
+ * One implementation only: app, bundle (when both sides carry one), role, and
+ * a non-empty element identity.
+ */
+export interface IdentityExpectation {
+  appName: string | null
+  bundleId: string | null
+  role: string | null
+  identity: string
+}
+
+export type IdentityRefusalReason =
+  | 'app-changed'
+  | 'focus-changed'
+  | 'unverifiable-target'
+
+export type IdentityDecision =
+  | { ok: true }
+  | { ok: false; reason: IdentityRefusalReason; message: string }
+
+export function compareTargetIdentity(
+  expected: IdentityExpectation,
+  actual: IdentityExpectation
+): IdentityDecision {
+  if (expected.appName === null || actual.appName === null) {
+    return {
+      ok: false,
+      reason: 'unverifiable-target',
+      message: '无法确认原来的目标应用，未做自动删除。'
+    }
+  }
+  if (expected.appName !== actual.appName) {
+    return { ok: false, reason: 'app-changed', message: '已切换目标应用，未做自动删除。' }
+  }
+  // Same visible app name is not enough: a helper or a different bundle can
+  // share a name.
+  if (
+    expected.bundleId !== null &&
+    actual.bundleId !== null &&
+    expected.bundleId !== actual.bundleId
+  ) {
+    return {
+      ok: false,
+      reason: 'app-changed',
+      message: '目标应用与插入时不一致，未做自动删除。'
+    }
+  }
+  if (expected.role === null || actual.role === null) {
+    return {
+      ok: false,
+      reason: 'focus-changed',
+      message: '无法确认原来的输入位置，未做自动删除。'
+    }
+  }
+  if (expected.role !== actual.role) {
+    return { ok: false, reason: 'focus-changed', message: '焦点已改变，未做自动删除。' }
+  }
+  if (expected.identity === '' || actual.identity === '') {
+    return {
+      ok: false,
+      reason: 'unverifiable-target',
+      message: '无法确认原来的输入位置，未做自动删除。'
+    }
+  }
+  if (expected.identity !== actual.identity) {
+    return { ok: false, reason: 'focus-changed', message: '焦点已改变，未做自动删除。' }
+  }
+  return { ok: true }
+}
+
+/** Copy-action wording for the same identity reasons (no "delete" language). */
+export function identityCopyMessage(reason: IdentityRefusalReason): string {
+  switch (reason) {
+    case 'app-changed':
+      return '目标应用已改变'
+    case 'focus-changed':
+      return '焦点已改变'
+    case 'unverifiable-target':
+      return '无法确认原来的输入位置'
+  }
 }
 
 /**
@@ -170,6 +280,13 @@ export function evaluateUndoGuard(input: {
       message: '上一条只显示在结果面板里，没有插入到任何应用。'
     }
   }
+  if (record.length === null) {
+    return {
+      ok: false,
+      reason: 'unverifiable-length',
+      message: '无法安全计算要删除的字符数，未做自动删除。'
+    }
+  }
   if (input.appFocused) {
     return {
       ok: false,
@@ -177,49 +294,23 @@ export function evaluateUndoGuard(input: {
       message: '已切换到 JustSpeak，未做自动删除。'
     }
   }
-  if (record.appName !== target.appName) {
-    return {
-      ok: false,
-      reason: 'app-changed',
-      message: '已切换目标应用，未做自动删除。'
-    }
+  const identity = compareTargetIdentity(
+    {
+      appName: record.appName,
+      bundleId: record.bundleId,
+      role: record.focusRole,
+      identity: record.focusIdentity
+    },
+    target
+  )
+  if (!identity.ok) {
+    return { ok: false, reason: identity.reason, message: identity.message }
   }
-  // Same visible app name is not enough: a helper or a different bundle can
-  // share a name. Only refuse on a proven mismatch; an absent bundle id on
-  // either side is already covered by the identity requirement below.
-  if (
-    record.bundleId !== null &&
-    target.bundleId !== null &&
-    record.bundleId !== target.bundleId
-  ) {
-    return {
-      ok: false,
-      reason: 'app-changed',
-      message: '目标应用与插入时不一致，未做自动删除。'
-    }
-  }
-  if (target.kind !== 'editable' || target.role !== record.focusRole) {
+  if (target.kind !== 'editable') {
     return {
       ok: false,
       reason: 'focus-changed',
       message: '无法确认原来的输入位置，未做自动删除。'
-    }
-  }
-  // Without a verifiable element identity the target cannot be distinguished
-  // from another field with the same role in the same app. The owner's hard
-  // rule: never auto-delete in that case, even when both sides are empty.
-  if (record.focusIdentity === '' || target.identity === '') {
-    return {
-      ok: false,
-      reason: 'unverifiable-target',
-      message: '无法确认原来的输入位置，未做自动删除。'
-    }
-  }
-  if (target.identity !== record.focusIdentity) {
-    return {
-      ok: false,
-      reason: 'focus-changed',
-      message: '焦点已改变，未做自动删除。'
     }
   }
   return { ok: true, count: record.length }
@@ -238,6 +329,8 @@ export function undoRefusalTitle(reason: UndoRefusalReason): string {
       return '焦点已改变'
     case 'unverifiable-target':
       return '无法确认输入位置'
+    case 'unverifiable-length':
+      return '无法计算删除长度'
     case 'no-record':
       return '没有可撤销的插入'
   }

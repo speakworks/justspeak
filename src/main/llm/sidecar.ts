@@ -158,7 +158,9 @@ export class LlamaSidecar {
       String(this.options.threads),
       '--parallel',
       '1',
-      '--no-webui',
+      // `--no-webui` is the upstream-deprecated alias; from pin 8642541 the
+      // canonical spelling is `--no-ui` (same common_arg, same `params.ui`).
+      '--no-ui',
       '--api-key-file',
       this.keyFilePath
     ]

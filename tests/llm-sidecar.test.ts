@@ -220,6 +220,21 @@ describe('LLM sidecar lifecycle', () => {
     await instance.stop()
   })
 
+  it('spawns with the canonical --no-ui flag and not the deprecated --no-webui alias', async () => {
+    process.env.FAKE_MODE = 'ok'
+    const logs: string[] = []
+    const instance = sidecar({ onLog: (line) => logs.push(line) })
+    await instance.start()
+
+    const startLine = logs.find((line) => line.startsWith('starting '))
+    expect(startLine).toBeDefined()
+    // "starting <binaryPath> <arg> <arg> ..."
+    const args = (startLine as string).split(' ').slice(2)
+    expect(args).toContain('--no-ui')
+    expect(args).not.toContain('--no-webui')
+    await instance.stop()
+  })
+
   it('removes the key file when startup fails', async () => {
     process.env.FAKE_MODE = 'nohealth'
     const instance = sidecar({ startupTimeoutMs: 300 })

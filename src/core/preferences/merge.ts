@@ -8,6 +8,7 @@
  */
 
 import { parseAccelerator } from '../hotkey/accelerator'
+import { DEFAULT_UNDO_WINDOW_MINUTES, isValidUndoWindowMinutes } from '../injection/undo'
 import { isThemePreference } from '../theme/theme'
 import type { LlmBackend, ThemePreference } from '../../shared/ipc'
 
@@ -27,6 +28,8 @@ export interface StoredPreferences {
    * not been applied yet; the setting itself is always read from the OS.
    */
   launchAtLogin: boolean | undefined
+  /** How long an insertion stays undoable; 5 minutes unless changed. */
+  undoWindowMinutes: number
 }
 
 /** The validated subset a write may apply. */
@@ -39,6 +42,7 @@ export interface PreferenceUpdate {
   updateAutoCheck?: boolean
   updateLastCheckAtMs?: number
   launchAtLogin?: boolean
+  undoWindowMinutes?: number
 }
 
 export function parseLlmBackend(value: unknown): LlmBackend {
@@ -51,6 +55,10 @@ export function parseLlmBaseUrl(value: unknown): string {
 
 export function parseLlmModel(value: unknown): string {
   return typeof value === 'string' ? value.trim().slice(0, 200) : ''
+}
+
+export function parseUndoWindowMinutes(value: unknown): number {
+  return isValidUndoWindowMinutes(value) ? value : DEFAULT_UNDO_WINDOW_MINUTES
 }
 
 export interface RejectedPreference {
@@ -75,7 +83,8 @@ const WRITABLE_KEYS = new Set([
   'llmModel',
   'updateAutoCheck',
   'updateLastCheckAtMs',
-  'launchAtLogin'
+  'launchAtLogin',
+  'undoWindowMinutes'
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -185,6 +194,17 @@ export function mergePreferences(existing: unknown, patch: unknown): MergeResult
       accepted.launchAtLogin = patch.launchAtLogin
     } else {
       rejected.push({ key: 'launchAtLogin', reason: '开机自启开关值无效。' })
+    }
+  }
+
+  if ('undoWindowMinutes' in patch) {
+    if (isValidUndoWindowMinutes(patch.undoWindowMinutes)) {
+      accepted.undoWindowMinutes = patch.undoWindowMinutes
+    } else {
+      rejected.push({
+        key: 'undoWindowMinutes',
+        reason: '撤销时间窗必须是 1 到 60 之间的整数分钟。'
+      })
     }
   }
 

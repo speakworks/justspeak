@@ -164,7 +164,7 @@ test.describe('JustSpeak copy panel', () => {
       await panel.waitForLoadState('domcontentloaded')
       expect(panel.url()).toContain('panel=1')
       await expect(panel.locator('.result-panel-title')).toHaveText('焦点不在输入框')
-      await expect(panel.locator('.result-panel-text')).toHaveText(FAKE_TRANSCRIPT)
+      await expect(panel.locator('.result-panel-text')).toHaveValue(FAKE_TRANSCRIPT)
       await expect(panel.getByRole('button', { name: '复制' })).toBeVisible()
 
       await panel.getByRole('button', { name: '复制' }).click()

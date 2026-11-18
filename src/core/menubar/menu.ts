@@ -13,7 +13,12 @@ import type { AppState } from '../../shared/ipc'
  * or `error`, and stopping only from `recording`. While a transcript is in
  * flight the item is disabled and says so.
  */
-export type TrayAction = 'toggle-window' | 'toggle-dictation' | 'open-settings' | 'quit'
+export type TrayAction =
+  | 'toggle-window'
+  | 'toggle-dictation'
+  | 'undo-last'
+  | 'open-settings'
+  | 'quit'
 
 export interface TrayMenuItem {
   id: TrayAction
@@ -25,6 +30,8 @@ export interface TrayMenuInput {
   /** Whether the main window is on screen (visible and not minimized). */
   windowVisible: boolean
   dictation: AppState
+  /** True only while the guarded undo can still act on the last insertion. */
+  undoAvailable?: boolean
 }
 
 /** The icon's hover text: the hotkey is the point of the app, so name it. */
@@ -51,6 +58,7 @@ export function trayMenu(input: TrayMenuInput): TrayMenuItem[] {
       enabled: true
     },
     dictation,
+    { id: 'undo-last', label: '撤销上一次插入', enabled: input.undoAvailable === true },
     { id: 'open-settings', label: '设置…', enabled: true },
     { id: 'quit', label: '退出 JustSpeak', enabled: true }
   ]

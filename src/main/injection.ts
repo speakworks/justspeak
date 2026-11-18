@@ -68,3 +68,60 @@ const ports: PastePorts = {
 export async function pasteText(text: string): Promise<void> {
   await pasteTranscript(text, ports)
 }
+
+export const DELETE_PERMISSION_MESSAGE =
+  '撤销失败：请在“系统设置 → 隐私与安全性 → 辅助功能”中允许 JustSpeak 控制键盘。'
+
+/**
+ * Bring a still-running app back to the front so an explicit undo issued from
+ * JustSpeak's own menu or history can act on it. `open -b` goes through
+ * LaunchServices, not Apple Events, so it adds no Automation permission.
+ *
+ * A closed app is never launched: the user's target is gone, and starting it
+ * would be a surprising side effect of pressing undo. The caller re-probes and
+ * still requires the full guard afterwards, so a returned app whose focused
+ * element changed is still a refusal.
+ */
+export async function activateRunningApp(bundleId: string): Promise<boolean> {
+  if (!/^[A-Za-z0-9.-]+$/.test(bundleId)) return false
+  try {
+    const { stdout } = await execFileAsync(
+      'osascript',
+      [
+        '-e',
+        `tell application "System Events" to return exists (first application process whose bundle identifier is "${bundleId}")`
+      ],
+      { timeout: 5_000 }
+    )
+    if (String(stdout).trim() !== 'true') return false
+    await execFileAsync('open', ['-b', bundleId], { timeout: 5_000 })
+    return true
+  } catch (error) {
+    console.warn('[undo] could not bring the recorded app forward', error)
+    return false
+  }
+}
+
+/**
+ * Delete exactly `count` grapheme clusters with Backspace.
+ *
+ * This is the only delete path in the app, and it is called only after the
+ * undo guard positively confirms the same editable target. A non-positive or
+ * non-finite count is a no-op rather than an unbounded key storm.
+ */
+export async function deleteCharacters(count: number): Promise<void> {
+  const presses = Math.floor(count)
+  if (!Number.isFinite(presses) || presses <= 0) return
+  const script = `
+tell application "System Events"
+  repeat ${presses} times
+    key code 51
+  end repeat
+end tell
+`
+  try {
+    await execFileAsync('osascript', ['-e', script], { timeout: 20_000 })
+  } catch (cause) {
+    throw new Error(DELETE_PERMISSION_MESSAGE, { cause })
+  }
+}

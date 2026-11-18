@@ -36,13 +36,25 @@ import { HotkeyCaptureController } from '../core/hotkey/capture-controller'
 import { hotkeyChangeRefusal } from '../core/hotkey/hotkey-change-guard'
 import { registerHotkeyWithFallback } from '../core/hotkey/registration'
 import type { HotkeySource } from '../core/hotkey/types'
+import {
+  DEFAULT_UNDO_WINDOW_MINUTES,
+  buildInjectionRecord,
+  evaluateUndoGuard,
+  isReSayCandidate,
+  undoRefusalTitle,
+  undoWindowMs,
+  undoWindowOpen,
+  type InjectionRecord
+} from '../core/injection/undo'
 import { postprocess, type PostprocessOptions } from '../core/postprocess'
+import type { FocusTarget } from '../core/focus/editability'
 import { SessionController } from '../core/session/session-controller'
 import { consumePendingNotice } from '../core/session/state-notice'
 import {
   parseLlmBackend,
   parseLlmBaseUrl,
   parseLlmModel,
+  parseUndoWindowMinutes,
   planPreferenceSet
 } from '../core/preferences/merge'
 import {
@@ -53,7 +65,11 @@ import {
 } from '../core/preferences/autostart'
 import { summarizeProvider } from '../core/preferences/view'
 import { buildDiagnosticsSummary } from '../core/diagnostics/summary'
-import { deliverTranscript } from '../core/shell/delivery'
+import {
+  deliverTranscriptDetailed,
+  type DeliveryPorts,
+  type DeliveryTarget
+} from '../core/shell/delivery'
 import { closeAction } from '../core/menubar/menu'
 import { packagedRuntimeDir, resolveModelsDir } from './asr/paths'
 import { createLevelThrottle, rmsOf } from '../core/overlay/level'
@@ -88,6 +104,9 @@ import type {
   SelectableAsrProviderId,
   ThemePreference,
   TranscriptEvent,
+  ReinsertResult,
+  UndoResult,
+  UndoStateView,
   UpdateStatusView,
   VocabularySummary
 } from '../shared/ipc'
@@ -106,7 +125,7 @@ import {
   parseSegmentationConfig,
   type SegmentationMode
 } from './asr/segmentation-mode'
-import { createFocusProbe } from './focus-probe'
+import { createFocusTargetProbe } from './focus-probe'
 import { ElectronGlobalShortcutSource } from './hotkey-source'
 import { collectCrashDumps } from './diagnostics/crash-dumps'
 import {
@@ -118,15 +137,20 @@ import { DiagnosticsLog } from './diagnostics/log'
 import { resolveDiagnosticsTarget } from './diagnostics/target'
 import { HistoryStore } from './history-store'
 import { LlmManager } from './llm/manager'
-import { pasteText } from './injection'
+import { deleteCharacters, activateRunningApp, pasteText } from './injection'
 import {
+  attachResultPanelEntry,
   copyResultPanelText,
   destroyResultPanel,
   hideResultPanel,
+  hideResultPanelWindow,
   initResultPanel,
   refreshResultPanelEscape,
   replayResultPanel,
+  resultPanelContext,
   resultPanelWebContentsId,
+  scheduleResultPanelHide,
+  setResultPanelTarget,
   showResultPanel,
   suspendResultPanelEscape
 } from './result-panel'
@@ -258,6 +282,24 @@ let pendingSegmentFailure: string | undefined
  */
 let pendingMenuDestination: 'settings' | undefined
 
+/**
+ * The correction slot (OpenSpec `injection-undo`). Exactly one insertion is
+ * remembered, in memory only; there is no persisted undo history.
+ */
+let lastInjection: InjectionRecord | undefined
+/** Cached window so the guard never awaits disk on the keystroke path. */
+let undoWindowMinutes = DEFAULT_UNDO_WINDOW_MINUTES
+/**
+ * What the in-flight transcript did, captured before history settles so the
+ * undo record can be built with the exact focus the paste saw.
+ */
+let lastDelivery: { target: DeliveryTarget; focus: FocusTarget | null; atMs: number } | undefined
+/**
+ * The snapshot for a re-say run. Set when a recording starts inside the undo
+ * window and consumed by the next delivery; `undefined` means a normal run.
+ */
+let reSayCandidate: InjectionRecord | undefined
+
 class UnavailableAsrProvider implements AsrProvider {
   readonly id = 'unavailable'
   readonly capabilities: AsrCapabilities = {
@@ -355,6 +397,232 @@ function effectiveTheme(): ResolvedTheme {
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Push a change of the undo slot to every surface that offers it: the app
+ * menu, the menu-bar icon, and the history pane. Called whenever the slot is
+ * set, linked to a history row, or cleared.
+ */
+function notifyUndoChanged(): void {
+  mainWindow?.webContents.send('undo:changed')
+  refreshApplicationMenu()
+  refreshTray()
+}
+
+/** The slot as the history pane may offer it. */
+function currentUndoState(): UndoStateView {
+  const record = lastInjection
+  if (record === undefined) return { available: false }
+  const windowMs = undoWindowMs(undoWindowMinutes)
+  const available = record.method === 'paste' && undoWindowOpen(record, Date.now(), windowMs)
+  return {
+    available,
+    ...(record.entryId === undefined ? {} : { entryId: record.entryId }),
+    expiresAt: record.atMs + windowMs
+  }
+}
+
+/** The ports every delivery path uses; one probe, one clipboard, one panel. */
+function deliveryPorts(): DeliveryPorts {
+  return {
+    appFocused: () => mainWindow?.isFocused() ?? false,
+    probeTarget: probeFocusTarget,
+    insert: (out) => mainWindow?.webContents.send('transcript:insert', out),
+    paste: pasteText,
+    showPanel: (out) => showResultPanel(out, effectiveTheme())
+  }
+}
+
+/** Rebuild the probe shape from a record, for the panel's reinsertion guard. */
+function recordAsTarget(record: InjectionRecord): FocusTarget {
+  return {
+    kind: record.method === 'paste' ? 'editable' : 'non-editable',
+    appName: record.appName,
+    bundleId: record.bundleId,
+    role: record.focusRole,
+    identity: record.focusIdentity
+  }
+}
+
+/**
+ * B1: the guarded 撤销上一次插入. Every entry point funnels through here.
+ * A refusal never sends a delete key; it preserves the text in the panel.
+ */
+async function performUndoLastInjection(): Promise<UndoResult> {
+  // Undo during a re-say recording must not leave the snapshot pointing at
+  // text this action may be deleting.
+  reSayCandidate = undefined
+  const record = lastInjection
+  const evaluate = (target: FocusTarget) =>
+    evaluateUndoGuard({
+      record,
+      nowMs: Date.now(),
+      windowMs: undoWindowMs(undoWindowMinutes),
+      appFocused: mainWindow?.isFocused() ?? false,
+      target
+    })
+  let target = await probeFocusTarget()
+  let decision = evaluate(target)
+
+  // Undo invoked from our own menu or history makes JustSpeak frontmost, so
+  // the recorded app must be brought back before the guard can mean anything.
+  // A closed app is never launched; the refusal path preserves the text.
+  if (
+    !decision.ok &&
+    record !== undefined &&
+    record.bundleId !== null &&
+    (decision.reason === 'app-changed' || decision.reason === 'focus-changed')
+  ) {
+    if (await activateRunningApp(record.bundleId)) {
+      await delay(250)
+      target = await probeFocusTarget()
+      decision = evaluate(target)
+    }
+  }
+
+  if (!decision.ok) {
+    if (record !== undefined) {
+      showResultPanel(record.text, effectiveTheme(), {
+        title: undoRefusalTitle(decision.reason),
+        notice: decision.message,
+        ...(record.entryId === undefined ? {} : { entryId: record.entryId }),
+        target: recordAsTarget(record)
+      })
+    }
+    return { ok: false, message: decision.message }
+  }
+
+  try {
+    await deleteCharacters(decision.count)
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) }
+  }
+  lastInjection = undefined
+  notifyUndoChanged()
+  return { ok: true }
+}
+
+/**
+ * B2: a re-say delivery. The guard is the same function B1 uses. On a pass the
+ * old text is deleted first and the new text pasted once; on a refusal only the
+ * new text is delivered and the old text is moved to the panel.
+ */
+async function replaceTranscript(
+  text: string,
+  candidate: InjectionRecord
+): Promise<DeliveryTarget> {
+  const target = await probeFocusTarget()
+  const decision = evaluateUndoGuard({
+    record: candidate,
+    nowMs: Date.now(),
+    windowMs: undoWindowMs(undoWindowMinutes),
+    appFocused: mainWindow?.isFocused() ?? false,
+    target
+  })
+
+  if (decision.ok) {
+    await deleteCharacters(decision.count)
+    // Clear after the deletion: if the key press itself failed, the record is
+    // still accurate and can be retried. If the paste then fails, no stale
+    // record points at text that no longer exists.
+    lastInjection = undefined
+    notifyUndoChanged()
+    await pasteText(text)
+    lastDelivery = { target: 'paste', focus: target, atMs: Date.now() }
+    return 'paste'
+  }
+
+  const outcome = await deliverTranscriptDetailed(text, deliveryPorts())
+  if (outcome.target === 'panel' && outcome.focus !== null) {
+    setResultPanelTarget(outcome.focus)
+  }
+  lastDelivery = { target: outcome.target, focus: outcome.focus, atMs: Date.now() }
+  const title = '旧文本未删除'
+  const reason = undoRefusalTitle(decision.reason)
+  if (outcome.target === 'panel') {
+    showResultPanel(`${text}\n\n${candidate.text}`, effectiveTheme(), {
+      title,
+      notice: `${reason}。新文本无法插入，两段文本都在这里。`
+    })
+  } else {
+    showResultPanel(candidate.text, effectiveTheme(), {
+      title,
+      notice: `${reason}。新文本已插入；上一条文本在这里，可复制。`,
+      ...(candidate.entryId === undefined ? {} : { entryId: candidate.entryId }),
+      target: recordAsTarget(candidate)
+    })
+  }
+  return outcome.target
+}
+
+/**
+ * B3: the result panel's 重新插入. History is rewritten in place first (best
+ * effort), then the panel is hidden so macOS can return focus, and the text is
+ * inserted only when the same app reports an editable element. Otherwise the
+ * action degrades to copy, which is always safe.
+ */
+async function reinsertPanelText(input: unknown): Promise<ReinsertResult> {
+  if (typeof input !== 'string' || input.trim() === '' || input.length > 20_000) {
+    return { inserted: false, message: '重插内容无效。' }
+  }
+  const text = input
+  const context = resultPanelContext()
+
+  if (context?.entryId !== undefined && historyStore) {
+    try {
+      await historyStore.updateText(context.entryId, text)
+      mainWindow?.webContents.send('history:changed')
+    } catch (error) {
+      console.warn('[history] could not save the edited transcript', error)
+    }
+  }
+
+  hideResultPanelWindow()
+  // Give the window server a moment to return focus to the app behind us.
+  await delay(200)
+  const target = await probeFocusTarget()
+  const original = context?.target
+  const sameApp =
+    original !== undefined &&
+    original.appName !== null &&
+    target.appName === original.appName
+
+  if (sameApp && target.kind === 'editable') {
+    try {
+      await pasteText(text)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      showResultPanel(text, effectiveTheme(), {
+        title: '重新插入失败',
+        notice: message
+      })
+      scheduleResultPanelHide(2_500)
+      return { inserted: false, message }
+    }
+    lastInjection =
+      buildInjectionRecord({
+        text,
+        atMs: Date.now(),
+        method: 'paste',
+        target,
+        ...(context?.entryId === undefined ? {} : { entryId: context.entryId })
+      }) ?? undefined
+    notifyUndoChanged()
+    return { inserted: true }
+  }
+
+  clipboard.writeText(text)
+  showResultPanel(text, effectiveTheme(), {
+    title: '已复制',
+    notice: '焦点已失效，文本已复制到剪贴板。'
+  })
+  scheduleResultPanelHide(1_500)
+  return { inserted: false, message: '焦点已失效，文本已复制到剪贴板。' }
+}
+
 /**
  * The panel's provider row, derived from what is actually running. `sessionMode`
  * keeps its value through every failure path (missing model, bad env, invalid
@@ -393,6 +661,8 @@ async function readPreferencesView(loginItemNotice?: string): Promise<Preference
     themePreference = stored.theme
     applyTheme()
   }
+  // Keep the keystroke-path cache aligned with what was just read.
+  undoWindowMinutes = stored.undoWindowMinutes
   const loginItemView = readAutostartView(
     () =>
       loginItem?.read() ?? {
@@ -436,7 +706,8 @@ async function readPreferencesView(loginItemNotice?: string): Promise<Preference
     llm,
     // The OS owns this value; `read` never throws.
     loginItem: loginItemView,
-    updateAutoCheck: stored.updateAutoCheck
+    updateAutoCheck: stored.updateAutoCheck,
+    undoWindowMinutes: stored.undoWindowMinutes
   }
 }
 
@@ -553,27 +824,63 @@ function makeSession(provider: AsrProvider, fake: boolean): SessionController {
     provider: selected,
     // Exactly one target: a focused app window means the renderer inserts, and
     // no keystroke is synthesized, so the text cannot land twice.
-    paste: (text: string) =>
-      deliverTranscript(text, {
-        appFocused: () => mainWindow?.isFocused() ?? false,
-        probeFocus,
-        insert: (out) => mainWindow?.webContents.send('transcript:insert', out),
-        paste: pasteText,
-        showPanel: (out) => showResultPanel(out, effectiveTheme())
-      }),
+    paste: async (text: string) => {
+      // A re-say run consumes its snapshot exactly once; a normal run leaves
+      // the slot alone.
+      const candidate = reSayCandidate
+      reSayCandidate = undefined
+      if (candidate !== undefined) return replaceTranscript(text, candidate)
+
+      const outcome = await deliverTranscriptDetailed(text, deliveryPorts())
+      if (outcome.target === 'panel' && outcome.focus !== null) {
+        setResultPanelTarget(outcome.focus)
+      }
+      lastDelivery = {
+        target: outcome.target,
+        focus: outcome.focus,
+        atMs: Date.now()
+      }
+      return outcome.target
+    },
     sendState,
     sendTranscript,
     onTranscriptSettled: (event, settlement) => {
+      const delivered = lastDelivery
+      lastDelivery = undefined
+      const audio = historyAudio
+      historyAudio = undefined
+      // A silent capture can still complete; an empty row helps nobody.
+      if (event.text.trim() === '') return
+
+      // Only a real paste or a panel display creates a correction record; the
+      // app's own input has its own editable text and caret.
+      const base =
+        settlement.ok &&
+        delivered !== undefined &&
+        delivered.focus !== null &&
+        (delivered.target === 'paste' || delivered.target === 'panel')
+          ? buildInjectionRecord({
+              text: event.text,
+              atMs: delivered.atMs,
+              method: delivered.target === 'paste' ? 'paste' : 'panel',
+              target: delivered.focus
+            })
+          : null
+
+      // Set the slot immediately so the menu and the history action are live
+      // even while the history append is still in flight; the entry id is
+      // attached when the write resolves.
+      if (base !== null) {
+        lastInjection = base
+        notifyUndoChanged()
+      }
+
       // History is a convenience, never part of the dictation contract: a
       // failed write is logged and the session still reports success.
       if (!historyStore) {
         console.warn('[history] store not ready; transcript was not recorded')
         return
       }
-      const audio = historyAudio
-      historyAudio = undefined
-      // A silent capture can still complete; an empty row helps nobody.
-      if (event.text.trim() === '') return
       const outcome: HistoryOutcome = settlement.ok
         ? settlement.target === 'insert'
           ? 'inserted'
@@ -587,8 +894,19 @@ function makeSession(provider: AsrProvider, fake: boolean): SessionController {
           outcome,
           audio === undefined ? undefined : { pcm: audio.pcm, sampleRate: audio.sampleRate }
         )
-        .then(() => mainWindow?.webContents.send('history:changed'))
-        .catch((error) => console.warn('[history] could not record transcript', error))
+        .then((entry) => {
+          // The panel is linked even when the probe could not supply an app
+          // identity: the history row still exists and an edit must rewrite it.
+          if (delivered?.target === 'panel') attachResultPanelEntry(entry.id, event.text)
+          if (base !== null) {
+            lastInjection = { ...base, entryId: entry.id }
+            notifyUndoChanged()
+          }
+          mainWindow?.webContents.send('history:changed')
+        })
+        .catch((error) => {
+          console.warn('[history] could not record transcript', error)
+        })
     },
     fake,
     // The stage sits between the provider result and paste, so the fake and
@@ -602,6 +920,7 @@ function makeSession(provider: AsrProvider, fake: boolean): SessionController {
 
 function failSession(message: string): void {
   providerError = message
+  reSayCandidate = undefined
   session?.fail(message)
 }
 
@@ -880,6 +1199,15 @@ function toggleRecording(): void {
 
   const action = session.toggle(rendererReady)
   if (action === 'start') {
+    // Starting inside the undo window turns this run into a re-say; the guard
+    // is re-checked at delivery, when the target can actually be probed.
+    reSayCandidate = isReSayCandidate(
+      lastInjection,
+      Date.now(),
+      undoWindowMs(undoWindowMinutes)
+    )
+      ? lastInjection
+      : undefined
     pendingSegmentFailure = undefined
     historyAudio = undefined
     hideResultPanel()
@@ -909,7 +1237,7 @@ function overlayFor(next: AppStatus['state']): OverlayPayload | null {
 const levelThrottle = createLevelThrottle()
 
 /** One Accessibility probe for the whole process; it spawns `osascript`. */
-const probeFocus = createFocusProbe()
+const probeFocusTarget = createFocusTargetProbe()
 
 /** RMS of an incoming PCM batch, or null when the payload is not one. */
 function levelOf(payload: unknown): number | null {
@@ -926,6 +1254,7 @@ function pushOverlayState(): void {
 function cancelRecording(): void {
   if (!session) return
   if (session.cancel() !== 'cancel') return
+  reSayCandidate = undefined
   pcmBuffer.finish()
   mainWindow?.webContents.send('recording:stop')
 }
@@ -983,6 +1312,13 @@ function buildApplicationMenu(): void {
             click: () => {
               showMainWindow()
               toggleRecording()
+            }
+          },
+          {
+            label: '撤销上一次插入',
+            enabled: currentUndoState().available,
+            click: () => {
+              void performUndoLastInjection()
             }
           },
           { type: 'separator' },
@@ -1296,6 +1632,7 @@ app.whenReady().then(async () => {
     .catch((error) => console.warn('[history] startup sweep failed', error))
   const preferences = await themeStore.loadPreferences()
   themePreference = preferences.theme
+  undoWindowMinutes = preferences.undoWindowMinutes
   loginItem = createLoginItemController()
   try {
     const seeded = await seedAutostartOnFirstRun(preferences.launchAtLogin, {
@@ -1389,6 +1726,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.on('capture:failed', (event, message: unknown) => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) return
+    reSayCandidate = undefined
     pcmBuffer.finish()
     session?.handleCaptureFailed(message)
   })
@@ -1424,13 +1762,38 @@ app.whenReady().then(async () => {
     if (event.sender.id !== resultPanelWebContentsId()) return
     replayResultPanel()
   })
-  ipcMain.on('panel:copy', (event) => {
+  ipcMain.on('panel:copy', (event, text: unknown) => {
     if (event.sender.id !== resultPanelWebContentsId()) return
-    copyResultPanelText()
+    if (typeof text === 'string' && text.length <= 20_000) copyResultPanelText(text)
+    else copyResultPanelText()
   })
   ipcMain.on('panel:close', (event) => {
     if (event.sender.id !== resultPanelWebContentsId()) return
     hideResultPanel()
+  })
+  ipcMain.handle('panel:reinsert', async (event, text: unknown): Promise<ReinsertResult> => {
+    if (event.sender.id !== resultPanelWebContentsId()) {
+      return { inserted: false, message: '未授权的重插请求。' }
+    }
+    return reinsertPanelText(text)
+  })
+  ipcMain.handle('panel:undo', async (event): Promise<UndoResult> => {
+    if (event.sender.id !== resultPanelWebContentsId()) {
+      return { ok: false, message: '未授权的撤销请求。' }
+    }
+    return performUndoLastInjection()
+  })
+  ipcMain.handle('undo:state', async (event): Promise<UndoStateView> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      throw new Error('未授权的撤销状态请求。')
+    }
+    return currentUndoState()
+  })
+  ipcMain.handle('undo:last', async (event): Promise<UndoResult> => {
+    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+      return { ok: false, message: '未授权的撤销请求。' }
+    }
+    return performUndoLastInjection()
   })
   ipcMain.handle('state:get', (event): AppStatus => {
     if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
@@ -1512,12 +1875,16 @@ app.whenReady().then(async () => {
           llmBackend?: PreferencesView['llm']['backend']
           llmBaseUrl?: string
           llmModel?: string
+          undoWindowMinutes?: number
         } = {}
         if (plan.update.theme !== undefined) update.theme = plan.update.theme
         if (hotkeyResult?.ok) update.hotkey = hotkeyResult.accelerator
         if (plan.update.llmBackend !== undefined) update.llmBackend = plan.update.llmBackend
         if (plan.update.llmBaseUrl !== undefined) update.llmBaseUrl = plan.update.llmBaseUrl
         if (plan.update.llmModel !== undefined) update.llmModel = plan.update.llmModel
+        if (plan.update.undoWindowMinutes !== undefined) {
+          update.undoWindowMinutes = plan.update.undoWindowMinutes
+        }
         if (Object.keys(update).length > 0) {
           try {
             const merged = await themeStore.update(update)
@@ -1542,6 +1909,13 @@ app.whenReady().then(async () => {
                   baseUrl: parseLlmBaseUrl(merged.record.llmBaseUrl),
                   model: parseLlmModel(merged.record.llmModel)
                 })
+              }
+              if (update.undoWindowMinutes !== undefined) {
+                // The merged record is authoritative; the cache survives so the
+                // guard never awaits disk on the keystroke path.
+                undoWindowMinutes = parseUndoWindowMinutes(merged.record.undoWindowMinutes)
+                refreshApplicationMenu()
+                refreshTray()
               }
             }
           } catch (error) {
@@ -1827,6 +2201,10 @@ app.whenReady().then(async () => {
     hotkey: () => activeHotkey,
     onToggleWindow: () => toggleMainWindow(),
     onToggleDictation: () => toggleRecording(),
+    undoAvailable: () => currentUndoState().available,
+    onUndoLast: () => {
+      void performUndoLastInjection()
+    },
     onOpenSettings: openSettings,
     onQuit: () => quitApp()
   })

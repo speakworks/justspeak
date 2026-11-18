@@ -1,7 +1,10 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { parseFocusProbeLine, type FocusKind } from '../core/focus/editability'
-
+import {
+  parseFocusProbeTarget,
+  type FocusKind,
+  type FocusTarget
+} from '../core/focus/editability'
 const execFileAsync = promisify(execFile)
 
 /**
@@ -21,8 +24,14 @@ const FOCUS_PROBE_TIMEOUT_MS = 10_000
 const FOCUS_PROBE_SCRIPT = `
 tell application "System Events"
   try
-    set frontName to name of first process whose frontmost is true
-    tell process frontName
+    set frontProcess to first process whose frontmost is true
+    set frontName to name of frontProcess
+    set frontBundle to ""
+    try
+      set frontBundle to bundle identifier of frontProcess
+    end try
+    if frontBundle is missing value then set frontBundle to ""
+    tell frontProcess
       set focusedElement to value of attribute "AXFocusedUIElement"
       set focusedRole to role of focusedElement as text
       set hasRange to "0"
@@ -30,7 +39,18 @@ tell application "System Events"
         set selectedRange to value of attribute "AXSelectedTextRange" of focusedElement
         set hasRange to "1"
       end try
-      return focusedRole & "|" & hasRange
+      set ident to ""
+      try
+        set ident to value of attribute "AXIdentifier" of focusedElement as text
+      end try
+      if ident is missing value then set ident to ""
+      if ident is "" then
+        try
+          set ident to value of attribute "AXTitle" of focusedElement as text
+        end try
+        if ident is missing value then set ident to ""
+      end if
+      return frontName & linefeed & frontBundle & linefeed & focusedRole & linefeed & hasRange & linefeed & ident
     end tell
   on error
     return "UNKNOWN"
@@ -52,10 +72,40 @@ export function createFocusProbe(
       const { stdout } = await exec('osascript', ['-e', FOCUS_PROBE_SCRIPT], {
         timeout: FOCUS_PROBE_TIMEOUT_MS
       })
-      return parseFocusProbeLine(String(stdout))
+      // The extended parser also accepts the old two-field answer, so this
+      // wrapper stays useful even though the script now emits five fields.
+      return parseFocusProbeTarget(String(stdout)).kind
     } catch (error) {
       console.warn('[focus] probe failed; showing the copy panel', error)
       return 'unknown'
+    }
+  }
+}
+
+/**
+ * The extended probe used by the undo guard. It answers with the frontmost
+ * app, the focused element's role and its identity, so a refusal can name what
+ * changed instead of guessing. A failed probe is `unknown`, which the guard
+ * treats as a refusal.
+ */
+export function createFocusTargetProbe(
+  exec: FocusExec = execFileAsync
+): () => Promise<FocusTarget> {
+  return async () => {
+    try {
+      const { stdout } = await exec('osascript', ['-e', FOCUS_PROBE_SCRIPT], {
+        timeout: FOCUS_PROBE_TIMEOUT_MS
+      })
+      return parseFocusProbeTarget(String(stdout))
+    } catch (error) {
+      console.warn('[focus] target probe failed; refusing automatic deletion', error)
+      return {
+        kind: 'unknown',
+        appName: null,
+        bundleId: null,
+        role: null,
+        identity: ''
+      }
     }
   }
 }

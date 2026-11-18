@@ -4,7 +4,7 @@ import {
   formatHistoryTime,
   groupHistoryByDate
 } from '../../core/history'
-import type { HistoryEntry, HistoryOutcome } from '../../shared/ipc'
+import type { HistoryEntry, HistoryOutcome, UndoStateView } from '../../shared/ipc'
 
 const OUTCOME_LABEL: Record<HistoryOutcome, string> = {
   inserted: '已插入',
@@ -33,6 +33,8 @@ export function HistoryPane(): React.JSX.Element {
   const [busyId, setBusyId] = useState<string | undefined>()
   const [copiedId, setCopiedId] = useState<string | undefined>()
   const [playingId, setPlayingId] = useState<string | undefined>()
+  const [undo, setUndo] = useState<UndoStateView>({ available: false })
+  const [undoBusy, setUndoBusy] = useState(false)
   const copyTimer = useRef<number | undefined>(undefined)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioUrlRef = useRef<string | null>(null)
@@ -64,11 +66,20 @@ export function HistoryPane(): React.JSX.Element {
 
   useEffect(() => {
     void refresh()
+    const refreshUndo = (): void => {
+      void window.justspeak
+        .getUndoState()
+        .then(setUndo)
+        .catch(() => setUndo({ available: false }))
+    }
+    refreshUndo()
     const unsubscribe = window.justspeak.onHistoryChanged(() => {
       void refresh()
     })
+    const unsubscribeUndo = window.justspeak.onUndoChanged(refreshUndo)
     return () => {
       unsubscribe()
+      unsubscribeUndo()
       if (copyTimer.current !== undefined) window.clearTimeout(copyTimer.current)
       // Unmount cleanup cannot set state; invalidate in-flight loads and
       // release the element and URL directly.
@@ -145,6 +156,18 @@ export function HistoryPane(): React.JSX.Element {
     }
   }
 
+  const undoInjection = async (): Promise<void> => {
+    setUndoBusy(true)
+    try {
+      const result = await window.justspeak.undoLastInjection()
+      setError(result.ok ? undefined : result.message)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setUndoBusy(false)
+    }
+  }
+
   const groups = groupHistoryByDate(entries)
 
   return (
@@ -199,6 +222,16 @@ export function HistoryPane(): React.JSX.Element {
                           onClick={() => void togglePlay(entry)}
                         >
                           {playingId === entry.id ? '停止' : '播放'}
+                        </button>
+                      ) : null}
+                      {undo.available && undo.entryId === entry.id ? (
+                        <button
+                          type="button"
+                          className="quiet-button history-undo"
+                          onClick={() => void undoInjection()}
+                          disabled={undoBusy}
+                        >
+                          撤销插入
                         </button>
                       ) : null}
                       <button

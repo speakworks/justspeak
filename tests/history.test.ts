@@ -9,6 +9,7 @@ import {
   parseHistoryLine,
   planHistoryRetention,
   removeHistoryEntry,
+  replaceHistoryEntryText,
   serializeHistoryEntry
 } from '../src/core/history'
 import type { HistoryEntry } from '../src/shared/ipc'
@@ -183,5 +184,28 @@ describe('history removal', () => {
     const entries = [entry({ id: 'a' }), entry({ id: 'b' })]
     expect(removeHistoryEntry(entries, 'a').map((value) => value.id)).toEqual(['b'])
     expect(removeHistoryEntry(entries, 'missing')).toHaveLength(2)
+  })
+})
+
+describe('history in-place edit', () => {
+  it('rewrites one row and keeps its identity, time and audio', () => {
+    const audio = { file: 'audio/e1.wav', bytes: 100 }
+    const entries = [entry({ id: 'a', audio }), entry({ id: 'b', text: '第二句' })]
+    const next = replaceHistoryEntryText(entries, 'a', '改过的句子')
+    expect(next).toHaveLength(2)
+    expect(next[0]).toMatchObject({
+      id: 'a',
+      text: '改过的句子',
+      createdAt: entries[0]?.createdAt,
+      audio
+    })
+    expect(next[1]?.text).toBe('第二句')
+    // No copy of the pre-edit text survives in the row.
+    expect(next.some((value) => value.text === '你好')).toBe(false)
+  })
+
+  it('leaves the list untouched for an unknown id', () => {
+    const entries = [entry()]
+    expect(replaceHistoryEntryText(entries, 'missing', '新文本')).toEqual(entries)
   })
 })

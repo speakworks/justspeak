@@ -325,6 +325,13 @@ export function App(): React.JSX.Element {
     [applyPreferencePatch]
   )
 
+  const changeUndoWindow = useCallback(
+    (minutes: number): void => {
+      void applyPreferencePatch({ undoWindowMinutes: minutes })
+    },
+    [applyPreferencePatch]
+  )
+
   const saveLlmEndpoint = useCallback(
     (baseUrl: string, model: string): void => {
       // Only claim success after the write actually succeeded; the previous
@@ -597,6 +604,7 @@ export function App(): React.JSX.Element {
     onTheme: applyThemePreference,
     onAutostart: changeAutostart,
     autostartBusy,
+    onUndoWindow: changeUndoWindow,
     onReload: reloadPreferences,
     onLlmBackend: changeLlmBackend,
     onLlmEndpointSave: saveLlmEndpoint,

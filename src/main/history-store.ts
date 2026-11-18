@@ -14,6 +14,7 @@ import {
   parseHistory,
   planHistoryRetention,
   removeHistoryEntry,
+  replaceHistoryEntryText,
   serializeHistoryEntry
 } from '../core/history'
 import type {
@@ -142,6 +143,21 @@ export class HistoryStore {
       const kept = removeHistoryEntry(entries, id)
       await this.writeAll(kept)
       return kept
+    })
+  }
+
+  /**
+   * Rewrite one entry's text in place. Used by the result panel's edit path;
+   * the previous text is not retained anywhere.
+   */
+  async updateText(id: string, text: string): Promise<HistoryEntry[]> {
+    return this.enqueue(async () => {
+      const entries = await this.readAll()
+      const target = entries.find((entry) => entry.id === id)
+      if (target === undefined || target.text === text) return entries
+      const next = replaceHistoryEntryText(entries, id, text)
+      await this.writeAll(next)
+      return next
     })
   }
 

@@ -7,6 +7,7 @@ import {
   parseLlmBackend,
   parseLlmBaseUrl,
   parseLlmModel,
+  parseUndoWindowMinutes,
   type MergeResult,
   type StoredPreferences
 } from '../core/preferences/merge'
@@ -66,7 +67,8 @@ export class ThemeStore {
       // Absence is meaningful: it is what tells the first launch to apply the
       // built-in autostart default exactly once.
       launchAtLogin:
-        typeof record.launchAtLogin === 'boolean' ? record.launchAtLogin : undefined
+        typeof record.launchAtLogin === 'boolean' ? record.launchAtLogin : undefined,
+      undoWindowMinutes: parseUndoWindowMinutes(record.undoWindowMinutes)
     }
   }
 

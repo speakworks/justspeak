@@ -26,6 +26,9 @@ export interface TrayHost {
   hotkey: () => string
   onToggleWindow: () => void
   onToggleDictation: () => void
+  /** True only while the guarded undo can still act. */
+  undoAvailable: () => boolean
+  onUndoLast: () => void
   onOpenSettings: () => void
   onQuit: () => void
 }
@@ -51,6 +54,7 @@ function dispatch(action: TrayAction): void {
   if (!host) return
   if (action === 'toggle-window') host.onToggleWindow()
   else if (action === 'toggle-dictation') host.onToggleDictation()
+  else if (action === 'undo-last') host.onUndoLast()
   else if (action === 'open-settings') host.onOpenSettings()
   else host.onQuit()
 }
@@ -64,7 +68,11 @@ function dispatch(action: TrayAction): void {
  */
 function renderMenu(): void {
   if (!tray || !host) return
-  const input = { windowVisible: windowVisible(), dictation: host.dictation() }
+  const input = {
+    windowVisible: windowVisible(),
+    dictation: host.dictation(),
+    undoAvailable: host.undoAvailable()
+  }
   const items = trayMenu(input)
   const signature = JSON.stringify(items)
   if (signature === lastMenuSignature) return

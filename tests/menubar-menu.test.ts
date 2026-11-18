@@ -5,10 +5,10 @@ import { describe, expect, it } from 'vitest'
 import { closeAction, trayMenu, trayTooltip } from '../src/core/menubar/menu'
 import type { AppState } from '../src/shared/ipc'
 
-const IDS = ['toggle-window', 'toggle-dictation', 'open-settings', 'quit']
+const IDS = ['toggle-window', 'toggle-dictation', 'undo-last', 'open-settings', 'quit']
 
-function items(state: AppState, windowVisible = true) {
-  return trayMenu({ windowVisible, dictation: state })
+function items(state: AppState, windowVisible = true, undoAvailable = false) {
+  return trayMenu({ windowVisible, dictation: state, undoAvailable })
 }
 
 describe('menu-bar dictation item follows the session state', () => {
@@ -41,7 +41,17 @@ describe('menu-bar window item names the action it performs', () => {
     expect(visible.find((entry) => entry.id === 'toggle-window')?.label).toBe('隐藏主窗口')
   })
 
-  it('always exposes the same four actions in the same order', () => {
+  it('offers undo only while a guarded record exists', () => {
+    expect(items('idle', true, false).find((entry) => entry.id === 'undo-last')).toMatchObject({
+      label: '撤销上一次插入',
+      enabled: false
+    })
+    expect(items('idle', true, true).find((entry) => entry.id === 'undo-last')).toMatchObject({
+      enabled: true
+    })
+  })
+
+  it('always exposes the same five actions in the same order', () => {
     // A resident app must never strand the user without a way back to the
     // window or out of the app, so no state may drop an item.
     for (const state of ['idle', 'recording', 'transcribing', 'pasting', 'error'] as AppState[]) {

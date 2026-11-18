@@ -1048,22 +1048,65 @@ html[data-panel='1'] #root {
 .result-panel-text {
   flex: 1;
   min-height: 0;
+  width: 100%;
   margin: 0;
+  padding: 0;
   overflow-y: auto;
+  border: 0;
+  background: transparent;
   color: var(--text);
+  font-family: inherit;
   font-size: 13.5px;
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  resize: none;
   user-select: text;
+}
+
+.result-panel-text:focus {
+  outline: none;
+}
+
+.result-panel-notice {
+  flex: none;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 .result-panel-foot {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px 12px;
+}
+
+.result-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.result-panel-quiet {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.result-panel-quiet:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 
 .result-panel-hint {
@@ -1086,6 +1129,15 @@ html[data-panel='1'] #root {
 .result-panel-copy:hover {
   background: var(--accent);
   color: #0f1f16;
+}
+
+.result-panel-copy:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.undo-window-input {
+  width: 72px;
 }
 
 /* ---- First-run onboarding ------------------------------------------------ */

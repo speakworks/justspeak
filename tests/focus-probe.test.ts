@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createFocusProbe } from '../src/main/focus-probe'
+import { createFocusProbe, createFocusTargetProbe } from '../src/main/focus-probe'
 
 describe('focus probe adapter', () => {
   it('parses the Accessibility line into an editable decision', async () => {
@@ -25,5 +25,32 @@ describe('focus probe adapter', () => {
   it('falls back to unknown when the script itself cannot read the element', async () => {
     const exec = vi.fn(async () => ({ stdout: 'UNKNOWN\n' }))
     await expect(createFocusProbe(exec)()).resolves.toBe('unknown')
+  })
+})
+
+describe('extended focus target probe', () => {
+  it('returns the app and focused-element identity the undo guard needs', async () => {
+    const exec = vi.fn(async () => ({
+      stdout: 'Safari\ncom.apple.Safari\nAXTextArea\n1\nmain-editor\n'
+    }))
+    await expect(createFocusTargetProbe(exec)()).resolves.toEqual({
+      kind: 'editable',
+      appName: 'Safari',
+      bundleId: 'com.apple.Safari',
+      role: 'AXTextArea',
+      identity: 'main-editor'
+    })
+  })
+
+  it('returns an unknown target instead of guessing when the probe fails', async () => {
+    const exec = vi.fn(async () => {
+      throw new Error('Not authorized to send Apple events')
+    })
+    await expect(createFocusTargetProbe(exec)()).resolves.toMatchObject({
+      kind: 'unknown',
+      appName: null,
+      role: null,
+      identity: ''
+    })
   })
 })

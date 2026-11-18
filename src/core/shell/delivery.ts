@@ -1,4 +1,4 @@
-import type { FocusKind } from '../focus/editability'
+import { UNKNOWN_FOCUS_TARGET, type FocusKind, type FocusTarget } from '../focus/editability'
 
 /**
  * Where a finished transcript goes.
@@ -25,7 +25,12 @@ export interface DeliveryPorts {
   /** Reads the real OS focus state; false while another app is frontmost. */
   appFocused: () => boolean
   /** Reads the frontmost element's editability; rejecting means unknown. */
-  probeFocus: () => Promise<FocusKind>
+  probeFocus?: () => Promise<FocusKind>
+  /**
+   * Extended probe used by the correction path. When supplied it replaces
+   * `probeFocus` and returns the app/role/identity the guard needs.
+   */
+  probeTarget?: () => Promise<FocusTarget>
   /** Hand the text to the app's own input, without touching the clipboard. */
   insert: (text: string) => void
   /** Paste into the frontmost app through the clipboard. */
@@ -34,31 +39,49 @@ export interface DeliveryPorts {
   showPanel: (text: string) => void
 }
 
+/** What a delivery did, plus the focus it was decided from. */
+export interface DeliveryOutcome {
+  target: DeliveryTarget
+  /** `null` when the app's own window took the text and no probe ran. */
+  focus: FocusTarget | null
+}
+
 /**
  * Route one transcript to exactly one target. Returns which one ran, so a
  * caller can record it without re-deriving the decision. A probe failure is
  * `unknown`, which lands on the panel — never a silent paste.
  */
+export async function deliverTranscriptDetailed(
+  text: string,
+  ports: DeliveryPorts
+): Promise<DeliveryOutcome> {
+  if (ports.appFocused()) {
+    ports.insert(text)
+    return { target: 'insert', focus: null }
+  }
+
+  let focus: FocusTarget = UNKNOWN_FOCUS_TARGET
+  try {
+    if (ports.probeTarget) {
+      focus = await ports.probeTarget()
+    } else if (ports.probeFocus) {
+      focus = { ...UNKNOWN_FOCUS_TARGET, kind: await ports.probeFocus() }
+    }
+  } catch {
+    focus = UNKNOWN_FOCUS_TARGET
+  }
+  const target = deliveryTarget({ appFocused: false, focus: focus.kind })
+  if (target === 'paste') {
+    await ports.paste(text)
+    return { target: 'paste', focus }
+  }
+  ports.showPanel(text)
+  return { target: 'panel', focus }
+}
+
 export async function deliverTranscript(
   text: string,
   ports: DeliveryPorts
 ): Promise<DeliveryTarget> {
-  if (ports.appFocused()) {
-    ports.insert(text)
-    return 'insert'
-  }
-
-  let focus: FocusKind = 'unknown'
-  try {
-    focus = await ports.probeFocus()
-  } catch {
-    focus = 'unknown'
-  }
-  const target = deliveryTarget({ appFocused: false, focus })
-  if (target === 'paste') {
-    await ports.paste(text)
-    return 'paste'
-  }
-  ports.showPanel(text)
-  return 'panel'
+  return (await deliverTranscriptDetailed(text, ports)).target
 }

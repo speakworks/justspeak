@@ -643,6 +643,12 @@ textarea {
   background: var(--amber-soft);
 }
 
+.settings-status.pending {
+  color: var(--amber);
+  border-color: var(--amber-line);
+  background: var(--amber-soft);
+}
+
 .settings-control {
   display: flex;
   align-items: center;

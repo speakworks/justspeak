@@ -86,8 +86,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * Merge `patch` over `existing`.
  *
  * - Unknown keys already in `existing` (including non-object input) are kept.
- * - Only `theme`, `hotkey` and the three LLM settings are writable; any other
- *   patch key is rejected.
+ * - Only the keys in `WRITABLE_KEYS` are writable (theme, hotkey, the three LLM
+ *   settings, the update toggles, and `launchAtLogin`); any other patch key is
+ *   rejected.
  * - An invalid theme or hotkey rejects the whole patch: nothing is partially
  *   applied, so a typo can never leave the file in a half-updated state.
  */

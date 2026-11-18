@@ -150,15 +150,18 @@ scroll inside its own region instead of the page.
 ### Requirement: Autostart SHALL report the OS login-item state
 
 The settings surface SHALL render an 开机自动启动 row whose switch value comes
-from `app.getLoginItemSettings().openAtLogin` on every preferences read. The row
-SHALL NOT display a value cached in `preferences.json`. It SHALL use the existing
-honest labels: `default` when the system reports the app opens at login (the
-built-in default is on), `override` when the system reports it off, and
-`unavailable` with a reason when the login-item API is missing or the read
-throws. Toggling SHALL call `app.setLoginItemSettings({ openAtLogin })` and then
-re-read the system; the UI SHALL adopt the read-back value, and a value the
-system did not accept SHALL be reported as a failure instead of being displayed
-as applied.
+from `app.getLoginItemSettings()` on every preferences read, including its macOS
+`status`. The row SHALL NOT display a value cached in `preferences.json`. It
+SHALL use the honest labels: `default` when the system reports `enabled` (the
+built-in default is on), `override` when the system reports `not-registered` or
+`not-found`, `unavailable` with a reason only when the login-item API is missing
+or the read throws, and `pending` when the API works but the last change did not
+take effect (`未生效`). A `requires-approval` status SHALL be reported as its own
+`pending` state labelled 「待允许」 with a System Settings approval instruction; it
+SHALL NOT be presented as an unavailable API or a failed registration. Toggling
+SHALL call `app.setLoginItemSettings({ openAtLogin })` and then re-read the
+system; the UI SHALL adopt the read-back value, and a value the system did not
+accept SHALL be reported as not applied instead of being displayed as applied.
 
 #### Scenario: External disable is reflected
 
@@ -179,6 +182,18 @@ as applied.
 - **WHEN** `getLoginItemSettings` is missing or throws
 - **THEN** the row is labelled 不可用 (`unavailable`) with the reason
 - **AND** its switch is disabled rather than shown as off
+
+#### Scenario: macOS requires approval
+
+- **WHEN** `getLoginItemSettings().status` is `requires-approval`
+- **THEN** the row is labelled 待允许 (`pending`) with the System Settings instruction
+- **AND** it is not labelled 不可用 and does not claim the build is unsigned
+
+#### Scenario: The API works but the change did not take effect
+
+- **WHEN** the read succeeds and the last `setLoginItemSettings` was not confirmed
+- **THEN** the row is labelled 未生效 (`pending`) with the refusal reason
+- **AND** it is not labelled 不可用, because the control can be retried
 
 #### Scenario: A refused change is not claimed as applied
 

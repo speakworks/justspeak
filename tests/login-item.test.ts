@@ -16,14 +16,19 @@ vi.mock('electron', () => ({
 
 import { app } from 'electron'
 import {
+  applyAutostartChoice,
   LOGIN_ITEM_REFUSED_OFF_REASON,
   LOGIN_ITEM_REFUSED_ON_REASON,
+  LOGIN_ITEM_REQUIRES_APPROVAL_REASON,
   planStartupAutostart,
-  resolveAutostartWrite
+  readAutostartView,
+  resolveAutostartWrite,
+  seedAutostartOnFirstRun
 } from '../src/core/preferences/autostart'
 import { mergePreferences } from '../src/core/preferences/merge'
 import { createLoginItemController, LoginItemController } from '../src/main/login-item'
 import { ThemeStore } from '../src/main/theme-store'
+import type { LoginItemView } from '../src/shared/ipc'
 
 const mockGet = app.getLoginItemSettings as unknown as Mock
 const mockSet = app.setLoginItemSettings as unknown as Mock
@@ -40,8 +45,18 @@ function controller(): LoginItemController {
   return createLoginItemController()
 }
 
+function on(): LoginItemView {
+  return { available: true, openAtLogin: true, status: 'enabled' }
+}
+
+function off(): LoginItemView {
+  return { available: true, openAtLogin: false, status: 'not-registered' }
+}
+
 beforeEach(() => {
-  vi.clearAllMocks()
+  // Reset implementations too: an earlier test's "set throws" mock must not
+  // leak into the next one.
+  vi.resetAllMocks()
 })
 
 afterEach(() => {
@@ -51,10 +66,24 @@ afterEach(() => {
 describe('login item adapter', () => {
   it('reads the OS state instead of a cached preference', () => {
     mockGet.mockReturnValue({ openAtLogin: true })
-    expect(controller().read()).toEqual({ available: true, openAtLogin: true })
+    expect(controller().read()).toEqual(on())
 
     mockGet.mockReturnValue({ openAtLogin: false })
-    expect(controller().read()).toEqual({ available: true, openAtLogin: false })
+    expect(controller().read()).toEqual(off())
+  })
+
+  it('keeps the macOS requires-approval status instead of flattening it to off', () => {
+    mockGet.mockReturnValue({ openAtLogin: false, status: 'requires-approval' })
+    expect(controller().read()).toEqual({
+      available: true,
+      openAtLogin: false,
+      status: 'requires-approval'
+    })
+  })
+
+  it('trusts the status over the boolean when macOS reports both', () => {
+    mockGet.mockReturnValue({ openAtLogin: true, status: 'not-registered' })
+    expect(controller().read()).toMatchObject({ openAtLogin: false, status: 'not-registered' })
   })
 
   it('writes the requested value and then re-reads the OS', () => {
@@ -80,6 +109,15 @@ describe('login item adapter', () => {
     })
   })
 
+  it('reports requires-approval with its own reason', () => {
+    mockGet.mockReturnValue({ openAtLogin: false, status: 'requires-approval' })
+    expect(controller().set(true)).toMatchObject({
+      ok: false,
+      openAtLogin: false,
+      message: LOGIN_ITEM_REQUIRES_APPROVAL_REASON
+    })
+  })
+
   it('reports a refused disable with the off-specific reason', () => {
     mockGet.mockReturnValue({ openAtLogin: true })
     expect(controller().set(false)).toMatchObject({
@@ -97,6 +135,7 @@ describe('login item adapter', () => {
     expect(controller().read()).toEqual({
       available: false,
       openAtLogin: false,
+      status: 'not-registered',
       message: expect.stringContaining('denied')
     })
     // A failed read after set is a failed change, not a crash.
@@ -118,9 +157,9 @@ describe('login item adapter', () => {
     expect(mockGet).not.toHaveBeenCalled()
   })
 
-  it('treats a missing or malformed OS answer as off, not as a crash', () => {
+  it('treats a malformed OS answer as off, not as a crash', () => {
     mockGet.mockReturnValue({})
-    expect(controller().read()).toEqual({ available: true, openAtLogin: false })
+    expect(controller().read()).toEqual(off())
   })
 })
 
@@ -133,16 +172,100 @@ describe('first-run plan', () => {
   })
 })
 
+describe('startup seeding wiring', () => {
+  it('does not call setLoginItemSettings when a choice is already stored', async () => {
+    mockGet.mockReturnValue({ openAtLogin: false })
+    const persist = vi.fn()
+
+    await seedAutostartOnFirstRun(false, {
+      read: () => controller().read(),
+      set: (value) => controller().set(value),
+      persist
+    })
+    await seedAutostartOnFirstRun(true, {
+      read: () => controller().read(),
+      set: (value) => controller().set(value),
+      persist
+    })
+
+    expect(mockSet).not.toHaveBeenCalled()
+    expect(persist).not.toHaveBeenCalled()
+  })
+
+  it('persists the default only when the OS confirms it', async () => {
+    const persist = vi.fn()
+    // A first-run set that macOS refuses: nothing may be recorded, so the next
+    // launch retries instead of treating "not registered" as a user choice.
+    mockGet.mockReturnValue({ openAtLogin: false })
+    const refused = await seedAutostartOnFirstRun(undefined, {
+      read: () => controller().read(),
+      set: (value) => controller().set(value),
+      persist
+    })
+    expect(refused?.ok).toBe(false)
+    expect(persist).not.toHaveBeenCalled()
+
+    // A confirmed set records exactly what the OS reported.
+    mockGet.mockReturnValue({ openAtLogin: true })
+    const confirmed = await seedAutostartOnFirstRun(undefined, {
+      read: () => controller().read(),
+      set: (value) => controller().set(value),
+      persist
+    })
+    expect(confirmed?.ok).toBe(true)
+    expect(persist).toHaveBeenCalledWith(true)
+  })
+})
+
+describe('toggle wiring', () => {
+  it('persists the read-back rather than the requested value', async () => {
+    const persist = vi.fn()
+    // Deliberately inconsistent ports: the write claims success but the OS
+    // reports off. Only the read-back may reach persistence.
+    const result = await applyAutostartChoice(true, {
+      set: () => ({ ok: true, openAtLogin: false }),
+      persist
+    })
+
+    expect(result).toEqual({ ok: true, openAtLogin: false })
+    expect(persist).toHaveBeenCalledWith(false)
+  })
+
+  it('persists nothing when the OS refuses the change', async () => {
+    mockGet.mockReturnValue({ openAtLogin: false })
+    const persist = vi.fn()
+    const result = await applyAutostartChoice(true, {
+      set: (value) => controller().set(value),
+      persist
+    })
+
+    expect(result.ok).toBe(false)
+    expect(persist).not.toHaveBeenCalled()
+  })
+})
+
+describe('preferences read wiring', () => {
+  it('asks the OS once per preferences read instead of caching', () => {
+    mockGet.mockReturnValue({ openAtLogin: true })
+    const first = readAutostartView(() => controller().read())
+    const second = readAutostartView(() => controller().read())
+
+    expect(mockGet).toHaveBeenCalledTimes(2)
+    expect(first).toEqual(on())
+    expect(second).toEqual(on())
+  })
+
+  it('attaches a refusal notice to an otherwise available view', () => {
+    mockGet.mockReturnValue({ openAtLogin: false })
+    const view = readAutostartView(() => controller().read(), '系统没有接受设置。')
+    expect(view).toMatchObject({ available: true, message: '系统没有接受设置。' })
+  })
+})
+
 describe('write verdict', () => {
   it('marks the write ok only when the read-back matches the request', () => {
-    expect(resolveAutostartWrite(true, { available: true, openAtLogin: true })).toEqual({
-      ok: true,
-      openAtLogin: true
-    })
-    expect(resolveAutostartWrite(false, { available: true, openAtLogin: false })).toEqual({
-      ok: true,
-      openAtLogin: false
-    })
+    expect(resolveAutostartWrite(true, on())).toEqual({ ok: true, openAtLogin: true })
+    expect(resolveAutostartWrite(false, off())).toEqual({ ok: true, openAtLogin: false })
   })
 
   it('carries the unavailability reason through', () => {
@@ -150,9 +273,20 @@ describe('write verdict', () => {
       resolveAutostartWrite(true, {
         available: false,
         openAtLogin: false,
+        status: 'not-registered',
         message: '无法读取登录项状态：boom'
       })
     ).toEqual({ ok: false, message: '无法读取登录项状态：boom' })
+  })
+
+  it('treats turning it off as satisfied while approval is pending', () => {
+    expect(
+      resolveAutostartWrite(false, {
+        available: true,
+        openAtLogin: false,
+        status: 'requires-approval'
+      })
+    ).toEqual({ ok: true, openAtLogin: false })
   })
 })
 

@@ -45,7 +45,12 @@ import {
   parseLlmModel,
   planPreferenceSet
 } from '../core/preferences/merge'
-import { planStartupAutostart, type AutostartWriteResult } from '../core/preferences/autostart'
+import {
+  applyAutostartChoice,
+  readAutostartView,
+  seedAutostartOnFirstRun,
+  type AutostartWriteResult
+} from '../core/preferences/autostart'
 import { summarizeProvider } from '../core/preferences/view'
 import { buildDiagnosticsSummary } from '../core/diagnostics/summary'
 import { deliverTranscript } from '../core/shell/delivery'
@@ -388,15 +393,16 @@ async function readPreferencesView(loginItemNotice?: string): Promise<Preference
     themePreference = stored.theme
     applyTheme()
   }
-  const currentLoginItem = loginItem?.read() ?? {
-    available: false,
-    openAtLogin: false,
-    message: '登录项服务尚未就绪。'
-  }
-  const loginItemView =
-    currentLoginItem.available && loginItemNotice !== undefined
-      ? { ...currentLoginItem, message: loginItemNotice }
-      : currentLoginItem
+  const loginItemView = readAutostartView(
+    () =>
+      loginItem?.read() ?? {
+        available: false,
+        openAtLogin: false,
+        status: 'not-registered' as const,
+        message: '登录项服务尚未就绪。'
+      },
+    loginItemNotice
+  )
   const vocabulary = await vocabularyStore.loadDetailed()
   postprocessOptions = vocabulary.options
   const llmConfig = {
@@ -1291,23 +1297,22 @@ app.whenReady().then(async () => {
   const preferences = await themeStore.loadPreferences()
   themePreference = preferences.theme
   loginItem = createLoginItemController()
-  if (planStartupAutostart(preferences.launchAtLogin).seedDefault) {
-    // First run only: the built-in default is on. Once any value is stored —
-    // including one the user set in System Settings — startup leaves the OS
-    // setting alone, so a manual disable survives.
-    const applied = loginItem.set(true)
-    if (applied.openAtLogin !== undefined) {
-      try {
-        const merged = await themeStore.update({ launchAtLogin: applied.openAtLogin })
-        if (!merged.ok) {
-          console.warn('[login-item] could not record the default', merged.rejected[0]?.reason)
-        }
-      } catch (error) {
-        console.warn('[login-item] could not record the default', error)
+  try {
+    const seeded = await seedAutostartOnFirstRun(preferences.launchAtLogin, {
+      read: () => loginItem!.read(),
+      set: (openAtLogin) => loginItem!.set(openAtLogin),
+      persist: async (openAtLogin) => {
+        const merged = await themeStore.update({ launchAtLogin: openAtLogin })
+        if (!merged.ok) throw new Error(merged.rejected[0]?.reason ?? '开机自启记录失败。')
       }
-    } else {
-      console.warn('[login-item] first-run default was not applied', applied.message)
+    })
+    if (seeded && !seeded.ok) {
+      // Nothing is persisted, so the next launch retries the default instead
+      // of treating an unconfirmed registration as a user choice of off.
+      console.warn('[login-item] first-run default was not confirmed', seeded.message)
     }
+  } catch (error) {
+    console.warn('[login-item] first-run seeding failed', error)
   }
   try {
     llmManager = await LlmManager.create({
@@ -1479,8 +1484,21 @@ app.whenReady().then(async () => {
           ok = false
           message = '登录项服务尚未就绪。'
         } else {
-          autostartResult = loginItem.set(plan.update.launchAtLogin)
-          if (!autostartResult.ok) {
+          try {
+            autostartResult = await applyAutostartChoice(plan.update.launchAtLogin, {
+              set: (openAtLogin) => loginItem!.set(openAtLogin),
+              persist: async (openAtLogin) => {
+                const merged = await themeStore.update({ launchAtLogin: openAtLogin })
+                if (!merged.ok) {
+                  throw new Error(merged.rejected[0]?.reason ?? '开机自启记录失败。')
+                }
+              }
+            })
+          } catch (error) {
+            ok = false
+            message = `保存开机自启失败：${error instanceof Error ? error.message : String(error)}`
+          }
+          if (autostartResult && !autostartResult.ok) {
             ok = false
             message = autostartResult.message
           }
@@ -1494,16 +1512,12 @@ app.whenReady().then(async () => {
           llmBackend?: PreferencesView['llm']['backend']
           llmBaseUrl?: string
           llmModel?: string
-          launchAtLogin?: boolean
         } = {}
         if (plan.update.theme !== undefined) update.theme = plan.update.theme
         if (hotkeyResult?.ok) update.hotkey = hotkeyResult.accelerator
         if (plan.update.llmBackend !== undefined) update.llmBackend = plan.update.llmBackend
         if (plan.update.llmBaseUrl !== undefined) update.llmBaseUrl = plan.update.llmBaseUrl
         if (plan.update.llmModel !== undefined) update.llmModel = plan.update.llmModel
-        if (autostartResult?.openAtLogin !== undefined) {
-          update.launchAtLogin = autostartResult.openAtLogin
-        }
         if (Object.keys(update).length > 0) {
           try {
             const merged = await themeStore.update(update)

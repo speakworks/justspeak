@@ -43,7 +43,7 @@ const PREFERENCES: PreferencesView = {
       state: 'idle'
     }
   },
-  loginItem: { available: true, openAtLogin: true },
+  loginItem: { available: true, openAtLogin: true, status: 'enabled' },
   updateAutoCheck: false
 }
 
@@ -115,23 +115,41 @@ describe('theme state', () => {
 
 describe('autostart state', () => {
   it('labels an enabled login item as the built-in default', () => {
-    expect(describeAutostart({ available: true, openAtLogin: true })).toMatchObject({
+    expect(
+      describeAutostart({ available: true, openAtLogin: true, status: 'enabled' })
+    ).toMatchObject({
       status: 'default',
       statusLabel: '默认'
     })
   })
 
   it('labels a system-reported off state as an override and points at System Settings', () => {
-    const state = describeAutostart({ available: true, openAtLogin: false })
+    const state = describeAutostart({
+      available: true,
+      openAtLogin: false,
+      status: 'not-registered'
+    })
     expect(state.status).toBe('override')
     expect(state.statusLabel).toBe('已修改')
     expect(state.detail).toContain('系统设置')
+  })
+
+  it('reports requires-approval as its own pending state, not as a refusal', () => {
+    const state = describeAutostart({
+      available: true,
+      openAtLogin: false,
+      status: 'requires-approval'
+    })
+    expect(state.status).toBe('pending')
+    expect(state.statusLabel).toBe('待允许')
+    expect(state.detail).toContain('允许开机自启')
   })
 
   it('labels an unreadable login item as unavailable with the reason', () => {
     const state = describeAutostart({
       available: false,
       openAtLogin: false,
+      status: 'not-registered',
       message: '无法读取登录项状态：boom'
     })
     expect(state).toMatchObject({
@@ -141,15 +159,16 @@ describe('autostart state', () => {
     })
   })
 
-  it('labels a refused change as unavailable even when the read itself worked', () => {
+  it('labels an available but unapplied change as pending, not unavailable', () => {
     const state = describeAutostart({
       available: true,
       openAtLogin: false,
+      status: 'not-registered',
       message: '系统没有接受开机自启设置。'
     })
     expect(state).toMatchObject({
-      status: 'unavailable',
-      statusLabel: '不可用',
+      status: 'pending',
+      statusLabel: '未生效',
       detail: '系统没有接受开机自启设置。'
     })
   })

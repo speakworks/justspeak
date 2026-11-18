@@ -78,5 +78,6 @@ Built-in default is on, so:
   reports the OS's answer (`off`) and a refused toggle names the likely cause.
 - Disabling the item in 系统设置 → 通用 → 登录项 is reflected as `off` in the
   app after the next preferences read; the app does not fight the user.
-- macOS 13+ deprecates/ignores the legacy `openAsHidden` field. This change does
-  not use it, so the app launches with its normal window behaviour.
+- macOS 13+ deprecated/ignored the legacy `openAsHidden` field, and Electron 45
+  has removed it from the API. This change never referenced it, so the app
+  launches with its normal window behaviour.

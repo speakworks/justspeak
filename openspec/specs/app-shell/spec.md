@@ -93,11 +93,14 @@ the text already in the input.
 
 On the first launch, when `preferences.json` has no `launchAtLogin` key, the app
 SHALL apply the built-in default `openAtLogin: true` through the OS login-item
-API and SHALL persist `launchAtLogin` with the value the system reports back.
-On every later launch, when the key exists, the app SHALL NOT call
+API. It SHALL persist `launchAtLogin` only when the system's read-back confirms
+that the setting took effect. An unconfirmed seed — an unsigned or
+not-yet-approved registration, for example — SHALL write nothing, so the next
+launch retries the default instead of recording the OS's off state as a user
+choice. On every later launch, when the key exists, the app SHALL NOT call
 `setLoginItemSettings`, so a login item the user disabled in System Settings
 stays disabled. An explicit settings toggle SHALL take effect on the same launch
-and SHALL persist the accepted read-back value. The seeding step SHALL be
+and SHALL persist the confirmed read-back value. The seeding step SHALL be
 idempotent: repeating it with a stored choice SHALL make no OS call and write
 nothing.
 
@@ -106,6 +109,14 @@ nothing.
 - **WHEN** the app starts and `preferences.json` has no `launchAtLogin` key
 - **THEN** it calls `setLoginItemSettings({ openAtLogin: true })` once
 - **AND** it stores the value subsequently reported by `getLoginItemSettings`
+  only when that read-back confirms the setting was accepted
+
+#### Scenario: An unconfirmed seed is retried, not recorded
+
+- **WHEN** the first-run write is not confirmed by the OS (unsigned build,
+  bundle outside `/Applications`, or `requires-approval`)
+- **THEN** `launchAtLogin` is not written
+- **AND** the next launch runs the same first-run seeding again
 
 #### Scenario: A stored choice is never overwritten
 

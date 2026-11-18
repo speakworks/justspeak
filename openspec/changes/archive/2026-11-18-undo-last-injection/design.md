@@ -51,9 +51,12 @@ wire format becomes five newline-separated fields; `parseFocusProbeLine` keeps
 its old two-field contract and `parseFocusProbeTarget` handles the new one, so
 existing delivery tests and their shims do not change.
 
-The guard compares `appName`, `role`, and `identity`. An empty identifier on
-both sides is accepted because that is the best evidence macOS offers; an empty
-identifier on one side only is a mismatch. `kind` must be `editable`.
+The guard compares `appName`, `role`, and `identity`, and requires a non-empty
+identity on both the record and the fresh probe. An empty `AXIdentifier` and
+`AXTitle` mean the target cannot be distinguished from another field with the
+same role in the same app, so the guard refuses automatic deletion rather than
+falling back to app-plus-role matching. A bundle-id mismatch, when both sides
+carry one, is also a refusal. `kind` must be `editable`.
 
 ### 2. One pure guard, one slot
 
@@ -136,9 +139,10 @@ changed target correctly lands on the refusal path.
 
 ## Known limitations
 
-- Element identity frequently falls back to role only. Two same-role fields in
-  one app, combined with a caret move after insertion, can still delete the
-  wrong span; the slot is single and time-bounded to limit the damage.
+- Element identity is frequently absent. When an element exposes neither
+  `AXIdentifier` nor `AXTitle`, automatic deletion is refused and the text is
+  preserved in the result panel; there is no app-plus-role fallback. This is a
+  deliberate capability loss in exchange for never deleting the wrong span.
 - Smart punctuation or autocorrect in the target app can change the inserted
   text, so the recorded grapheme count can over- or under-delete.
 - Reinsertion cannot reactivate the original app without a new Automation

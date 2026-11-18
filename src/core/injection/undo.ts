@@ -55,6 +55,7 @@ export type UndoRefusalReason =
   | 'nothing-inserted'
   | 'app-changed'
   | 'focus-changed'
+  | 'unverifiable-target'
 
 export type UndoDecision =
   | { ok: true; count: number }
@@ -132,6 +133,9 @@ export function isReSayCandidate(
   return (
     record !== undefined &&
     record.method === 'paste' &&
+    // An empty identity can never pass the guard, so offering re-say would
+    // only produce a guaranteed refusal.
+    record.focusIdentity !== '' &&
     undoWindowOpen(record, nowMs, windowMs)
   )
 }
@@ -180,10 +184,34 @@ export function evaluateUndoGuard(input: {
       message: '已切换目标应用，未做自动删除。'
     }
   }
+  // Same visible app name is not enough: a helper or a different bundle can
+  // share a name. Only refuse on a proven mismatch; an absent bundle id on
+  // either side is already covered by the identity requirement below.
+  if (
+    record.bundleId !== null &&
+    target.bundleId !== null &&
+    record.bundleId !== target.bundleId
+  ) {
+    return {
+      ok: false,
+      reason: 'app-changed',
+      message: '目标应用与插入时不一致，未做自动删除。'
+    }
+  }
   if (target.kind !== 'editable' || target.role !== record.focusRole) {
     return {
       ok: false,
       reason: 'focus-changed',
+      message: '无法确认原来的输入位置，未做自动删除。'
+    }
+  }
+  // Without a verifiable element identity the target cannot be distinguished
+  // from another field with the same role in the same app. The owner's hard
+  // rule: never auto-delete in that case, even when both sides are empty.
+  if (record.focusIdentity === '' || target.identity === '') {
+    return {
+      ok: false,
+      reason: 'unverifiable-target',
       message: '无法确认原来的输入位置，未做自动删除。'
     }
   }
@@ -208,6 +236,8 @@ export function undoRefusalTitle(reason: UndoRefusalReason): string {
       return '已切换目标'
     case 'focus-changed':
       return '焦点已改变'
+    case 'unverifiable-target':
+      return '无法确认输入位置'
     case 'no-record':
       return '没有可撤销的插入'
   }

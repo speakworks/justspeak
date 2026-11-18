@@ -203,28 +203,48 @@ describe('the undo guard', () => {
     expect(decision).toMatchObject({ ok: false, reason: 'focus-changed' })
   })
 
-  it('refuses when the element identity changed, including one side being empty', () => {
-    for (const identity of ['other-editor', '']) {
-      const decision = evaluateUndoGuard({
-        record: record(),
-        nowMs: 2_000,
-        windowMs: DEFAULT_UNDO_WINDOW_MS,
-        appFocused: false,
-        target: { ...TARGET, identity }
-      })
-      expect(decision, identity).toMatchObject({ ok: false, reason: 'focus-changed' })
-    }
-  })
-
-  it('accepts two empty identities as the best evidence macOS offers', () => {
+  it('refuses when the element identity changed', () => {
     const decision = evaluateUndoGuard({
-      record: record({ focusIdentity: '' }),
+      record: record(),
       nowMs: 2_000,
       windowMs: DEFAULT_UNDO_WINDOW_MS,
       appFocused: false,
-      target: { ...TARGET, identity: '' }
+      target: { ...TARGET, identity: 'other-editor' }
     })
-    expect(decision).toEqual({ ok: true, count: 2 })
+    expect(decision).toMatchObject({ ok: false, reason: 'focus-changed' })
+  })
+
+  it('refuses automatic deletion when either side has no verifiable identity', () => {
+    // The owner's hard rule: an empty identity cannot distinguish this field
+    // from another same-role field in the same app, even when both are empty.
+    for (const [recordIdentity, targetIdentity] of [
+      ['', ''],
+      ['', 'main-editor'],
+      ['main-editor', '']
+    ] as const) {
+      const decision = evaluateUndoGuard({
+        record: record({ focusIdentity: recordIdentity }),
+        nowMs: 2_000,
+        windowMs: DEFAULT_UNDO_WINDOW_MS,
+        appFocused: false,
+        target: { ...TARGET, identity: targetIdentity }
+      })
+      expect(decision, `${recordIdentity || '∅'}/${targetIdentity || '∅'}`).toMatchObject({
+        ok: false,
+        reason: 'unverifiable-target'
+      })
+    }
+  })
+
+  it('refuses when the app name matches but the bundle ids differ', () => {
+    const decision = evaluateUndoGuard({
+      record: record(),
+      nowMs: 2_000,
+      windowMs: DEFAULT_UNDO_WINDOW_MS,
+      appFocused: false,
+      target: { ...TARGET, bundleId: 'com.example.safari' }
+    })
+    expect(decision).toMatchObject({ ok: false, reason: 'app-changed' })
   })
 
   it('refuses when the clock moved backwards', () => {
@@ -233,13 +253,17 @@ describe('the undo guard', () => {
 })
 
 describe('re-say candidacy', () => {
-  it('accepts only a real paste inside the window', () => {
+  it('accepts only a verifiable real paste inside the window', () => {
     expect(isReSayCandidate(record(), 2_000, DEFAULT_UNDO_WINDOW_MS)).toBe(true)
     expect(isReSayCandidate(record({ method: 'panel' }), 2_000, DEFAULT_UNDO_WINDOW_MS)).toBe(false)
     expect(
       isReSayCandidate(record(), 1_000 + DEFAULT_UNDO_WINDOW_MS + 1, DEFAULT_UNDO_WINDOW_MS)
     ).toBe(false)
     expect(isReSayCandidate(undefined, 2_000, DEFAULT_UNDO_WINDOW_MS)).toBe(false)
+    // An empty identity can never pass the guard.
+    expect(
+      isReSayCandidate(record({ focusIdentity: '' }), 2_000, DEFAULT_UNDO_WINDOW_MS)
+    ).toBe(false)
   })
 })
 
@@ -265,5 +289,6 @@ describe('refusal titles', () => {
     expect(undoRefusalTitle('app-changed')).toContain('切换')
     expect(undoRefusalTitle('focus-changed')).toContain('焦点')
     expect(undoRefusalTitle('nothing-inserted')).toContain('插入')
+    expect(undoRefusalTitle('unverifiable-target')).toContain('输入位置')
   })
 })

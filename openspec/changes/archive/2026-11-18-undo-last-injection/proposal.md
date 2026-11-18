@@ -60,11 +60,10 @@ in whichever window happens to be frontmost. The design therefore treats
 ## Risks
 
 - **Element identity is not always exposed.** Accessibility often omits
-  `AXIdentifier` and `AXTitle`. The guard then compares the app and the role
-  only, and refuses automatic deletion whenever the probe cannot confirm an
-  editable element. The residual risk (two same-role fields in one app, with
-  the caret moved after insertion) is documented in the PR and in the spec as a
-  known-unreliable case.
+  `AXIdentifier` and `AXTitle`. The guard requires a non-empty identity on both
+  sides and treats an empty one as unverifiable, so automatic deletion is
+  refused and the text goes to the result panel. There is no app-plus-role
+  fallback; the capability loss is the price of never deleting the wrong span.
 - **Autocorrect or smart punctuation can change the inserted text.** The
   recorded grapheme count may then delete too much or too little. The feature
   is deliberately single-level and time-bounded so the blast radius is one

@@ -14,7 +14,9 @@ focused element's role and identity as reported by the Accessibility probe,
 the delivered text, its grapheme length, the insertion timestamp, the method,
 and the history entry id once the entry exists. A newer delivery SHALL replace
 the previous record; a successful undo SHALL clear it. Nothing SHALL be
-persisted, so the slot does not survive a restart.
+persisted, so the slot does not survive a restart. A paste record whose element
+identity is empty SHALL remain available to history but SHALL NOT be offered as
+undoable or used as a re-say candidate, because the guard can never verify it.
 
 The character length SHALL count grapheme clusters, not UTF-16 code units, so
 one Backspace removes one visible character.
@@ -42,11 +44,15 @@ one Backspace removes one visible character.
 The app SHALL send a delete keystroke only when all of the following hold:
 the record exists and its method was a paste; the current time is within the
 configured undo window; JustSpeak's own window is not focused; the
-Accessibility probe reports the same target app as the record; the probe
-reports an editable element whose role and identity match the record. The
-number of Backspace keystrokes SHALL equal the recorded grapheme length, and
-no other deletion method SHALL be used. If any guard fails, or the probe cannot
-answer, the app SHALL send no delete keystroke at all.
+Accessibility probe reports the same target app as the record; when both the
+record and the probe carry a bundle identifier, they are equal; the probe
+reports an editable element whose role and identity match the record; and both
+the record and the probe carry a non-empty element identity. The number of
+Backspace keystrokes SHALL equal the recorded grapheme length, and no other
+deletion method SHALL be used. If any guard fails, if the element identity is
+empty on either side, or if the probe cannot answer, the app SHALL send no
+delete keystroke at all. There SHALL be no fallback to matching on app and role
+alone.
 
 Because invoking undo from JustSpeak's own menu, panel, or history makes
 JustSpeak frontmost, the action SHALL first bring a still-running recorded app
@@ -84,6 +90,21 @@ still be made on a fresh probe after the app is frontmost.
 - **THEN** no delete keystroke is sent
 - **AND** the refusal is surfaced with the text preserved in the panel
 
+#### Scenario: The element identity is not verifiable
+
+- **WHEN** either the record or the fresh probe has an empty element identity
+  (the element exposes neither `AXIdentifier` nor `AXTitle`)
+- **THEN** no delete keystroke is sent
+- **AND** the refusal is labelled 无法确认输入位置
+- **AND** the recorded text is placed in the result panel for copying
+- **AND** the app does not fall back to matching on app and role alone
+
+#### Scenario: The app name matches but the bundle differs
+
+- **WHEN** both the record and the probe carry a bundle identifier and they
+  differ, even though the app names match
+- **THEN** no delete keystroke is sent
+
 #### Scenario: The target can no longer be probed
 
 - **WHEN** the probe returns `unknown` or `non-editable`
@@ -118,7 +139,8 @@ SHALL NOT leave any partial deletion behind.
 ### Requirement: Re-say SHALL replace the previous insertion as one operation
 
 Starting a new dictation inside the undo window SHALL mark the run as re-say
-when the slot's method was a paste. When that run's transcript is ready, main
+when the slot's method was a paste and its element identity is verifiable. When
+that run's transcript is ready, main
 SHALL re-run the same guard implementation used by undo. On success it SHALL
 first delete the recorded grapheme count, then paste the new text, and the new
 insertion SHALL become the slot. On refusal it SHALL deliver only the new text,

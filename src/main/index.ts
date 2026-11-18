@@ -145,6 +145,7 @@ import {
   hideResultPanel,
   hideResultPanelWindow,
   initResultPanel,
+  notifyResultPanelUndoChanged,
   refreshResultPanelEscape,
   replayResultPanel,
   resultPanelContext,
@@ -408,6 +409,7 @@ function delay(ms: number): Promise<void> {
  */
 function notifyUndoChanged(): void {
   mainWindow?.webContents.send('undo:changed')
+  notifyResultPanelUndoChanged()
   refreshApplicationMenu()
   refreshTray()
 }
@@ -417,7 +419,12 @@ function currentUndoState(): UndoStateView {
   const record = lastInjection
   if (record === undefined) return { available: false }
   const windowMs = undoWindowMs(undoWindowMinutes)
-  const available = record.method === 'paste' && undoWindowOpen(record, Date.now(), windowMs)
+  const available =
+    record.method === 'paste' &&
+    // Without an identity the guard always refuses; do not advertise an action
+    // that cannot run.
+    record.focusIdentity !== '' &&
+    undoWindowOpen(record, Date.now(), windowMs)
   return {
     available,
     ...(record.entryId === undefined ? {} : { entryId: record.entryId }),
@@ -474,6 +481,9 @@ async function performUndoLastInjection(): Promise<UndoResult> {
     !decision.ok &&
     record !== undefined &&
     record.bundleId !== null &&
+    // No identity means the guard can never pass; do not bring an app forward
+    // for a deletion that will be refused anyway.
+    record.focusIdentity !== '' &&
     (decision.reason === 'app-changed' || decision.reason === 'focus-changed')
   ) {
     if (await activateRunningApp(record.bundleId)) {
@@ -1784,7 +1794,9 @@ app.whenReady().then(async () => {
     return performUndoLastInjection()
   })
   ipcMain.handle('undo:state', async (event): Promise<UndoStateView> => {
-    if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+    const fromMain = isTrustedSender(event.sender.id, mainWindow?.webContents.id)
+    const fromPanel = event.sender.id === resultPanelWebContentsId()
+    if (!fromMain && !fromPanel) {
       throw new Error('未授权的撤销状态请求。')
     }
     return currentUndoState()

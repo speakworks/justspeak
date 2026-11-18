@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { panelHint } from '../../core/panel/hint'
 import type { ResultPanelPayload } from '../../shared/ipc'
 
@@ -16,8 +16,21 @@ export function ResultPanel(): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [copied, setCopied] = useState(false)
   const [feedback, setFeedback] = useState<string | undefined>()
+  const [undoAvailable, setUndoAvailable] = useState(false)
   /** Only a fresh show replaces the user's edit. */
   const lastRevisionRef = useRef<number | null>(null)
+
+  const refreshUndo = useCallback((): void => {
+    void window.justspeak
+      .getUndoState()
+      .then((state) => setUndoAvailable(state.available))
+      .catch(() => setUndoAvailable(false))
+  }, [])
+
+  useEffect(() => {
+    refreshUndo()
+    return window.justspeak.onUndoChanged(refreshUndo)
+  }, [refreshUndo])
 
   useEffect(() => {
     const unsubscribe = window.justspeak.onPanelText((next) => {
@@ -66,6 +79,7 @@ export function ResultPanel(): React.JSX.Element {
       .catch((error: unknown) => {
         setFeedback(error instanceof Error ? error.message : String(error))
       })
+      .finally(refreshUndo)
   }
 
   const text = draft
@@ -100,9 +114,11 @@ export function ResultPanel(): React.JSX.Element {
       <div className="result-panel-foot">
         <span className="result-panel-hint">{panelHint(payload?.canEscape ?? false)}</span>
         <div className="result-panel-actions">
-          <button type="button" className="result-panel-quiet" onClick={undo}>
-            撤销上一次插入
-          </button>
+          {undoAvailable ? (
+            <button type="button" className="result-panel-quiet" onClick={undo}>
+              撤销上一次插入
+            </button>
+          ) : null}
           <button type="button" className="result-panel-quiet" onClick={copy}>
             {copied ? '已复制' : '复制'}
           </button>

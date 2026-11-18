@@ -202,6 +202,11 @@ export function scheduleResultPanelHide(ms: number): void {
   }, ms)
 }
 
+/** Tell an open panel that the undo slot changed, so it can hide its action. */
+export function notifyResultPanelUndoChanged(): void {
+  if (window && !window.isDestroyed()) window.webContents.send('undo:changed')
+}
+
 /** Called when the panel reports it has mounted, so the retained text is pushed. */
 export function replayResultPanel(): void {
   push()

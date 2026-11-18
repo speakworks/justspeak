@@ -45,6 +45,7 @@ import {
   parseLlmModel,
   planPreferenceSet
 } from '../core/preferences/merge'
+import { planStartupAutostart, type AutostartWriteResult } from '../core/preferences/autostart'
 import { summarizeProvider } from '../core/preferences/view'
 import { buildDiagnosticsSummary } from '../core/diagnostics/summary'
 import { deliverTranscript } from '../core/shell/delivery'
@@ -130,6 +131,7 @@ import { UpdateController } from './update'
 import { PcmBuffer } from './pcm-buffer'
 import { ThemeStore } from './theme-store'
 import { VocabularyStore, type VocabularyLoadResult } from './vocabulary-store'
+import { createLoginItemController, type LoginItemController } from './login-item'
 
 const DARK_BACKGROUND = '#1e1e1e'
 const LIGHT_BACKGROUND = '#f2f2f2'
@@ -164,6 +166,8 @@ let pcmBuffer = new PcmBuffer()
 let activeModelInfo: ModelInfo | undefined
 let themePreference: ThemePreference = 'system'
 let themeStore: ThemeStore
+/** The macOS login-item adapter; created in `whenReady` like every store. */
+let loginItem: LoginItemController | undefined
 let vocabularyStore: VocabularyStore
 let historyStore: HistoryStore | undefined
 /**
@@ -378,12 +382,21 @@ function summarizeVocabulary(result: VocabularyLoadResult): VocabularySummary {
  * hand-edited file is honoured); the hotkey is the accelerator actually live;
  * the vocabulary file is re-read so this call doubles as "reload".
  */
-async function readPreferencesView(): Promise<PreferencesView> {
+async function readPreferencesView(loginItemNotice?: string): Promise<PreferencesView> {
   const stored = await themeStore.loadPreferences()
   if (stored.theme !== themePreference) {
     themePreference = stored.theme
     applyTheme()
   }
+  const currentLoginItem = loginItem?.read() ?? {
+    available: false,
+    openAtLogin: false,
+    message: '登录项服务尚未就绪。'
+  }
+  const loginItemView =
+    currentLoginItem.available && loginItemNotice !== undefined
+      ? { ...currentLoginItem, message: loginItemNotice }
+      : currentLoginItem
   const vocabulary = await vocabularyStore.loadDetailed()
   postprocessOptions = vocabulary.options
   const llmConfig = {
@@ -415,6 +428,8 @@ async function readPreferencesView(): Promise<PreferencesView> {
     vocabulary: summarizeVocabulary(vocabulary),
     provider: describeProvider(),
     llm,
+    // The OS owns this value; `read` never throws.
+    loginItem: loginItemView,
     updateAutoCheck: stored.updateAutoCheck
   }
 }
@@ -1275,6 +1290,25 @@ app.whenReady().then(async () => {
     .catch((error) => console.warn('[history] startup sweep failed', error))
   const preferences = await themeStore.loadPreferences()
   themePreference = preferences.theme
+  loginItem = createLoginItemController()
+  if (planStartupAutostart(preferences.launchAtLogin).seedDefault) {
+    // First run only: the built-in default is on. Once any value is stored —
+    // including one the user set in System Settings — startup leaves the OS
+    // setting alone, so a manual disable survives.
+    const applied = loginItem.set(true)
+    if (applied.openAtLogin !== undefined) {
+      try {
+        const merged = await themeStore.update({ launchAtLogin: applied.openAtLogin })
+        if (!merged.ok) {
+          console.warn('[login-item] could not record the default', merged.rejected[0]?.reason)
+        }
+      } catch (error) {
+        console.warn('[login-item] could not record the default', error)
+      }
+    } else {
+      console.warn('[login-item] first-run default was not applied', applied.message)
+    }
+  }
   try {
     llmManager = await LlmManager.create({
       appRoot: app.getAppPath(),
@@ -1437,6 +1471,22 @@ app.whenReady().then(async () => {
         }
       }
 
+      // The OS is the source of truth for the login item: apply the request,
+      // then persist only what the read-back confirmed.
+      let autostartResult: AutostartWriteResult | undefined
+      if (ok && plan.update.launchAtLogin !== undefined) {
+        if (!loginItem) {
+          ok = false
+          message = '登录项服务尚未就绪。'
+        } else {
+          autostartResult = loginItem.set(plan.update.launchAtLogin)
+          if (!autostartResult.ok) {
+            ok = false
+            message = autostartResult.message
+          }
+        }
+      }
+
       if (ok) {
         const update: {
           theme?: ThemePreference
@@ -1444,12 +1494,16 @@ app.whenReady().then(async () => {
           llmBackend?: PreferencesView['llm']['backend']
           llmBaseUrl?: string
           llmModel?: string
+          launchAtLogin?: boolean
         } = {}
         if (plan.update.theme !== undefined) update.theme = plan.update.theme
         if (hotkeyResult?.ok) update.hotkey = hotkeyResult.accelerator
         if (plan.update.llmBackend !== undefined) update.llmBackend = plan.update.llmBackend
         if (plan.update.llmBaseUrl !== undefined) update.llmBaseUrl = plan.update.llmBaseUrl
         if (plan.update.llmModel !== undefined) update.llmModel = plan.update.llmModel
+        if (autostartResult?.openAtLogin !== undefined) {
+          update.launchAtLogin = autostartResult.openAtLogin
+        }
         if (Object.keys(update).length > 0) {
           try {
             const merged = await themeStore.update(update)
@@ -1483,7 +1537,9 @@ app.whenReady().then(async () => {
         }
       }
 
-      const view = await readPreferencesView()
+      const view = await readPreferencesView(
+        autostartResult && !autostartResult.ok ? autostartResult.message : undefined
+      )
       // One push path for the renderer's single copy.
       mainWindow?.webContents.send('preferences:changed', view)
       return { ok, preferences: view, hotkey: hotkeyResult, message }

@@ -9,7 +9,9 @@
 
 import { DEFAULT_ACCELERATOR } from '../hotkey/accelerator'
 import { THEME_LABEL } from '../theme/theme'
+import { LOGIN_ITEM_UNAVAILABLE_REASON } from './autostart'
 import type {
+  LoginItemView,
   PreferencesView,
   ProviderSummary,
   ThemePreference,
@@ -40,6 +42,42 @@ export function describeTheme(theme: ThemePreference): SettingState {
     status: 'override',
     statusLabel: STATUS_LABEL.override,
     detail: `固定为${THEME_LABEL[theme]}。`
+  }
+}
+
+/**
+ * The 开机自动启动 row. The value is the OS's answer, so an external change in
+ * 系统设置 → 通用 → 登录项 shows up as off; the built-in default is on, which
+ * makes an enabled login item `default` and a disabled one an `override`.
+ */
+export function describeAutostart(loginItem: LoginItemView): SettingState {
+  if (!loginItem.available) {
+    return {
+      status: 'unavailable',
+      statusLabel: STATUS_LABEL.unavailable,
+      detail: loginItem.message ?? LOGIN_ITEM_UNAVAILABLE_REASON
+    }
+  }
+  if (loginItem.message) {
+    // The OS refused the last change; the value shown is still the read-back,
+    // but success must not be claimed.
+    return {
+      status: 'unavailable',
+      statusLabel: STATUS_LABEL.unavailable,
+      detail: loginItem.message
+    }
+  }
+  if (loginItem.openAtLogin) {
+    return {
+      status: 'default',
+      statusLabel: STATUS_LABEL.default,
+      detail: '登录时自动启动。'
+    }
+  }
+  return {
+    status: 'override',
+    statusLabel: STATUS_LABEL.override,
+    detail: '已关闭；可在系统设置 → 通用 → 登录项中重新开启。'
   }
 }
 
@@ -186,6 +224,7 @@ export function describeLlm(preferences: PreferencesView['llm']): SettingState {
 export interface SettingsRows {
   theme: SettingState
   hotkey: SettingState
+  autostart: SettingState
   vocabulary: SettingState
   provider: SettingState
   llm: SettingState
@@ -195,6 +234,7 @@ export function buildSettingsRows(preferences: PreferencesView): SettingsRows {
   return {
     theme: describeTheme(preferences.theme),
     hotkey: describeHotkey(preferences.hotkey, preferences.hotkeyMessage),
+    autostart: describeAutostart(preferences.loginItem),
     vocabulary: describeVocabulary(preferences.vocabulary),
     provider: describeProvider(preferences.provider),
     llm: describeLlm(preferences.llm)

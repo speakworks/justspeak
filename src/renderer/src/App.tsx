@@ -161,6 +161,7 @@ export function App(): React.JSX.Element {
   const [hotkeyFeedback, setHotkeyFeedback] = useState<string | undefined>()
   const [hotkeyError, setHotkeyError] = useState(false)
   const [hotkeyBusy, setHotkeyBusy] = useState(false)
+  const [autostartBusy, setAutostartBusy] = useState(false)
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() =>
     typeof window !== 'undefined' &&
     window.matchMedia?.('(prefers-color-scheme: dark)').matches
@@ -262,6 +263,23 @@ export function App(): React.JSX.Element {
       .catch((error: unknown) => {
         setPreferencesError(error instanceof Error ? error.message : String(error))
       })
+  }, [])
+
+  // The requested value is only an input; main applies it and returns the OS
+  // read-back, which replaces the renderer's copy.
+  const changeAutostart = useCallback((enabled: boolean): void => {
+    setAutostartBusy(true)
+    setPreferencesError(undefined)
+    void window.justspeak
+      .setPreferences({ launchAtLogin: enabled })
+      .then((outcome) => {
+        setPreferences(outcome.preferences)
+        if (!outcome.ok) setPreferencesError(outcome.message ?? '开机自启设置失败。')
+      })
+      .catch((error: unknown) => {
+        setPreferencesError(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => setAutostartBusy(false))
   }, [])
 
   const reloadPreferences = useCallback((): void => {
@@ -577,6 +595,8 @@ export function App(): React.JSX.Element {
     onHotkeyCancel: cancelHotkeyCapture,
     onHotkeyHint: showHotkeyHint,
     onTheme: applyThemePreference,
+    onAutostart: changeAutostart,
+    autostartBusy,
     onReload: reloadPreferences,
     onLlmBackend: changeLlmBackend,
     onLlmEndpointSave: saveLlmEndpoint,

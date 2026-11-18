@@ -24,6 +24,9 @@ export interface SettingsPanelProps {
   onHotkeyCancel: () => void
   onHotkeyHint: (message?: string) => void
   onTheme: (theme: ThemePreference) => void
+  /** Writes 开机自动启动; the row renders the OS read-back main returns. */
+  onAutostart: (enabled: boolean) => void
+  autostartBusy: boolean
   onReload: () => void
   onLlmBackend: (backend: LlmBackend) => void
   onLlmEndpointSave: (baseUrl: string, model: string) => void
@@ -74,6 +77,8 @@ export function SettingsPanel({
   onHotkeyCancel,
   onHotkeyHint,
   onTheme,
+  onAutostart,
+  autostartBusy,
   onReload,
   onLlmBackend,
   onLlmEndpointSave,
@@ -173,6 +178,31 @@ export function SettingsPanel({
             ) : (
               <p className="settings-detail">{rows.hotkey.detail}</p>
             )}
+          </div>
+
+          <div className="settings-row">
+            <div className="settings-row-head">
+              <span className="settings-label">开机自动启动</span>
+              <StatusChip state={rows.autostart} />
+            </div>
+            <div className="settings-control">
+              <button
+                type="button"
+                className={
+                  preferences.loginItem.openAtLogin ? 'theme-option selected' : 'theme-option'
+                }
+                aria-pressed={preferences.loginItem.openAtLogin}
+                disabled={autostartBusy || !preferences.loginItem.available}
+                onClick={() => onAutostart(!preferences.loginItem.openAtLogin)}
+              >
+                {!preferences.loginItem.available
+                  ? '不可用'
+                  : preferences.loginItem.openAtLogin
+                    ? '已开启'
+                    : '已关闭'}
+              </button>
+            </div>
+            <p className="settings-detail">{rows.autostart.detail}</p>
           </div>
           </>
           )}

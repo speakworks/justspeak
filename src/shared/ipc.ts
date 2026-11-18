@@ -100,6 +100,19 @@ export interface ProviderSummary {
   reason: string
 }
 
+/**
+ * The macOS login-item state as main read it. This is the OS's answer from
+ * `getLoginItemSettings().openAtLogin`, never a value cached in preferences.
+ */
+export interface LoginItemView {
+  /** False when the login-item API is missing or the read threw. */
+  available: boolean
+  /** `openAtLogin` from the OS; false when unavailable. */
+  openAtLogin: boolean
+  /** Why it is unavailable, or why the last change was refused. */
+  message?: string
+}
+
 /** Optional LLM cleanup. `off` is the default and the only safe first run. */
 export type LlmBackend = 'off' | 'local' | 'endpoint'
 
@@ -184,6 +197,8 @@ export interface PreferencesView {
   vocabulary: VocabularySummary
   provider: ProviderSummary
   llm: LlmPreferencesView
+  /** The OS login-item state (OpenSpec `login-item-autostart`). */
+  loginItem: LoginItemView
   /** The 自动检查更新 toggle, from the stored preference (`false` default). */
   updateAutoCheck: boolean
 }
@@ -209,6 +224,8 @@ export interface PreferencesPatch {
   llmBackend?: LlmBackend
   llmBaseUrl?: string
   llmModel?: string
+  /** The requested 开机自动启动 value; main verifies it against the OS read-back. */
+  launchAtLogin?: boolean
 }
 
 export interface PreferencesSetResult {

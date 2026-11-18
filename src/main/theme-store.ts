@@ -62,7 +62,11 @@ export class ThemeStore {
         Number.isFinite(record.updateLastCheckAtMs) &&
         record.updateLastCheckAtMs > 0
           ? record.updateLastCheckAtMs
-          : 0
+          : 0,
+      // Absence is meaningful: it is what tells the first launch to apply the
+      // built-in autostart default exactly once.
+      launchAtLogin:
+        typeof record.launchAtLogin === 'boolean' ? record.launchAtLogin : undefined
     }
   }
 

@@ -22,6 +22,11 @@ export interface StoredPreferences {
   updateAutoCheck: boolean
   /** Epoch ms of the last automatic check; `0` means the app never checked. */
   updateLastCheckAtMs: number
+  /**
+   * The recorded 开机自动启动 choice. `undefined` means the first-run default has
+   * not been applied yet; the setting itself is always read from the OS.
+   */
+  launchAtLogin: boolean | undefined
 }
 
 /** The validated subset a write may apply. */
@@ -33,6 +38,7 @@ export interface PreferenceUpdate {
   llmModel?: string
   updateAutoCheck?: boolean
   updateLastCheckAtMs?: number
+  launchAtLogin?: boolean
 }
 
 export function parseLlmBackend(value: unknown): LlmBackend {
@@ -68,7 +74,8 @@ const WRITABLE_KEYS = new Set([
   'llmBaseUrl',
   'llmModel',
   'updateAutoCheck',
-  'updateLastCheckAtMs'
+  'updateLastCheckAtMs',
+  'launchAtLogin'
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -169,6 +176,14 @@ export function mergePreferences(existing: unknown, patch: unknown): MergeResult
       accepted.updateLastCheckAtMs = patch.updateLastCheckAtMs
     } else {
       rejected.push({ key: 'updateLastCheckAtMs', reason: '上次检查时间无效。' })
+    }
+  }
+
+  if ('launchAtLogin' in patch) {
+    if (typeof patch.launchAtLogin === 'boolean') {
+      accepted.launchAtLogin = patch.launchAtLogin
+    } else {
+      rejected.push({ key: 'launchAtLogin', reason: '开机自启开关值无效。' })
     }
   }
 

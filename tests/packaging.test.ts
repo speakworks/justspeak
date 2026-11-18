@@ -72,6 +72,12 @@ describe('packaging configuration and generated artifacts', () => {
     // Publishing is tag-only; a manual dispatch must not create a Release.
     expect(workflow).toContain("if: startsWith(github.ref, 'refs/tags/v')")
     expect(workflow).toContain('--publish always')
+    // Re-running the workflow on the same tag must not fail with 422
+    // already_exists: the step inspects the release, promotes a leftover
+    // draft, or skips creation for one that is already published.
+    expect(workflow).toContain('gh release view')
+    expect(workflow).toContain('--draft=false')
+    expect(workflow).toContain('--verify-tag')
   })
 })
 

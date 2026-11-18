@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   PASTE_LOCK_BUSY_MESSAGE,
-  PasteLockBusyError,
   UndoLock,
   createLockedPaste,
   isPasteLockBusyError

@@ -72,6 +72,24 @@ describe('packaging configuration and generated artifacts', () => {
     // Publishing is tag-only; a manual dispatch must not create a Release.
     expect(workflow).toContain("if: startsWith(github.ref, 'refs/tags/v')")
     expect(workflow).toContain('--publish always')
+    // Re-running the workflow on the same tag must not fail with 422
+    // already_exists: the step inspects the release, promotes a leftover
+    // draft, or skips creation for one that is already published. Slice the
+    // step and drop comment lines first, so a comment mentioning a command
+    // cannot satisfy the guard after the command itself is deleted.
+    const releaseStep = workflow
+      .slice(workflow.indexOf('- name: Create GitHub Release'))
+      .split(/\n(?=\s*- name: )/)[0]
+    const releaseCommands = releaseStep
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('#'))
+      .join('\n')
+    expect(releaseCommands).toContain('gh release view "$tag"')
+    expect(releaseCommands).toContain('release not found')
+    expect(releaseCommands).toContain('gh release edit "$tag"')
+    expect(releaseCommands).toContain('--draft=false')
+    expect(releaseCommands).toContain('gh release create "$tag"')
+    expect(releaseCommands).toContain('--verify-tag')
   })
 })
 

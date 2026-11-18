@@ -55,15 +55,25 @@ The final identity check and the keystrokes SHALL live in one Accessibility
 script: the script SHALL re-read the frontmost app, bundle, role, identity and
 editability, SHALL compare them against the expected values passed as separate
 script arguments (never interpolated into the script text), and SHALL press a
-key only when every value matches. It SHALL re-check the frontmost app before
-each key and abort if it changes.
+key only when every value matches. It SHALL re-read app, bundle, role and
+identity before every key and abort with a `*-mid-delete` result if any value
+changes. A loop-body error SHALL return a distinct `mid-delete-error` result;
+only an error before the loop SHALL return `ERROR`.
 
-Only one guarded deletion SHALL be in flight. The slot SHALL be consumed before
-the first key is pressed; a second concurrent request SHALL be refused without
-sending a key, and a request whose recorded slot was already consumed or
-replaced SHALL also be refused. A deletion that fails, times out, or partially
-completes SHALL consume the slot too and SHALL NOT be retried against the same
-record; the user SHALL be told the deletion may be incomplete.
+Every write into a target app — deletion and paste — SHALL hold one shared
+write lock. A paste that starts while a deletion holds the lock SHALL wait a
+bounded time, then proceed only after the deletion settles; if the wait
+expires, it SHALL be refused with 撤销正在进行 and SHALL NOT write. It SHALL NOT
+write while the Backspace loop is still running.
+
+Only one guarded deletion SHALL be in flight. The slot SHALL be marked consumed
+before the script starts; a second concurrent request SHALL be refused without
+sending a key, and a request whose slot was already consumed or replaced SHALL
+also be refused. A script abort before the first key (app, bundle, role or
+identity mismatch, or not-editable) SHALL restore the slot so the user can
+retry. A mid-delete abort, loop-body error, exec error or timeout SHALL keep the
+slot consumed, SHALL NOT be retried, and SHALL tell the user the deletion may be
+incomplete.
 
 Because invoking undo from JustSpeak's own menu, panel, or history makes
 JustSpeak frontmost, the action SHALL first bring a still-running recorded app
@@ -119,9 +129,9 @@ still be made on a fresh probe after the app is frontmost.
 #### Scenario: The target changes between the probe and the script
 
 - **WHEN** the app-level probe passed but the frontmost app, bundle, role or
-  identity has changed by the time the atomic script runs
+  identity has changed by the time the atomic script runs, before any key
 - **THEN** the script presses no key
-- **AND** the slot is consumed
+- **AND** the slot is restored so the user can retry
 - **AND** the recorded text is placed in the result panel with 撤销未完成
 
 #### Scenario: Two undo requests overlap
@@ -130,9 +140,27 @@ still be made on a fresh probe after the app is frontmost.
 - **THEN** exactly one sends the recorded count of Backspace keystrokes
 - **AND** the other is refused with 撤销正在进行 and sends no key
 
+#### Scenario: A paste arrives while a deletion is running
+
+- **WHEN** any paste path starts while the shared write lock is held by a
+  deletion
+- **THEN** the paste waits for a bounded time
+- **AND** it writes only after the deletion settles, so the tail Backspaces
+  cannot delete the new text
+- **AND** if the wait expires, the paste is refused with 撤销正在进行 and writes
+  nothing
+
+#### Scenario: A loop-body error is distinct from a pre-loop error
+
+- **WHEN** the per-key re-check or the key press raises an error inside the loop
+- **THEN** the script returns `mid-delete-error`, not `ERROR`
+- **AND** the slot is consumed because presses may already have happened
+- **AND** a pre-loop `ERROR` is still treated as possibly incomplete
+
 #### Scenario: Deletion fails or is only partly completed
 
-- **WHEN** the atomic script errors, times out, or aborts after some keys
+- **WHEN** the atomic script aborts mid-delete, errors inside the loop, times
+  out, or fails to execute
 - **THEN** the slot is consumed and cannot be retried
 - **AND** the user is told the deletion may be incomplete
 - **AND** the recorded text is preserved in the result panel
@@ -271,3 +299,25 @@ invalid value SHALL be rejected without writing any part of the patch.
   above 60 minutes
 - **THEN** the whole patch is rejected with a reason
 - **AND** the stored window is unchanged
+
+### Requirement: Undo SHALL document its bundle and caret assumptions
+
+When the expected bundle id is empty, the bundle comparison SHALL be skipped;
+the app name, role and a non-empty element identity SHALL still be mandatory.
+Undo SHALL assume the caret remains at the end of the inserted text. If the user
+moves the caret within the same field, the fixed grapheme count deletes around
+the new caret position rather than the recorded span. This assumption SHALL be
+documented as a known limitation and not presented as restoring an exact range.
+
+#### Scenario: The bundle id is unavailable
+
+- **WHEN** the record has no bundle identifier
+- **THEN** the bundle comparison is skipped
+- **AND** the app name, role and non-empty identity are still required
+
+#### Scenario: The caret moved
+
+- **WHEN** the user moves the caret within the same field after the insertion
+- **THEN** undo still deletes the recorded grapheme count from the current
+  caret position
+- **AND** this is documented as a limitation rather than an exact-span promise

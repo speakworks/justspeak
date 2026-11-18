@@ -58,6 +58,19 @@ describe('atomic delete script arguments', () => {
     }
     expect(DELETE_SCRIPT.slice(firstPress)).toContain('key code 51')
   })
+  it('rechecks app, bundle, role and identity inside every key iteration', () => {
+    const loop = DELETE_SCRIPT.slice(DELETE_SCRIPT.indexOf('repeat with pressIndex'))
+    for (const check of [
+      'app-changed-mid-delete',
+      'bundle-changed-mid-delete',
+      'role-changed-mid-delete',
+      'identity-changed-mid-delete',
+      'mid-delete-error'
+    ]) {
+      expect(loop, check).toContain(check)
+    }
+    expect(loop).toContain('key code 51')
+  })
 })
 
 describe('atomic delete result', () => {
@@ -78,6 +91,21 @@ describe('atomic delete result', () => {
     })
   })
 
+  it('reports mid-delete role/identity aborts as possibly incomplete', () => {
+    for (const reason of [
+      'role-changed-mid-delete',
+      'identity-changed-mid-delete',
+      'bundle-changed-mid-delete',
+      'mid-delete-error'
+    ]) {
+      const outcome = parseDeleteResult(`MISMATCH|${reason}`)
+      expect(outcome.ok, reason).toBe(false)
+      if (outcome.ok) continue
+      expect(outcome.reason, reason).toBe(reason)
+      expect(outcome.message, reason).toContain('可能未完整完成')
+    }
+  })
+
   it('never reports an unknown or failing answer as success', () => {
     expect(parseDeleteResult('ERROR|boom')).toMatchObject({ ok: false, reason: 'error' })
     expect(parseDeleteResult('')).toMatchObject({ ok: false, reason: 'unknown' })
@@ -87,7 +115,11 @@ describe('atomic delete result', () => {
   it('distinguishes pre-key aborts from a mid-delete abort', () => {
     expect(isPreKeyRefusal('app-changed')).toBe(true)
     expect(isPreKeyRefusal('identity-changed')).toBe(true)
+    expect(isPreKeyRefusal('role-changed')).toBe(true)
     expect(isPreKeyRefusal('app-changed-mid-delete')).toBe(false)
+    expect(isPreKeyRefusal('role-changed-mid-delete')).toBe(false)
+    expect(isPreKeyRefusal('identity-changed-mid-delete')).toBe(false)
+    expect(isPreKeyRefusal('mid-delete-error')).toBe(false)
     expect(isPreKeyRefusal('exec-failed')).toBe(false)
     expect(isPreKeyRefusal('error')).toBe(false)
   })

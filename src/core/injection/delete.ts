@@ -68,9 +68,39 @@ on run argv
         if ident is not expectedIdentity then return "MISMATCH|identity-changed"
       end tell
       repeat with pressIndex from 1 to pressCount
-        set currentFrontName to name of first process whose frontmost is true
-        if currentFrontName is not expectedApp then return "MISMATCH|app-changed-mid-delete"
-        key code 51
+        try
+          set currentFrontProcess to first process whose frontmost is true
+          set currentFrontName to name of currentFrontProcess
+          if currentFrontName is not expectedApp then return "MISMATCH|app-changed-mid-delete"
+          set currentBundle to ""
+          try
+            set currentBundle to bundle identifier of currentFrontProcess
+          end try
+          if currentBundle is missing value then set currentBundle to ""
+          if expectedBundle is not "" then
+            if currentBundle is not expectedBundle then return "MISMATCH|bundle-changed-mid-delete"
+          end if
+          tell currentFrontProcess
+            set currentElement to value of attribute "AXFocusedUIElement"
+            set currentRole to role of currentElement as text
+            if currentRole is not expectedRole then return "MISMATCH|role-changed-mid-delete"
+            set currentIdent to ""
+            try
+              set currentIdent to value of attribute "AXIdentifier" of currentElement as text
+            end try
+            if currentIdent is missing value then set currentIdent to ""
+            if currentIdent is "" then
+              try
+                set currentIdent to value of attribute "AXTitle" of currentElement as text
+              end try
+              if currentIdent is missing value then set currentIdent to ""
+            end if
+            if currentIdent is not expectedIdentity then return "MISMATCH|identity-changed-mid-delete"
+          end tell
+          key code 51
+        on error
+          return "MISMATCH|mid-delete-error"
+        end try
       end repeat
       return "OK"
     on error errMsg
@@ -105,7 +135,11 @@ const MISMATCH_MESSAGE: Record<string, string> = {
   'not-editable': '焦点不再可编辑',
   'unverifiable-target': '无法确认原来的输入位置',
   'identity-changed': '焦点已改变',
-  'app-changed-mid-delete': '删除过程中目标应用已改变，删除可能未完整完成'
+  'app-changed-mid-delete': '删除过程中目标应用已改变，删除可能未完整完成',
+  'bundle-changed-mid-delete': '删除过程中目标应用已改变，删除可能未完整完成',
+  'role-changed-mid-delete': '删除过程中焦点已改变，删除可能未完整完成',
+  'identity-changed-mid-delete': '删除过程中焦点已改变，删除可能未完整完成',
+  'mid-delete-error': '删除过程中出错，删除可能未完整完成'
 }
 
 /** These aborts happen before the first key is pressed. */

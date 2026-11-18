@@ -80,17 +80,24 @@ the slot.
 result parser; `src/main/injection.ts` supplies the `osascript` exec port. The
 script re-reads the frontmost app, bundle, role, identity and editability and
 presses `key code 51` only when every value matches the expected values passed
-as separate argv items (never interpolated into the script). It re-checks the
-frontmost app before every key. The app-level guard still runs first because it
-also decides whether a still-running app should be activated, but the script's
-own check is the one immediately before the keys.
+as separate argv items (never interpolated into the script). It re-reads app,
+bundle, role and identity before every key; a change aborts with a
+`*-mid-delete` result. A loop-body error returns `mid-delete-error`, while only
+a pre-loop error returns `ERROR`. The app-level guard still runs first because
+it also decides whether a still-running app should be activated, but the
+script's own check is the one immediately before the keys.
 
-`UndoLock` permits one deletion in flight. The slot is consumed before the
-first key; a concurrent request is refused with 撤销正在进行. Every deletion
-attempt — success, mismatch, timeout, exec failure or partial run — consumes the
-slot, so the same record can never be retried. A non-OK outcome tells the user
-whether the script aborted before the first key or may have partially deleted,
-and preserves the text in the panel.
+`UndoLock` is the shared write mutex: deletions and every paste into a target
+app take it. `createLockedPaste` waits a bounded 1.5 s for an in-flight
+deletion, then proceeds or refuses with 撤销正在进行; it never writes while the
+Backspace loop is running. The lock is released in `finally` on every path,
+including exec failures and thrown pastes.
+
+The slot is marked consumed before the script starts; a concurrent request is
+refused with 撤销正在进行. A script abort **before** the first key (app, bundle,
+role or identity mismatch, or not-editable) restores the slot so the user can
+retry. A mid-delete abort, loop-body error, exec error or timeout keeps the slot
+consumed, is never retried, and tells the user the deletion may be incomplete.
 
 `kind` must be `editable` for the guard to pass: a non-editable or unknown
 target is a refusal, even if the app name matches. A record whose grapheme count
@@ -102,13 +109,14 @@ is `null` (no `Intl.Segmenter` at insertion time) is refused as
 `toggleRecording` reads the current slot when a recording starts inside the
 window and stores it as the run's replace candidate (method `paste` only). At
 delivery time main re-probes and runs the same `evaluateUndoGuard` against that
-snapshot. On success it acquires the lock, consumes the slot, calls the atomic
-delete, then pastes the new text. If the paste then fails, the old text is shown
-in the panel with 旧文本已删除，这里是备份. If the delete fails or is partial,
-the slot stays consumed, the new text is not pasted, and the panel shows both
-texts with an incomplete-deletion warning. On refusal or a concurrent undo it
-delivers the new text through the normal path and shows the recorded text in the
-panel with 旧文本未删除.
+snapshot. On success it acquires the lock, clears the re-say snapshot in the
+same critical section, consumes the slot, calls the atomic delete, then pastes
+the new text. If the paste then fails, the old text is shown in the panel with
+旧文本已删除，这里是备份. If the delete fails before any key, the slot is
+restored for a retry but the new text is not pasted; a mid-delete failure keeps
+the slot consumed and shows both texts with an incomplete-deletion warning. On
+refusal or a concurrent undo it delivers the new text through the normal path
+and shows the recorded text in the panel with 旧文本未删除.
 
 ### 5. Result panel becomes editable but stays non-activating
 
@@ -158,6 +166,12 @@ changed target correctly lands on the refusal path.
   `AXIdentifier` nor `AXTitle`, automatic deletion is refused and the text is
   preserved in the result panel; there is no app-plus-role fallback. This is a
   deliberate capability loss in exchange for never deleting the wrong span.
+- When the record has no bundle identifier, the bundle comparison is skipped;
+  the app name, role and a non-empty element identity remain mandatory.
+- Undo assumes the caret is at the end of the inserted text. If the user moves
+  the caret within the same field, the fixed grapheme count deletes around the
+  new caret position rather than the recorded span; this is a known limitation,
+  not an exact-range restore.
 - Smart punctuation or autocorrect in the target app can change the inserted
   text, so the recorded grapheme count can over- or under-delete.
 - Reinsertion cannot reactivate the original app without a new Automation

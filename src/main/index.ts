@@ -49,7 +49,7 @@ import {
   type InjectionRecord
 } from '../core/injection/undo'
 import { isPreKeyRefusal } from '../core/injection/delete'
-import { UndoLock } from '../core/injection/undo-lock'
+import { UndoLock, createLockedPaste } from '../core/injection/undo-lock'
 import { postprocess, type PostprocessOptions } from '../core/postprocess'
 import type { FocusTarget } from '../core/focus/editability'
 import { SessionController } from '../core/session/session-controller'
@@ -306,6 +306,12 @@ let lastDelivery: { target: DeliveryTarget; focus: FocusTarget | null; atMs: num
 let reSayCandidate: InjectionRecord | undefined
 /** Only one guarded deletion may be in flight at a time. */
 const undoLock = new UndoLock()
+/**
+ * Every paste into a target app goes through the same lock as deletions. A
+ * paste that starts while the Backspace loop is running waits briefly; on
+ * timeout it is refused instead of having its tail deleted.
+ */
+const lockedPaste = createLockedPaste(undoLock, pasteText)
 
 class UnavailableAsrProvider implements AsrProvider {
   readonly id = 'unavailable'
@@ -445,7 +451,7 @@ function deliveryPorts(): DeliveryPorts {
     appFocused: () => mainWindow?.isFocused() ?? false,
     probeTarget: probeFocusTarget,
     insert: (out) => mainWindow?.webContents.send('transcript:insert', out),
-    paste: pasteText,
+    paste: lockedPaste,
     showPanel: (out) => showResultPanel(out, effectiveTheme())
   }
 }
@@ -509,9 +515,6 @@ async function deliverReSayFallback(
  */
 async function performUndoLastInjection(): Promise<UndoResult> {
   if (undoLock.locked) return { ok: false, message: '撤销正在进行，请稍候。' }
-  // Undo during a re-say recording must not leave the snapshot pointing at
-  // text this action may be deleting.
-  reSayCandidate = undefined
   const record = lastInjection
   const evaluate = (target: FocusTarget) =>
     evaluateUndoGuard({
@@ -571,8 +574,13 @@ async function performUndoLastInjection(): Promise<UndoResult> {
     if (consumed === undefined) {
       return { ok: false, message: '没有可撤销的插入。' }
     }
-    // Consume before the first key. A failed or partial deletion is never
-    // retried against the same record.
+    // Clear the re-say snapshot only now, inside the same critical section as
+    // the slot consumption: a narrow race must not silently downgrade a re-say
+    // to a plain paste.
+    reSayCandidate = undefined
+    // Mark the slot consumed before the script starts so a concurrent caller
+    // cannot act on it. A pre-key abort restores it below; a mid-delete abort
+    // leaves it consumed.
     lastInjection = undefined
     notifyUndoChanged()
 
@@ -581,7 +589,15 @@ async function performUndoLastInjection(): Promise<UndoResult> {
       decision.count
     )
     if (!outcome.ok) {
-      const partial = !isPreKeyRefusal(outcome.reason)
+      const preKey = isPreKeyRefusal(outcome.reason)
+      // A pre-key abort pressed no key, so the recorded text is still intact.
+      // Restore the slot for a retry, unless a new insertion already replaced
+      // it while the script was running.
+      if (preKey && lastInjection === undefined) {
+        lastInjection = consumed
+        notifyUndoChanged()
+      }
+      const partial = !preKey
       showResultPanel(consumed.text, effectiveTheme(), {
         title: partial ? '撤销可能未完整完成' : '撤销未完成',
         notice: partial
@@ -647,7 +663,9 @@ async function replaceTranscript(
         '另一次撤销正在进行或已完成，本次未删除旧文本。'
       )
     }
-    // Consume before any key: a failed deletion is never retried.
+    // Mark the slot consumed before the script starts so a concurrent caller
+    // cannot act on it. A pre-key abort restores it below; a mid-delete abort
+    // leaves it consumed.
     lastInjection = undefined
     notifyUndoChanged()
 
@@ -656,7 +674,14 @@ async function replaceTranscript(
       decision.count
     )
     if (!deletion.ok) {
-      const partial = !isPreKeyRefusal(deletion.reason)
+      const preKey = isPreKeyRefusal(deletion.reason)
+      // No key was pressed, so the old text is still in place. Restore the
+      // slot for a retry unless a new insertion already replaced it.
+      if (preKey && lastInjection === undefined) {
+        lastInjection = candidate
+        notifyUndoChanged()
+      }
+      const partial = !preKey
       showResultPanel(`${text}\n\n${candidate.text}`, effectiveTheme(), {
         title: partial ? '旧文本删除未完成' : '旧文本未删除',
         notice: partial
@@ -731,7 +756,9 @@ async function reinsertPanelText(input: unknown): Promise<ReinsertResult> {
 
   if (identity.ok && target.kind === 'editable') {
     try {
-      await pasteText(text)
+      // Reinsertion is a write into a target app too: wait for an in-flight
+      // deletion rather than letting its tail Backspaces eat the new text.
+      await lockedPaste(text)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       showResultPanel(text, effectiveTheme(), {

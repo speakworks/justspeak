@@ -27,6 +27,7 @@ interface Harness {
   probeFile: string
   probeDelayFile: string
   deleteModeFile: string
+  deleteDelayFile: string
   pasteFailFile: string
   targetFile: string
   logFile: string
@@ -52,6 +53,7 @@ function makeHarness(): Harness {
   const probeFile = path.join(dir, 'probe-mode')
   const probeDelayFile = path.join(dir, 'probe-delay')
   const deleteModeFile = path.join(dir, 'delete-mode')
+  const deleteDelayFile = path.join(dir, 'delete-delay')
   const pasteFailFile = path.join(dir, 'paste-fail')
   const targetFile = path.join(dir, 'target-buffer')
   const logFile = path.join(dir, 'calls.log')
@@ -71,6 +73,7 @@ const script = baseArgs[1] || ''
 const probeFile = process.env.JUSTSPEAK_E2E_PROBE_FILE
 const probeDelayFile = process.env.JUSTSPEAK_E2E_PROBE_DELAY_FILE
 const deleteModeFile = process.env.JUSTSPEAK_E2E_DELETE_MODE_FILE
+const deleteDelayFile = process.env.JUSTSPEAK_E2E_DELETE_DELAY_FILE
 const pasteFailFile = process.env.JUSTSPEAK_E2E_PASTE_FAIL_FILE
 const targetFile = process.env.JUSTSPEAK_E2E_TARGET_FILE
 const logFile = process.env.JUSTSPEAK_E2E_LOG_FILE
@@ -87,6 +90,10 @@ if (script.includes('key code 51')) {
   const count = Number(expected[4])
   const deletionMode = readMode(deleteModeFile, probeMode)
   log('delete-args:' + expected.join('|'))
+  if (fs.existsSync(deleteDelayFile)) {
+    log('delete-start')
+    try { execFileSync('sleep', ['0.7']) } catch {}
+  }
   if (deletionMode === 'partial') {
     const partialCount = Math.max(1, Math.floor(count / 2))
     const current = fs.existsSync(targetFile) ? fs.readFileSync(targetFile, 'utf8') : ''
@@ -96,7 +103,7 @@ if (script.includes('key code 51')) {
       units.slice(0, Math.max(0, units.length - partialCount)).join('')
     )
     log('delete-partial:' + partialCount)
-    process.stdout.write('MISMATCH|app-changed-mid-delete\\n')
+    process.stdout.write('MISMATCH|role-changed-mid-delete\\n')
     process.exit(0)
   }
   const actual = deletionMode === 'other'
@@ -152,6 +159,7 @@ process.exit(0)
     probeFile,
     probeDelayFile,
     deleteModeFile,
+    deleteDelayFile,
     pasteFailFile,
     targetFile,
     logFile
@@ -176,6 +184,7 @@ async function launch(
       JUSTSPEAK_E2E_PROBE_FILE: harness.probeFile,
       JUSTSPEAK_E2E_PROBE_DELAY_FILE: harness.probeDelayFile,
       JUSTSPEAK_E2E_DELETE_MODE_FILE: harness.deleteModeFile,
+      JUSTSPEAK_E2E_DELETE_DELAY_FILE: harness.deleteDelayFile,
       JUSTSPEAK_E2E_PASTE_FAIL_FILE: harness.pasteFailFile,
       JUSTSPEAK_E2E_TARGET_FILE: harness.targetFile,
       JUSTSPEAK_E2E_LOG_FILE: harness.logFile,
@@ -418,7 +427,20 @@ test.describe('JustSpeak correction path', () => {
       )
       expect(calls(harness).some((line) => line.startsWith('delete:'))).toBe(false)
       expect(targetText(harness)).toBe(FAKE_TRANSCRIPT)
-      // The slot was consumed by the attempt; it is not retried.
+      // A pre-key abort pressed nothing, so the slot is restored for a retry.
+      await expect
+        .poll(() => page.evaluate(() =>
+          (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
+        ))
+        .toMatchObject({ available: true })
+
+      // The target is healthy again; the retry is allowed and deletes once.
+      writeFileSync(harness.deleteModeFile, '')
+      const retry = await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakPage).justspeak.undoLastInjection()
+      )
+      expect(retry.ok).toBe(true)
+      expect(targetText(harness)).toBe('')
       await expect
         .poll(() => page.evaluate(() =>
           (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
@@ -472,6 +494,67 @@ test.describe('JustSpeak correction path', () => {
           (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
         ))
         .toMatchObject({ available: false })
+    } finally {
+      if (app) {
+        await restoreClipboard(app).catch(() => {})
+        await app.close().catch(() => {})
+      }
+      rmSync(userData, { recursive: true, force: true })
+      rmSync(harness.dir, { recursive: true, force: true })
+    }
+  })
+
+  test('A: a paste waits for an in-flight delete instead of being overwritten', async () => {
+    const userData = mkdtempSync(path.join(tmpdir(), 'justspeak-undo-userdata-'))
+    const harness = makeHarness()
+    let app: ElectronApplication | undefined
+    try {
+      const launched = await launch(userData, harness)
+      app = launched.app
+      const page = launched.page
+      await snapshotClipboard(app)
+      await expect(page.locator('.status')).toHaveText('就绪')
+      await hideWindow(app)
+
+      setProbe(harness, 'editable')
+      await dictate(app, page)
+      await expect
+        .poll(() => page.evaluate(() =>
+          (globalThis as unknown as JustSpeakPage).justspeak.getUndoState()
+        ))
+        .toMatchObject({ available: true })
+      expect(targetText(harness)).toBe(FAKE_TRANSCRIPT)
+
+      // A slow delete runs while a second utterance is stopped. Its paste must
+      // wait for the lock; the delete's tail must not eat the new text.
+      writeFileSync(harness.deleteDelayFile, 'delay')
+      await startRecording(app, page)
+      const undoPromise = page.evaluate(() =>
+        (globalThis as unknown as JustSpeakPage).justspeak.undoLastInjection()
+      )
+      await expect
+        .poll(() => calls(harness).includes('delete-start'), { timeout: 10_000 })
+        .toBe(true)
+      // The undo cleared the re-say candidate inside the lock, so this stop is
+      // a plain delivery whose paste waits for the deletion to settle.
+      await page.evaluate(() =>
+        (globalThis as unknown as JustSpeakPage).justspeak.toggleRecording()
+      )
+      await expect(page.locator('.status')).toHaveText('就绪', { timeout: 15_000 })
+      const undo = await undoPromise
+      expect(undo.ok).toBe(true)
+
+      expect(targetText(harness)).toBe(FAKE_TRANSCRIPT)
+      const lines = calls(harness)
+      const deleteAt = lines.findIndex((line) => line.startsWith('delete:'))
+      // The first paste belongs to the initial dictation; the second is the
+      // one that must wait for the delete.
+      const pasteAt = lines.reduce(
+        (latest, line, index) => (line.startsWith('paste:') ? index : latest),
+        -1
+      )
+      expect(deleteAt).toBeGreaterThan(-1)
+      expect(pasteAt).toBeGreaterThan(deleteAt)
     } finally {
       if (app) {
         await restoreClipboard(app).catch(() => {})

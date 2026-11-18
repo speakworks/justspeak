@@ -70,10 +70,12 @@ in whichever window happens to be frontmost. The design therefore treats
   utterance.
 - **Target app closed or focus moved.** Both are treated as refusals, never as
   "try anyway"; the text is preserved in the panel.
-- **Concurrency and partial deletion.** Two entry points can overlap during the
-  probe delay, and a script can time out after some keys. A single-flight lock
-  admits one deletion, the slot is consumed before the first key, and every
-  failure is reported as possibly incomplete rather than retried.
+- **Concurrency, paste interleave, and partial deletion.** Deletions and every
+  paste into a target app share one bounded write lock, so a paste cannot be
+  written into a running Backspace loop. The slot is consumed before the script
+  starts; a pre-key abort restores it for a retry, while a mid-delete abort,
+  loop error, timeout, or exec failure keeps it consumed and is reported as
+  possibly incomplete rather than retried.
 - **Panel focus and reinsertion.** Making the panel editable means it can
   become the frontmost window. Reinsertion first hides the panel and then
   re-probes; it reuses the undo identity check, so a different field in the same

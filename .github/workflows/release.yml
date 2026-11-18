@@ -168,6 +168,14 @@ jobs:
       # A leftover draft is promoted instead of skipped, because electron-
       # builder prefers a draft over a published release; assets uploaded while
       # the release stayed a draft would never reach the public release body.
+      # The promotion stays a plain `gh release edit`: that command has no
+      # --generate-notes flag, and generating notes would need an extra API call.
+      #
+      # Known upstream limitation, not introduced here: for a Release published
+      # more than two hours ago, electron-builder's getOrCreateRelease() warns
+      # and returns null, so doUpload() silently skips the assets. The re-run is
+      # green but does not refresh them; set EP_GH_IGNORE_TIME=true when that is
+      # needed.
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -175,8 +183,14 @@ jobs:
           tag="$GITHUB_REF_NAME"
           repo="$GITHUB_REPOSITORY"
 
-          # `gh release view` exits non-zero when the release does not exist yet.
-          if is_draft="$(gh release view "$tag" --repo "$repo" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+          # `gh release view` exits non-zero both when the Release is missing and
+          # on auth/network/rate-limit failures. Only the former may fall through
+          # to `create`; swallowing every failure would turn a transient error
+          # into a fresh 422 already_exists.
+          err_file="$(mktemp)"
+          trap 'rm -f "$err_file"' EXIT
+
+          if is_draft="$(gh release view "$tag" --repo "$repo" --json isDraft --jq '.isDraft' 2>"$err_file")"; then
             if [ "$is_draft" = "true" ]; then
               echo "Release $tag exists as a draft; promoting it to published."
               gh release edit "$tag" --repo "$repo" --draft=false
@@ -184,7 +198,14 @@ jobs:
               echo "Release $tag is already published; skipping creation."
             fi
           else
-            gh release create "$tag" --repo "$repo" --verify-tag --generate-notes --title "$tag"
+            err="$(cat "$err_file")"
+            if [ "$err" = "release not found" ]; then
+              gh release create "$tag" --repo "$repo" --verify-tag --generate-notes --title "$tag"
+            else
+              printf '%s\n' "$err" >&2
+              echo "::error::gh release view failed for $tag: $err"
+              exit 1
+            fi
           fi
         env:
           GH_TOKEN: ${{ github.token }}

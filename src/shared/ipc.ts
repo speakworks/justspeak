@@ -214,6 +214,8 @@ export interface PreferencesView {
   loginItem: LoginItemView
   /** The 自动检查更新 toggle, from the stored preference (`false` default). */
   updateAutoCheck: boolean
+  /** How long an insertion stays undoable, in minutes (`5` default). */
+  undoWindowMinutes: number
 }
 
 /** `systemPreferences.getMediaAccessStatus` on macOS. */
@@ -239,6 +241,8 @@ export interface PreferencesPatch {
   llmModel?: string
   /** The requested 开机自动启动 value; main verifies it against the OS read-back. */
   launchAtLogin?: boolean
+  /** How long an insertion stays undoable, in whole minutes (1–60). */
+  undoWindowMinutes?: number
 }
 
 export interface PreferencesSetResult {
@@ -303,6 +307,38 @@ export interface ResultPanelPayload {
   theme: ResolvedTheme
   /** False when the OS refused the temporary Escape shortcut. */
   canEscape: boolean
+  /**
+   * Increments on every fresh show. The renderer resets its editable draft only
+   * when this changes, so an Escape-hint refresh cannot clobber an edit and a
+   * reopened panel with the same text starts clean.
+   */
+  revision: number
+  /** Defaults to 焦点不在输入框; refusal paths name their own reason. */
+  title?: string
+  /** Optional one-line explanation above the text. */
+  notice?: string
+}
+
+/** The undo slot as the history pane may see it (OpenSpec `injection-undo`). */
+export interface UndoStateView {
+  /** True only while the recorded method was a paste and the window is open. */
+  available: boolean
+  /** The history row for the remembered insertion, when it was written. */
+  entryId?: string
+  /** Epoch ms when the window closes; absent when nothing is recorded. */
+  expiresAt?: number
+}
+
+/** A guarded undo attempt. A refusal carries the reason for the user. */
+export interface UndoResult {
+  ok: boolean
+  message?: string
+}
+
+/** The result panel's reinsertion attempt; `inserted: false` means copied. */
+export interface ReinsertResult {
+  inserted: boolean
+  message?: string
 }
 
 export interface JustSpeakApi {
@@ -367,10 +403,20 @@ export interface JustSpeakApi {
   onPanelText: (listener: (payload: ResultPanelPayload) => void) => () => void
   /** Panel-only: tells main it has mounted, so the retained text is pushed. */
   panelReady: () => void
-  /** Panel-only: copy the retained text and dismiss. */
-  copyPanelText: () => void
+  /** Panel-only: copy the retained (or edited) text and dismiss. */
+  copyPanelText: (text?: string) => void
   /** Panel-only: dismiss without copying. */
   closeResultPanel: () => void
+  /** Panel-only: reinsert the edited text into the original target or copy it. */
+  reinsertPanelText: (text: string) => Promise<ReinsertResult>
+  /** Panel-only: run the guarded undo and report a refusal back to the panel. */
+  undoPanelInjection: () => Promise<UndoResult>
+  /** Main-window: the slot the history row may offer to undo. */
+  getUndoState: () => Promise<UndoStateView>
+  /** Main-window: guarded 撤销上一次插入. */
+  undoLastInjection: () => Promise<UndoResult>
+  /** Fires when the undo slot is set, linked to history, or cleared. */
+  onUndoChanged: (listener: () => void) => () => void
   onState: (listener: (state: AppState, message?: string) => void) => () => void
   /**
    * Every finished transcript, whichever target it went to. The home input

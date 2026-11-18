@@ -191,3 +191,36 @@ describe('history store', () => {
     expect(() => readFileSync(orphan)).toThrow()
   })
 })
+
+describe('history in-place text update', () => {
+  it('rewrites the row on disk without changing the entry count or timestamp', async () => {
+    const dir = makeDir()
+    const store = counterStore(dir)
+    const first = await store.append(event('第一句'), 'pasted')
+    const second = await store.append(event('第二句'), 'pasted')
+
+    const next = await store.updateText(first.id, '改过的第一句')
+    expect(next).toHaveLength(2)
+    expect(next.find((value) => value.id === first.id)).toMatchObject({
+      text: '改过的第一句',
+      createdAt: first.createdAt
+    })
+
+    const listed = await store.list()
+    expect(listed.find((value) => value.id === first.id)?.text).toBe('改过的第一句')
+    expect(listed.find((value) => value.id === second.id)?.text).toBe('第二句')
+    const lines = readFileSync(path.join(dir, 'history', HISTORY_FILE), 'utf8')
+      .trim()
+      .split('\n')
+    expect(lines).toHaveLength(2)
+    expect(lines.join('\n')).not.toContain('"text":"第一句"')
+  })
+
+  it('is a no-op for an unknown id or identical text', async () => {
+    const dir = makeDir()
+    const store = counterStore(dir)
+    const entry = await store.append(event('第一句'), 'pasted')
+    await expect(store.updateText('missing', '新文本')).resolves.toHaveLength(1)
+    await expect(store.updateText(entry.id, '第一句')).resolves.toHaveLength(1)
+  })
+})

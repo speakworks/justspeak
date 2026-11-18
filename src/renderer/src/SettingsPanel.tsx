@@ -27,6 +27,8 @@ export interface SettingsPanelProps {
   /** Writes 开机自动启动; the row renders the OS read-back main returns. */
   onAutostart: (enabled: boolean) => void
   autostartBusy: boolean
+  /** Writes the 撤销时间窗 in whole minutes (1–60). */
+  onUndoWindow: (minutes: number) => void
   onReload: () => void
   onLlmBackend: (backend: LlmBackend) => void
   onLlmEndpointSave: (baseUrl: string, model: string) => void
@@ -79,6 +81,7 @@ export function SettingsPanel({
   onTheme,
   onAutostart,
   autostartBusy,
+  onUndoWindow,
   onReload,
   onLlmBackend,
   onLlmEndpointSave,
@@ -102,12 +105,34 @@ export function SettingsPanel({
   const [llmBaseUrl, setLlmBaseUrl] = useState('')
   const [llmModel, setLlmModel] = useState('')
   const [llmKey, setLlmKey] = useState('')
+  const [undoWindowDraft, setUndoWindowDraft] = useState('')
+  const [undoWindowError, setUndoWindowError] = useState<string | undefined>()
 
   useEffect(() => {
     if (!preferences) return
     setLlmBaseUrl(preferences.llm.endpoint.baseUrl)
     setLlmModel(preferences.llm.endpoint.model)
   }, [preferences?.llm.endpoint.baseUrl, preferences?.llm.endpoint.model])
+
+  useEffect(() => {
+    if (!preferences) return
+    setUndoWindowDraft(String(preferences.undoWindowMinutes))
+    setUndoWindowError(undefined)
+  }, [preferences?.undoWindowMinutes])
+
+  const commitUndoWindow = (): void => {
+    if (!preferences) return
+    const value = Number(undoWindowDraft)
+    if (Number.isInteger(value) && value >= 1 && value <= 60) {
+      setUndoWindowError(undefined)
+      if (value !== preferences.undoWindowMinutes) onUndoWindow(value)
+      return
+    }
+    // An invalid intermediate value snaps back to the stored window and names
+    // the accepted range, instead of silently keeping a value that never saved.
+    setUndoWindowDraft(String(preferences.undoWindowMinutes))
+    setUndoWindowError('撤销时间窗必须是 1 到 60 之间的整数分钟。')
+  }
   return (
     <section
       className="card settings"
@@ -203,6 +228,39 @@ export function SettingsPanel({
               </button>
             </div>
             <p className="settings-detail">{rows.autostart.detail}</p>
+          </div>
+
+          <div className="settings-row">
+            <div className="settings-row-head">
+              <span className="settings-label">撤销时间窗</span>
+              <StatusChip state={rows.undoWindow} />
+            </div>
+            <div className="settings-control">
+              <input
+                className="hotkey-input undo-window-input"
+                type="number"
+                min={1}
+                max={60}
+                step={1}
+                aria-label="撤销时间窗（分钟）"
+                value={undoWindowDraft}
+                onChange={(event) => setUndoWindowDraft(event.target.value)}
+                onBlur={commitUndoWindow}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    commitUndoWindow()
+                  }
+                }}
+              />
+              <span className="settings-live">分钟</span>
+            </div>
+            <p className="settings-detail">{rows.undoWindow.detail}</p>
+            {undoWindowError ? (
+              <p className="settings-detail error" role="status" aria-live="polite">
+                {undoWindowError}
+              </p>
+            ) : null}
           </div>
           </>
           )}

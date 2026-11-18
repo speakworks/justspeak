@@ -504,3 +504,45 @@ describe('preferences:set plan', () => {
     })
   })
 })
+
+describe('undo window preference', () => {
+  it('defaults to five minutes and persists an accepted value', async () => {
+    const dir = makeDir()
+    const store = new ThemeStore(dir)
+    await expect(store.loadPreferences()).resolves.toMatchObject({ undoWindowMinutes: 5 })
+    await store.update({ undoWindowMinutes: 10 })
+    await expect(store.loadPreferences()).resolves.toMatchObject({ undoWindowMinutes: 10 })
+    expect(JSON.parse(await readFile(preferencesFile(dir), 'utf8'))).toMatchObject({
+      undoWindowMinutes: 10
+    })
+  })
+
+  it('rejects zero, more than sixty, and fractions without writing any key', () => {
+    for (const value of [0, 61, 5.5, '5', null]) {
+      const result = mergePreferences({ theme: 'dark' }, { undoWindowMinutes: value })
+      expect(result.ok, String(value)).toBe(false)
+      expect(result.record, String(value)).toEqual({ theme: 'dark' })
+      expect(result.accepted, String(value)).toEqual({})
+    }
+  })
+
+  it('rejects a mixed patch atomically when the window is invalid', () => {
+    expect(planPreferenceSet({ theme: 'dark', undoWindowMinutes: 61 })).toMatchObject({
+      ok: false,
+      update: {}
+    })
+  })
+
+  it('clamps an invalid stored value back to the default', async () => {
+    const dir = makeDir()
+    await writeFile(
+      preferencesFile(dir),
+      JSON.stringify({ theme: 'dark', undoWindowMinutes: 0 }),
+      'utf8'
+    )
+    await expect(new ThemeStore(dir).loadPreferences()).resolves.toMatchObject({
+      theme: 'dark',
+      undoWindowMinutes: 5
+    })
+  })
+})

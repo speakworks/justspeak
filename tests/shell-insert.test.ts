@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { insertAtSelection } from '../src/core/shell/insert'
-import { deliverTranscript, deliveryTarget } from '../src/core/shell/delivery'
+import {
+  deliverTranscript,
+  deliverTranscriptDetailed,
+  deliveryTarget
+} from '../src/core/shell/delivery'
+import type { FocusTarget } from '../src/core/focus/editability'
 
 describe('home input insertion', () => {
   it('inserts at the caret and leaves the caret after the inserted text', () => {
@@ -138,5 +143,36 @@ describe('delivering a transcript', () => {
       })
     ).rejects.toThrow('粘贴失败')
     expect(insert).not.toHaveBeenCalled()
+  })
+
+  it('returns the exact focus target a paste used, for the undo record', async () => {
+    const target: FocusTarget = {
+      kind: 'editable',
+      appName: 'Safari',
+      bundleId: 'com.apple.Safari',
+      role: 'AXTextArea',
+      identity: 'main-editor'
+    }
+    const outcome = await deliverTranscriptDetailed('你好', {
+      appFocused: () => false,
+      probeTarget: async () => target,
+      insert: vi.fn(),
+      paste: vi.fn(async () => {}),
+      showPanel: vi.fn()
+    })
+    expect(outcome).toEqual({ target: 'paste', focus: target })
+  })
+
+  it('returns no focus for the app-own insertion, which uses no probe', async () => {
+    const probeTarget = vi.fn()
+    const outcome = await deliverTranscriptDetailed('你好', {
+      appFocused: () => true,
+      probeTarget,
+      insert: vi.fn(),
+      paste: vi.fn(async () => {}),
+      showPanel: vi.fn()
+    })
+    expect(outcome).toEqual({ target: 'insert', focus: null })
+    expect(probeTarget).not.toHaveBeenCalled()
   })
 })

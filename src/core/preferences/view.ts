@@ -8,6 +8,7 @@
  */
 
 import { DEFAULT_ACCELERATOR } from '../hotkey/accelerator'
+import { DEFAULT_UNDO_WINDOW_MINUTES } from '../injection/undo'
 import { THEME_LABEL } from '../theme/theme'
 import {
   LOGIN_ITEM_REQUIRES_APPROVAL_REASON,
@@ -237,9 +238,20 @@ export interface SettingsRows {
   theme: SettingState
   hotkey: SettingState
   autostart: SettingState
+  undoWindow: SettingState
   vocabulary: SettingState
   provider: SettingState
   llm: SettingState
+}
+
+/** 撤销时间窗: 5 minutes is the shipped default, anything else is a choice. */
+export function describeUndoWindow(minutes: number): SettingState {
+  const safe = Number.isInteger(minutes) && minutes >= 1 ? minutes : DEFAULT_UNDO_WINDOW_MINUTES
+  return {
+    status: safe === DEFAULT_UNDO_WINDOW_MINUTES ? 'default' : 'override',
+    statusLabel: safe === DEFAULT_UNDO_WINDOW_MINUTES ? STATUS_LABEL.default : STATUS_LABEL.override,
+    detail: `最近一次插入后 ${safe} 分钟内可撤销或重说。`
+  }
 }
 
 export function buildSettingsRows(preferences: PreferencesView): SettingsRows {
@@ -247,6 +259,7 @@ export function buildSettingsRows(preferences: PreferencesView): SettingsRows {
     theme: describeTheme(preferences.theme),
     hotkey: describeHotkey(preferences.hotkey, preferences.hotkeyMessage),
     autostart: describeAutostart(preferences.loginItem),
+    undoWindow: describeUndoWindow(preferences.undoWindowMinutes),
     vocabulary: describeVocabulary(preferences.vocabulary),
     provider: describeProvider(preferences.provider),
     llm: describeLlm(preferences.llm)

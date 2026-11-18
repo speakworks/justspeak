@@ -14,10 +14,13 @@ import type {
   PreferencesPatch,
   PreferencesSetResult,
   PreferencesView,
+  ReinsertResult,
   RecordingCommand,
   RecordingSummary,
   ResultPanelPayload,
   TranscriptEvent,
+  UndoResult,
+  UndoStateView,
   UpdateAutoCheckPatch,
   UpdateEvent,
   UpdateStatusView
@@ -107,8 +110,18 @@ const api: JustSpeakApi = {
     return () => ipcRenderer.removeListener('panel:text', handler)
   },
   panelReady: () => ipcRenderer.send('panel:ready'),
-  copyPanelText: () => ipcRenderer.send('panel:copy'),
+  copyPanelText: (text?: string) => ipcRenderer.send('panel:copy', text),
   closeResultPanel: () => ipcRenderer.send('panel:close'),
+  reinsertPanelText: (text: string) =>
+    ipcRenderer.invoke('panel:reinsert', text) as Promise<ReinsertResult>,
+  undoPanelInjection: () => ipcRenderer.invoke('panel:undo') as Promise<UndoResult>,
+  getUndoState: () => ipcRenderer.invoke('undo:state') as Promise<UndoStateView>,
+  undoLastInjection: () => ipcRenderer.invoke('undo:last') as Promise<UndoResult>,
+  onUndoChanged: (listener) => {
+    const handler = (): void => listener()
+    ipcRenderer.on('undo:changed', handler)
+    return () => ipcRenderer.removeListener('undo:changed', handler)
+  },
   onState: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, next: AppState, message?: string) => {
       listener(next, message)

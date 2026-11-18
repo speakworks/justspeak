@@ -11,6 +11,7 @@ import {
   PROVIDER_NOT_READY_REASON,
   PROVIDER_FAKE_REASON,
   describeTheme,
+  describeUndoWindow,
   describeVocabulary
 } from '../src/core/preferences/view'
 import type { PreferencesView, VocabularySummary } from '../src/shared/ipc'
@@ -44,7 +45,8 @@ const PREFERENCES: PreferencesView = {
     }
   },
   loginItem: { available: true, openAtLogin: true, status: 'enabled' },
-  updateAutoCheck: false
+  updateAutoCheck: false,
+  undoWindowMinutes: 5
 }
 
 describe('llm state', () => {
@@ -259,6 +261,24 @@ describe('provider state', () => {
   })
 })
 
+describe('undo window state', () => {
+  it('labels five minutes as the default and names the window', () => {
+    expect(describeUndoWindow(5)).toMatchObject({
+      status: 'default',
+      statusLabel: '默认',
+      detail: expect.stringContaining('5 分钟')
+    })
+  })
+
+  it('labels any other accepted window as an override', () => {
+    expect(describeUndoWindow(10)).toMatchObject({
+      status: 'override',
+      statusLabel: '已修改',
+      detail: expect.stringContaining('10 分钟')
+    })
+  })
+})
+
 describe('settings rows', () => {
   it('composes every row from the one preferences view', () => {
     const rows = buildSettingsRows({
@@ -271,6 +291,7 @@ describe('settings rows', () => {
       'theme',
       'hotkey',
       'autostart',
+      'undoWindow',
       'vocabulary',
       'provider',
       'llm'
@@ -278,6 +299,7 @@ describe('settings rows', () => {
     expect(rows.theme.status).toBe('override')
     expect(rows.hotkey.status).toBe('unavailable')
     expect(rows.autostart.status).toBe('default')
+    expect(rows.undoWindow.status).toBe('default')
     expect(rows.vocabulary.status).toBe('default')
     expect(rows.provider.status).toBe('unavailable')
     expect(rows.llm.status).toBe('default')

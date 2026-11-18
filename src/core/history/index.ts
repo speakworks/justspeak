@@ -100,6 +100,20 @@ export function removeHistoryEntry(
   return entries.filter((entry) => entry.id !== id)
 }
 
+/**
+ * Rewrite one entry's text in place. The id, timestamp, duration and audio
+ * reference survive, and no copy of the previous text is retained.
+ */
+export function replaceHistoryEntryText(
+  entries: readonly HistoryEntry[],
+  id: string,
+  text: string
+): HistoryEntry[] {
+  return entries.map((entry) =>
+    entry.id === id && entry.text !== text ? { ...entry, text } : entry
+  )
+}
+
 /** `HH:MM` in the user's local time. */
 export function formatHistoryTime(createdAt: number): string {
   const date = new Date(createdAt)

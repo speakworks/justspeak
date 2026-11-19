@@ -85,8 +85,14 @@ export interface VocabularySummary {
   path: string
   /** `default`: no file yet; `loaded`: parsed; `unreadable`: present but bad. */
   state: 'default' | 'loaded' | 'unreadable'
+  /** Accepted decode-time terms after trim, dedup, and the 32-entry cap. */
+  termCount: number
   replaceCount: number
   protectCount: number
+  /** Terms dropped because they contain an ASCII comma; never term content. */
+  droppedTermCount: number
+  /** Whether the live provider declares `vocabularyBias` (from capabilities). */
+  providerSupportsTerms: boolean
   /** Why the file could not be used; only set when `state` is `unreadable`. */
   message?: string
 }

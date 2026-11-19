@@ -40,6 +40,7 @@ function fakeProvider(
       itn: true,
       timestamps: false,
       vad: false,
+      vocabularyBias: false,
       maxAudioMs: 60_000,
       quantizations: ['Q8_0']
     },
@@ -554,5 +555,35 @@ describe('transcript settlement', () => {
       }
     })
     expect(harness.controller.state).toBe('idle')
+  })
+})
+
+describe('decode-time vocabulary injection', () => {
+  async function transcribeWith(
+    getVocabulary: (() => string[]) | undefined
+  ): Promise<ReturnType<typeof setup>> {
+    const harness = setup(getVocabulary === undefined ? {} : { getVocabulary })
+    harness.controller.toggle(true)
+    harness.advance(1000)
+    harness.controller.toggle(true)
+    await harness.controller.handleCaptureStopped(SUMMARY)
+    return harness
+  }
+
+  it('forwards the current terms to the provider options', async () => {
+    const harness = await transcribeWith(() => ['Kubernetes', '张三'])
+    expect(harness.transcribe.mock.calls[0]?.[1]).toMatchObject({
+      vocabulary: ['Kubernetes', '张三']
+    })
+  })
+
+  it('leaves the options shape unchanged when the list is empty', async () => {
+    const harness = await transcribeWith(() => [])
+    expect(harness.transcribe.mock.calls[0]?.[1]).not.toHaveProperty('vocabulary')
+  })
+
+  it('leaves the options shape unchanged when no getter is wired', async () => {
+    const harness = await transcribeWith(undefined)
+    expect(harness.transcribe.mock.calls[0]?.[1]).not.toHaveProperty('vocabulary')
   })
 })

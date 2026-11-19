@@ -25,7 +25,10 @@ import type {
 export { POSTPROCESS_RULES } from './types'
 export {
   parseVocabularyConfig,
+  parseVocabularyConfigDetailed,
+  parseTermList,
   serializeVocabularyConfig,
+  MAX_VOCABULARY_TERMS,
   findLiteralSpans,
   applyVocabulary
 } from './vocabulary'
@@ -35,6 +38,7 @@ export type {
   PostprocessResult,
   PostprocessRule,
   RuleSwitches,
+  TermListParse,
   Vocabulary,
   VocabularyReplacement
 } from './types'
@@ -86,6 +90,8 @@ function firstVisibleCharacter(
 export function postprocess(text: string, options: PostprocessOptions = {}): PostprocessResult {
   if (text.length === 0) return { text, applied: [] }
 
+  // Rule input only: `options.terms` are decode-time hints and never enter
+  // this object, so no rule below can rewrite text toward a term.
   const vocabulary: Vocabulary = {
     replace: options.vocabulary?.replace ?? [],
     protect: options.vocabulary?.protect ?? []

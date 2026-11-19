@@ -162,4 +162,24 @@ describe('Qwen3 provider error and timeout mapping', () => {
     await instance.dispose()
     expect(dispose).toHaveBeenCalledTimes(1)
   })
+
+  it('forwards accepted terms to the runner for decode-time biasing', async () => {
+    let seenVocabulary: string[] | undefined = ['unset']
+    const instance = new Qwen3AsrProvider({
+      model: TEST_MODEL,
+      runner: runner({
+        async run(_input, options) {
+          seenVocabulary = options.vocabulary
+          return { ok: true, value: { text: 'Kubernetes' } }
+        }
+      })
+    })
+
+    const result = await instance.transcribe(pcmInput(), {
+      vocabulary: ['Kubernetes', 'GPT-4o', '张三']
+    })
+    expect(seenVocabulary).toEqual(['Kubernetes', 'GPT-4o', '张三'])
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.warnings).toEqual([])
+  })
 })

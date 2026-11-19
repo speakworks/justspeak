@@ -16,6 +16,7 @@ const CAPABILITIES: AsrCapabilities = {
   itn: true,
   timestamps: false,
   vad: false,
+  vocabularyBias: false,
   maxAudioMs: 87 * 60 * 1000,
   quantizations: ['fake']
 }
@@ -114,6 +115,9 @@ export class FakeAsrProvider implements AsrProvider {
 
     // The fake never invents text for an empty capture.
     const text = input.pcm.length === 0 ? '' : this.text
+    // It declares `vocabularyBias: false`, so it is honest about configured
+    // terms instead of pretending they were applied.
+    const terms = (options.vocabulary ?? []).filter((term) => term.length > 0)
     return {
       ok: true,
       value: {
@@ -122,7 +126,15 @@ export class FakeAsrProvider implements AsrProvider {
         latencyMs: Date.now() - startedAt,
         modelId: 'fake-asr',
         runtimeId: 'fake',
-        warnings: [],
+        warnings:
+          terms.length > 0
+            ? [
+                {
+                  code: 'VOCABULARY_UNSUPPORTED',
+                  message: `${this.id} does not support decode-time vocabulary; ${terms.length} term(s) were not applied.`
+                }
+              ]
+            : [],
         fallbackUsed: false
       }
     }

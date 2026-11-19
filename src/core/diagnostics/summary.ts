@@ -38,6 +38,8 @@ export interface DiagnosticsSummary {
     }
     vocabulary: {
       state: string
+      /** Accepted decode-time term count; term strings never appear here. */
+      termCount: number
       replaceCount: number
       protectCount: number
       message?: string
@@ -89,6 +91,7 @@ export function buildDiagnosticsSummary(input: DiagnosticsSummaryInput): Diagnos
       },
       vocabulary: {
         state: preferences.vocabulary.state,
+        termCount: preferences.vocabulary.termCount,
         replaceCount: preferences.vocabulary.replaceCount,
         protectCount: preferences.vocabulary.protectCount,
         ...(vocabularyMessage === undefined ? {} : { message: vocabularyMessage })

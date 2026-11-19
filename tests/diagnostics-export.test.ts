@@ -51,7 +51,7 @@ const SUMMARY: DiagnosticsSummary = {
     theme: 'system',
     hotkeyConfigured: true,
     provider: { id: 'qwen3', label: 'Qwen3', selectable: true, reason: 'ready' },
-    vocabulary: { state: 'loaded', replaceCount: 1, protectCount: 0 },
+    vocabulary: { state: 'loaded', termCount: 1, replaceCount: 1, protectCount: 0 },
     llm: {
       backend: 'off',
       endpoint: { configured: false, modelConfigured: false, hasKey: false },

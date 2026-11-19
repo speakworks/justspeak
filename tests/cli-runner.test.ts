@@ -115,6 +115,265 @@ describe('transcribe-cli runner', () => {
     expect(unlinked).toHaveLength(1)
   })
 
+  it('appends one ordered --vocabulary argument after the existing arguments', async () => {
+    let spawnedArgs: string[] = []
+    const { runner, unlinked } = makeRunner({
+      spawn: nodeScript("process.stdout.write('text: hello\\n')", (args) => {
+        spawnedArgs = args
+      })
+    })
+
+    const result = await runner.run(pcmInput(320), {
+      vocabulary: ['Kubernetes', 'GPT-4o', '张三']
+    })
+    expect(result.ok).toBe(true)
+    expect(spawnedArgs.slice(0, 4)).toEqual([
+      '-q',
+      '-m',
+      '/fake/model.gguf',
+      path.join(dir, 'utterance-0.wav')
+    ])
+    expect(spawnedArgs.slice(4)).toEqual(['--vocabulary', 'Kubernetes,GPT-4o,张三'])
+    expect(unlinked).toHaveLength(1)
+  })
+
+  it('leaves the invocation byte-for-byte unchanged when no terms are accepted', async () => {
+    let spawnedArgs: string[] = []
+    const { runner } = makeRunner({
+      spawn: nodeScript("process.stdout.write('text: hello\\n')", (args) => {
+        spawnedArgs = args
+      })
+    })
+
+    const result = await runner.run(pcmInput(), { vocabulary: [] })
+    expect(result.ok).toBe(true)
+    expect(spawnedArgs).toEqual([
+      '-q',
+      '-m',
+      '/fake/model.gguf',
+      path.join(dir, 'utterance-0.wav')
+    ])
+  })
+
+  it('retries once without --vocabulary when the CLI rejects the option', async () => {
+    const spawned: string[][] = []
+    const spawn: CliRunnerDeps['spawn'] = (_command, args) => {
+      spawned.push(args)
+      const script = args.includes('--vocabulary')
+        ? "process.stderr.write(\"error: unknown option '--vocabulary'\\n\"); process.exit(1)"
+        : "process.stdout.write('text: unbiased\\n')"
+      return nodeSpawn(process.execPath, ['-e', script], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      }) as unknown as ChildProcessPort
+    }
+    const { runner, unlinked } = makeRunner({ spawn })
+
+    const result = await runner.run(pcmInput(), { vocabulary: ['Kubernetes'] })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.text).toBe('unbiased')
+      expect(result.value.warnings?.map((warning) => warning.code)).toContain(
+        'VOCABULARY_UNSUPPORTED'
+      )
+    }
+    expect(spawned).toHaveLength(2)
+    expect(spawned[0]).toContain('--vocabulary')
+    expect(spawned[1]).not.toContain('--vocabulary')
+    expect(unlinked).toHaveLength(1)
+  })
+
+  it('does not retry when the retry also fails', async () => {
+    const spawned: string[][] = []
+    const spawn: CliRunnerDeps['spawn'] = (_command, args) => {
+      spawned.push(args)
+      const script = args.includes('--vocabulary')
+        ? "process.stderr.write(\"error: unknown option '--vocabulary'\\n\"); process.exit(1)"
+        : "process.stderr.write('boom\\n'); process.exit(2)"
+      return nodeSpawn(process.execPath, ['-e', script], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      }) as unknown as ChildProcessPort
+    }
+    const { runner, unlinked } = makeRunner({ spawn })
+
+    const result = await runner.run(pcmInput(), { vocabulary: ['Kubernetes'] })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.code).toBe('INFERENCE_FAILED')
+    expect(spawned).toHaveLength(2)
+    expect(unlinked).toHaveLength(1)
+  })
+
+  it('does not retry an unrelated inference failure', async () => {
+    const spawned: string[][] = []
+    const spawn: CliRunnerDeps['spawn'] = (_command, args) => {
+      spawned.push(args)
+      return nodeSpawn(
+        process.execPath,
+        ['-e', "process.stderr.write('boom\\n'); process.exit(2)"],
+        { stdio: ['ignore', 'pipe', 'pipe'] }
+      ) as unknown as ChildProcessPort
+    }
+    const { runner } = makeRunner({ spawn })
+
+    const result = await runner.run(pcmInput(), { vocabulary: ['Kubernetes'] })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.code).toBe('INFERENCE_FAILED')
+    expect(spawned).toHaveLength(1)
+  })
+
+  it('does not retry an unrelated unknown option even when the usage names --vocabulary', async () => {
+    // A parse failure prints the whole usage, and that usage always contains
+    // `--vocabulary TERMS`. Only a same-line binding may trigger the retry.
+    const spawned: string[][] = []
+    const spawn: CliRunnerDeps['spawn'] = (_command, args) => {
+      spawned.push(args)
+      return nodeSpawn(
+        process.execPath,
+        [
+          '-e',
+          "process.stderr.write(\"error: unknown option '-q'\\n" +
+            "Usage: transcribe-cli [options]\\n" +
+            '  --vocabulary TERMS  comma-separated terms\\n"); process.exit(1)'
+        ],
+        { stdio: ['ignore', 'pipe', 'pipe'] }
+      ) as unknown as ChildProcessPort
+    }
+    const { runner } = makeRunner({ spawn })
+
+    const result = await runner.run(pcmInput(), { vocabulary: ['Kubernetes'] })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.code).toBe('INFERENCE_FAILED')
+    expect(spawned).toHaveLength(1)
+  })
+
+  it('retries when the unknown-option line itself names --vocabulary', async () => {
+    const spawned: string[][] = []
+    const spawn: CliRunnerDeps['spawn'] = (_command, args) => {
+      spawned.push(args)
+      const script = args.includes('--vocabulary')
+        ? "process.stderr.write(\"error: unknown option '--vocabulary'\\n\"); process.exit(1)"
+        : "process.stdout.write('text: unbiased\\n')"
+      return nodeSpawn(process.execPath, ['-e', script], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      }) as unknown as ChildProcessPort
+    }
+    const { runner } = makeRunner({ spawn })
+
+    const result = await runner.run(pcmInput(), { vocabulary: ['Kubernetes'] })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.text).toBe('unbiased')
+    expect(spawned).toHaveLength(2)
+  })
+
+  it('detects a flag rejection from untruncated stderr past the 300-character summary', async () => {
+    const noise = 'noise '.repeat(80)
+    const spawned: string[][] = []
+    const spawn: CliRunnerDeps['spawn'] = (_command, args) => {
+      spawned.push(args)
+      const script = args.includes('--vocabulary')
+        ? `process.stderr.write(${JSON.stringify(
+            `${noise}\nerror: unknown option '--vocabulary'\n`
+          )}); process.exit(1)`
+        : "process.stdout.write('text: unbounded\\n')"
+      return nodeSpawn(process.execPath, ['-e', script], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      }) as unknown as ChildProcessPort
+    }
+    const { runner } = makeRunner({ spawn })
+
+    const result = await runner.run(pcmInput(), { vocabulary: ['Kubernetes'] })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.text).toBe('unbounded')
+    expect(spawned).toHaveLength(2)
+  })
+
+  it('returns CANCELLED without a retry when the signal aborts after the first failure', async () => {
+    class ControlledChild implements ChildProcessPort {
+      stdout = null
+      stderr = {
+        on: (_event: 'data', listener: (chunk: Buffer | string) => void): void => {
+          this.stderrListener = listener
+        }
+      }
+      private stderrListener?: (chunk: Buffer | string) => void
+      private closeListener?: (code: number | null, signal: string | null) => void
+
+      on(event: 'error', listener: (error: Error) => void): void
+      on(event: 'close', listener: (code: number | null, signal: string | null) => void): void
+      on(
+        event: 'error' | 'close',
+        listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void)
+      ): void {
+        if (event === 'close') {
+          this.closeListener = listener as (code: number | null, signal: string | null) => void
+        }
+      }
+
+      kill(): boolean {
+        return true
+      }
+
+      writeStderr(text: string): void {
+        this.stderrListener?.(text)
+      }
+
+      close(code: number): void {
+        this.closeListener?.(code, null)
+      }
+    }
+
+    let spawnCount = 0
+    const controller = new AbortController()
+    const spawn: CliRunnerDeps['spawn'] = () => {
+      spawnCount += 1
+      const child = new ControlledChild()
+      queueMicrotask(() => {
+        child.writeStderr("error: unknown option '--vocabulary'\n")
+        child.close(1)
+        // The first failure has settled; the abort lands before `run()` reads
+        // the signal at the retry branch.
+        controller.abort()
+      })
+      return child
+    }
+    const { runner } = makeRunner({ spawn })
+
+    const result = await runner.run(pcmInput(), {
+      vocabulary: ['Kubernetes'],
+      signal: controller.signal
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.code).toBe('CANCELLED')
+    expect(spawnCount).toBe(1)
+  })
+
+  it('reports a recognised runtime truncation notice as VOCABULARY_TRUNCATED', async () => {
+    const { runner } = makeRunner({
+      spawn: nodeScript(
+        "process.stdout.write('text: hello\\n');" +
+          "process.stderr.write('WARN qwen3: dropped 2 of 10 vocabulary terms (prompt budget: 32 tokens)\\n')"
+      )
+    })
+
+    const result = await runner.run(pcmInput(), { vocabulary: ['Kubernetes'] })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.text).toBe('hello')
+      expect(result.value.warnings?.map((warning) => warning.code)).toEqual([
+        'VOCABULARY_TRUNCATED'
+      ])
+    }
+  })
+
+  it('invents no truncation warning when the runtime stays silent', async () => {
+    const { runner } = makeRunner({
+      spawn: nodeScript("process.stdout.write('text: hello\\n')")
+    })
+
+    const result = await runner.run(pcmInput(), { vocabulary: ['Kubernetes'] })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.warnings).toEqual([])
+  })
+
   it('maps a missing model message to MODEL_MISSING and cleans up', async () => {
     const { runner, unlinked } = makeRunner({
       spawn: nodeScript("process.stderr.write('model: /x -> file not found\\n'); process.exit(1)")

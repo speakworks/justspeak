@@ -42,6 +42,7 @@ export const SENSEVOICE_CAPABILITIES: AsrCapabilities = {
   itn: true,
   timestamps: false,
   vad: false,
+  vocabularyBias: false,
   maxAudioMs: SENSEVOICE_MAX_AUDIO_MS,
   quantizations: ['Q8_0']
 }

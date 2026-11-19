@@ -33,6 +33,8 @@ describe('embedded model catalog', () => {
     // Compare against the provider constant, not a copied literal: a literal
     // would keep passing after QWEN3_MAX_AUDIO_MS drifts.
     expect(model.capabilities.maxAudioMs).toBe(QWEN3_CAPABILITIES.maxAudioMs)
+    expect(model.capabilities.vocabularyBias).toBe(true)
+    expect(model.capabilities.vocabularyBias).toBe(QWEN3_CAPABILITIES.vocabularyBias)
     expect(model.capabilities.languages).toEqual(
       expect.arrayContaining(['zh', 'en', 'mixed'])
     )
@@ -53,6 +55,7 @@ describe('embedded model catalog', () => {
     expect(model.capabilities.maxAudioMs).toBe(SENSEVOICE_CAPABILITIES.maxAudioMs)
     expect(model.capabilities.languages).toEqual(SENSEVOICE_CAPABILITIES.languages)
     expect(model.capabilities.streaming).toBe(false)
+    expect(model.capabilities.vocabularyBias).toBe(false)
   })
 
   it('pins the runtime tag and commit', () => {
@@ -88,6 +91,18 @@ describe('embedded model catalog', () => {
   it('fails closed on a missing file entry', () => {
     const broken = structuredClone(rawCatalog)
     broken.models[0].files = []
+    expect(() => parseModelCatalog(broken)).toThrow(/missing required fields/)
+  })
+
+  it('fails closed when a capability entry omits vocabularyBias', () => {
+    const broken = structuredClone(rawCatalog)
+    delete (broken.models[0].capabilities as Record<string, unknown>).vocabularyBias
+    expect(() => parseModelCatalog(broken)).toThrow(/missing required fields/)
+  })
+
+  it('fails closed when vocabularyBias is not a boolean', () => {
+    const broken = structuredClone(rawCatalog)
+    ;(broken.models[1].capabilities as Record<string, unknown>).vocabularyBias = 'no'
     expect(() => parseModelCatalog(broken)).toThrow(/missing required fields/)
   })
 })

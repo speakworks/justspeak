@@ -19,6 +19,7 @@ export const QWEN3_CAPABILITIES: AsrCapabilities = {
   itn: true,
   timestamps: false,
   vad: false,
+  vocabularyBias: true,
   maxAudioMs: QWEN3_MAX_AUDIO_MS,
   quantizations: ['Q8_0']
 }

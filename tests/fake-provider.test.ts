@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FakeAsrProvider } from '../src/core/asr/fake-provider'
+import { FAKE_DEMO_TEXT, FakeAsrProvider } from '../src/core/asr/fake-provider'
 import { runProviderContract, pcmInput } from './provider-contract'
 
 runProviderContract({
@@ -20,5 +20,24 @@ describe('fake provider determinism', () => {
     const result = await provider.transcribe(pcmInput(0), {})
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.value.text).toBe('')
+  })
+
+  it('is honest about configured terms without altering the text', async () => {
+    const provider = new FakeAsrProvider({ delayMs: 0 })
+    const result = await provider.transcribe(pcmInput(), { vocabulary: ['Kubernetes'] })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.text).toBe(FAKE_DEMO_TEXT)
+      expect(result.value.warnings.map((warning) => warning.code)).toEqual([
+        'VOCABULARY_UNSUPPORTED'
+      ])
+    }
+  })
+
+  it('emits no vocabulary warning without terms', async () => {
+    const provider = new FakeAsrProvider({ delayMs: 0 })
+    const result = await provider.transcribe(pcmInput(), {})
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.warnings).toEqual([])
   })
 })

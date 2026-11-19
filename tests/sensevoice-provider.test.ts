@@ -151,4 +151,35 @@ describe('SenseVoice capabilities are honest', () => {
       expect(result.value.fallbackUsed).toBe(false)
     }
   })
+
+  it('drops terms before the runner and reports VOCABULARY_UNSUPPORTED', async () => {
+    let seenVocabulary: string[] | undefined = ['unset']
+    const instance = provider({
+      async run(_input, options) {
+        seenVocabulary = options.vocabulary
+        return { ok: true, value: { text: '你好，世界', language: 'zh' } }
+      }
+    })
+
+    const result = await instance.transcribe(pcmInput(), { vocabulary: ['Kubernetes'] })
+    expect(seenVocabulary).toBeUndefined()
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.text).toBe('你好，世界')
+      expect(result.value.warnings.map((warning) => warning.code)).toEqual([
+        'VOCABULARY_UNSUPPORTED'
+      ])
+      expect(result.value.warnings[0]?.message).toContain('sensevoice')
+    }
+  })
+
+  it('emits no vocabulary warning when no terms are configured', async () => {
+    const result = await provider().transcribe(pcmInput(), {})
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.warnings.some((warning) => warning.code === 'VOCABULARY_UNSUPPORTED')).toBe(
+        false
+      )
+    }
+  })
 })

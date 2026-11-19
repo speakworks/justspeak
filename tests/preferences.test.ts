@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_ACCELERATOR } from '../src/core/hotkey/accelerator'
-import { parseVocabularyConfig, postprocess } from '../src/core/postprocess'
+import {
+  parseTermList,
+  parseVocabularyConfig,
+  parseVocabularyConfigDetailed,
+  postprocess
+} from '../src/core/postprocess'
 import { mergePreferences, planPreferenceSet } from '../src/core/preferences/merge'
 import { ThemeStore, type ThemeStoreDeps } from '../src/main/theme-store'
 import { VOCABULARY_FILE, VocabularyStore, type VocabularyStoreDeps } from '../src/main/vocabulary-store'
@@ -304,6 +309,7 @@ describe('vocabulary config parsing', () => {
         protect: ['JustSpeak']
       })
     ).toEqual({
+      terms: [],
       vocabulary: {
         replace: [{ from: '库贝内特斯', to: 'Kubernetes' }],
         protect: ['JustSpeak']
@@ -313,7 +319,11 @@ describe('vocabulary config parsing', () => {
 
   it('accepts a wrong-to-right object map', () => {
     expect(parseVocabularyConfig({ replace: { kubnernetes: 'Kubernetes' } })).toEqual({
-      vocabulary: { replace: [{ from: 'kubnernetes', to: 'Kubernetes' }], protect: [] }
+      terms: [],
+      vocabulary: {
+        replace: [{ from: 'kubnernetes', to: 'Kubernetes' }],
+        protect: []
+      }
     })
   })
 
@@ -326,6 +336,7 @@ describe('vocabulary config parsing', () => {
         repetitionThreshold: 99
       })
     ).toEqual({
+      terms: [],
       vocabulary: { replace: [], protect: ['ok'] },
       rules: { filler: false }
     })
@@ -338,10 +349,91 @@ describe('vocabulary config parsing', () => {
   })
 
   it('rejects a Han threshold below the floor of 3', () => {
-    expect(parseVocabularyConfig({ repetitionThreshold: 2 })).toEqual({})
+    expect(parseVocabularyConfig({ repetitionThreshold: 2 })).toEqual({ terms: [] })
     expect(parseVocabularyConfig({ repetitionThreshold: 3 })).toEqual({
+      terms: [],
       repetitionThreshold: 3
     })
+  })
+
+  it('resolves a file without terms to an empty list', () => {
+    expect(parseTermList(undefined).terms).toEqual([])
+    expect(parseTermList(null).terms).toEqual([])
+    expect(parseTermList('Kubernetes').terms).toEqual([])
+    expect(
+      parseVocabularyConfig({ replace: [], protect: ['JustSpeak'] }).terms
+    ).toEqual([])
+  })
+
+  it('trims, drops empties, and de-duplicates in first-occurrence order', () => {
+    expect(parseTermList([' Kubernetes ', 'Kubernetes', '', 'GPT-4o']).terms).toEqual([
+      'Kubernetes',
+      'GPT-4o'
+    ])
+  })
+
+  it('keeps the mix of CJK and ASCII terms in file order', () => {
+    expect(parseTermList(['张三', 'Kubernetes', '李四', 'GPT-4o']).terms).toEqual([
+      '张三',
+      'Kubernetes',
+      '李四',
+      'GPT-4o'
+    ])
+  })
+
+  it('caps the accepted list at 32 and counts the tail discard', () => {
+    const input = Array.from({ length: 40 }, (_, index) => `term-${index}`)
+    const parsed = parseTermList(input)
+    expect(parsed.terms).toHaveLength(32)
+    expect(parsed.terms[0]).toBe('term-0')
+    expect(parsed.terms[31]).toBe('term-31')
+    expect(parsed.droppedByCap).toBe(8)
+  })
+
+  it('drops a term containing an ASCII comma and counts the reason', () => {
+    const parsed = parseTermList(['Kubernetes', 'Doe, Jane', 'GPT-4o'])
+    expect(parsed.terms).toEqual(['Kubernetes', 'GPT-4o'])
+    expect(parsed.droppedByComma).toBe(1)
+    expect(parsed.droppedTermCount).toBe(1)
+  })
+
+  it('drops terms the runtime would reject and keeps normal terms', () => {
+    // NUL makes `spawn` throw; `<|` / `|>` are control-token delimiters. Either
+    // would fail every unrelated transcription, so they never leave the parser.
+    const parsed = parseTermList([
+      'Kubernetes',
+      'bad\u0000term',
+      '<|endoftext|>',
+      'bad|>term',
+      'GPT-4o'
+    ])
+    expect(parsed.terms).toEqual(['Kubernetes', 'GPT-4o'])
+    expect(parsed.droppedByInvalid).toBe(3)
+    // The visible reason count stays comma-only.
+    expect(parsed.droppedTermCount).toBe(0)
+  })
+
+  it('carries the parse result beside the options without changing replace/protect', () => {
+    const detail = parseVocabularyConfigDetailed({
+      terms: ['Kubernetes', 'Doe, Jane'],
+      replace: [{ from: '库贝内特斯', to: 'Kubernetes' }],
+      protect: ['JustSpeak']
+    })
+    expect(detail.options.terms).toEqual(['Kubernetes'])
+    expect(detail.options.vocabulary?.replace).toEqual([
+      { from: '库贝内特斯', to: 'Kubernetes' }
+    ])
+    expect(detail.options.vocabulary?.protect).toEqual(['JustSpeak'])
+    expect(detail.termList.droppedByComma).toBe(1)
+  })
+
+  it('parses and forwards 1000 terms within a small budget', () => {
+    const input = Array.from({ length: 1000 }, (_, index) => `term-${index}`)
+    const started = performance.now()
+    const parsed = parseTermList(input)
+    const elapsed = performance.now() - started
+    expect(parsed.terms).toHaveLength(32)
+    expect(elapsed).toBeLessThan(50)
   })
 })
 
@@ -437,6 +529,39 @@ describe('vocabulary store', () => {
     expect(result.message).toBeUndefined()
     expect(result.options.vocabulary?.replace).toHaveLength(1)
     expect(result.options.vocabulary?.protect).toHaveLength(2)
+    expect(result.termList.terms).toEqual([])
+  })
+
+  it('surfaces accepted terms and comma discards on the load result', async () => {
+    const dir = makeDir()
+    await writeFile(
+      path.join(dir, VOCABULARY_FILE),
+      JSON.stringify({ terms: ['Kubernetes', 'Doe, Jane', '张三'] }),
+      'utf8'
+    )
+    const result = await new VocabularyStore(dir).loadDetailed()
+    expect(result.state).toBe('loaded')
+    expect(result.termList.terms).toEqual(['Kubernetes', '张三'])
+    expect(result.termList.droppedByComma).toBe(1)
+    expect(result.options.terms).toEqual(['Kubernetes', '张三'])
+  })
+
+  it('writes accepted terms back so a save never erases them', async () => {
+    const dir = makeDir()
+    const store = new VocabularyStore(dir)
+    const options = {
+      terms: ['Kubernetes', 'GPT-4o'],
+      vocabulary: {
+        replace: [{ from: '库贝内特斯', to: 'Kubernetes' }],
+        protect: ['JustSpeak']
+      }
+    }
+    await store.save(options)
+    const saved = JSON.parse(await readFile(path.join(dir, VOCABULARY_FILE), 'utf8'))
+    expect(saved.terms).toEqual(['Kubernetes', 'GPT-4o'])
+    expect(saved.replace).toEqual([{ from: '库贝内特斯', to: 'Kubernetes' }])
+    expect(saved.protect).toEqual(['JustSpeak'])
+    await expect(new VocabularyStore(dir).load()).resolves.toMatchObject(options)
   })
 
   it('reports unreadable JSON with a reason instead of pretending it is empty', async () => {

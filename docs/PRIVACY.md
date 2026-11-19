@@ -1,39 +1,49 @@
 # Privacy
 
-> This is a pre-release placeholder. It must be completed before the first
-> public release.
+JustSpeak 是一个本地优先的 macOS 听写工具。默认情况下没有任何数据离开这台机器。
+本页是给用户看的摘要；完整的数据清单、威胁模型与依据在
+[PRIVACY-SECURITY.md](PRIVACY-SECURITY.md)。
 
-## Data JustSpeak processes
+## 处理哪些数据
 
-- Microphone audio.
-- Transcripts and user corrections.
-- Settings and optional telemetry.
-
-## Questions to answer before release
-
-- Is audio processed locally, in the cloud, or both? Which providers?
-- Is audio retained? For how long? Where?
-- Are transcripts stored locally? Can the user delete them?
-- What telemetry is collected? Is it opt-in?
-- Which OS permissions are requested (microphone, accessibility, input
-  monitoring)?
-- How does v0.2 desktop control prevent unintended actions?
-
-## Principles
-
-- Do not log raw audio or transcripts by default.
-- Make local-only operation a first-class option where feasible.
-- Disclose every network destination and retention period.
-
-## Network destinations (current)
-
-| Destination | When | What is sent |
+| 数据 | 默认去哪 | 保留多久 |
 |---|---|---|
-| None | Default | Local-first; every destination below is explicit opt-in |
-| Model download hosts (per `resources/models.json`) | On first model download, with consent | An ordinary HTTPS file download |
-| OpenAI-compatible endpoint | Only when the user enables 智能清理 → 端点 | The transcript text awaiting correction |
-| `https://github.com/speakworks/justspeak/releases` | Only when the user clicks 检查更新, or turns on 自动检查更新 | The HTTP GET itself (version and architecture standard headers); no content, no identifier |
+| 麦克风音频 | 内存中做本地识别；每条历史对应一个 16 kHz 单声道 WAV，存在应用支持目录 | 最多 500 条（音频）|
+| 转写文本与规则清理结果 | 本地历史（JSONL），注入到当前输入框 | 最多 1000 条或 30 天，先到者为准 |
+| 你自己的修改（历史文本、个人词典） | 只存在本地设置/历史里，不上传、不做训练 | 你手动删除前 |
+| 前台 App 名称、bundle id、焦点元素角色/标识 | 主进程内存，用于安全注入与守卫 | 仅当前会话 |
+| 剪贴板 | 注入时短暂写入转写文本，随后恢复你原来的内容 | 数秒，不记录 |
+| 最近一次插入的撤销信息 | **只在内存**，不落盘 | 撤销窗口内，之后丢弃 |
+| 声明的快捷键 | 只监听你配置的那一个组合键，不做键盘记录 | 仅当前会话 |
 
-The update check (OpenSpec `app-update`) is fixed and not user-configurable, never
-sends audio, transcripts, history text, vocabulary entries, keys, or any device
-identifier, and asks before downloading anything.
+**不采集**：窗口标题、URL/域名、输入框里的内容、选中文字、屏幕上的可见文本，
+也不做截图或 OCR。
+
+## 请求哪些系统权限
+
+- **麦克风** —— 录制语音。
+- **辅助功能（Accessibility）** —— 把文本注入到你正在用的应用，以及执行「撤销上一次插入」
+  所需的按键。这是唯一会让应用向其他窗口发送按键的能力，所以撤销有一条严格的守卫：
+  只要目标应用、焦点元素或时间窗有一项对不上，就**不发送任何删除键**，改为把原文放进
+  结果面板让你手动处理。
+
+## 网络目的地（全部）
+
+| 目的地 | 何时 | 发送什么 |
+|---|---|---|
+| 无 | 默认 | 本地优先；下面每一项都是你显式开启才会发生 |
+| 模型下载主机（见 `resources/models.json`） | 首次下载模型时，经你同意 | 一次普通的 HTTPS 文件下载 |
+| 你配置的 OpenAI 兼容端点 | 只有你打开「智能清理 → 端点」时 | 待纠正的转写文本 |
+| `https://github.com/speakworks/justspeak/releases` | 只有你点「检查更新」，或打开自动检查更新 | 一次 HTTP GET（版本与架构的标准请求头），不含内容、不含标识 |
+
+更新检查固定且不可改指向，从不发送音频、转写、历史文本、词典、密钥或任何设备标识，
+下载前会先询问。
+
+## 遥测与诊断
+
+- 遥测默认**关闭**；开启后也只记不含内容的字段（时长、provider、模型、延迟、错误类、
+  版本、系统版本）。
+- 崩溃报告默认只留在本地，不自动上传。
+- 「导出诊断」生成一个本地 zip：版本、权限、运行时/模型是否存在、偏好摘要、脱敏日志、
+  本地崩溃转储。**不含**转写、音频、历史文本、词典、API key。zip 由你自己选择保存位置，
+  永不上传；分享前请自行检查。

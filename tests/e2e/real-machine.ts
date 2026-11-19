@@ -195,8 +195,24 @@ end tell`
   )
 }
 
-/** Close the documents this run opened — by path, never "every document". */
+/** Is a TextEdit process running? Cheap enough to call before every teardown. */
+export function textEditRunning(): boolean {
+  const result = runAppleScript(
+    'tell application "System Events" to return exists (first process whose name is "TextEdit")'
+  )
+  return result.status === 0 && result.stdout === 'true'
+}
+
+/**
+ * Close the documents this run opened — by path, never "every document".
+ *
+ * Every `tell application "TextEdit"` launches TextEdit when it is not already
+ * running (AppleScript has to deliver the event somewhere), so this returns
+ * early when the app is gone. That also keeps the "a quit target is never
+ * relaunched" case honest: the teardown must not undo what the test proved.
+ */
 export function closeTextEditDocuments(files: string[]): void {
+  if (!textEditRunning()) return
   for (const file of files) {
     runAppleScript(
       `with timeout of 10 seconds
@@ -210,6 +226,7 @@ end timeout`
 
 /** Quit TextEdit. Only call this when the spec opened it itself. */
 export function quitTextEdit(): void {
+  if (!textEditRunning()) return
   runAppleScript(
     'with timeout of 10 seconds\ntell application "TextEdit" to quit\nend timeout'
   )

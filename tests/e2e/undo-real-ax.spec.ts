@@ -272,9 +272,12 @@ test('a moved focus is refused and no document loses text', async () => {
 
     const panel = await panelPromise
     await panel.waitForLoadState('domcontentloaded')
-    await expect(panel.locator('.result-panel-title')).toHaveText(
-      /焦点已改变|已切换目标/
-    )
+    // Exactly the identity refusal. `已切换目标` (app-changed) would mean the
+    // app could not even be brought forward, which is a different failure and
+    // must not be accepted as proof of the identity check. If the first real
+    // run reports `已切换目标`, record it in docs/REAL-MACHINE-CHECKS.md as a
+    // finding — do not widen this assertion.
+    await expect(panel.locator('.result-panel-title')).toHaveText('焦点已改变')
     await expect(panel.locator('.result-panel-text')).toHaveValue(firstAfterInsert)
   } finally {
     if (app) await app.close().catch(() => {})

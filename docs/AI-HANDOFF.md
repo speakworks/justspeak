@@ -1,8 +1,8 @@
 # AI 交接说明
 
-- 交接日期：2026-11-09
-- 当前 `main`：`9fe4809`（PR #39 自动更新 + tag 发布已合并）
-- 当前 active OpenSpec change：无（`app-update` spec 已随 PR #39 归档）
+- 交接日期：2026-11-19
+- 当前 `main`：`23c6bdd`（release 幂等创建已合并；上一轮是 #46 撤销/重说/面板重插）
+- 当前 active OpenSpec change：无（`os-level-verification` 已随 PR 归档）
 - 目的：让接手的 AI 在最少上下文下安全地继续工作，而不是重新摸索一遍
 
 > 先读 [AGENTS.md](../AGENTS.md)，再读这份。`AGENTS.md` 是工作流门控的第一来源；
@@ -28,10 +28,10 @@ openspec list
 | 检查 | 预期 |
 |---|---|
 | `pnpm typecheck` | 通过 |
-| `pnpm test` | 774 passed / 4 skipped |
+| `pnpm test` | 900 passed / 4 skipped |
 | `pnpm build` | 通过 |
-| `pnpm exec playwright test` | 20 passed |
-| `openspec validate --specs --strict` | 14/14 |
+| `pnpm exec playwright test` | 31 passed / 5 skipped（真机检查默认跳过；E2E 偶发红未消除，见 `docs/REAL-MACHINE-CHECKS.md`） |
+| `openspec validate --specs --strict` | 18/18 |
 | `openspec list` | `No active changes found` |
 
 要真正听写，还需要本机模型：
@@ -67,6 +67,11 @@ JustSpeak 是一个 macOS 优先的本地听写应用：按全局快捷键说话
 
 | PR | 内容 | 关键点 |
 |---|---|---|
+| #47 | 真机 OS 交互验证收口 | 两个 opt-in spec（`JUSTSPEAK_REAL_AX=1` / `JUSTSPEAK_REAL_KEYS=1`）与真实 TextEdit/系统按键用例；`docs/REAL-MACHINE-CHECKS.md` 如实记 5 项 **blocked**（SSH+tmux 在 launchd Background 域、屏幕锁定）；`undo.spec.ts` 的单例面板等待改为先查活窗口；OpenSpec `real-machine-verification` |
+| #46 | 撤销 / 重说 / 面板重插 | 单槽记录 + 统一守卫（identity 为空即拒绝）、有界写锁、原子 AppleScript 删除；`injection-undo` spec |
+| #45 | 开机自启 | `setLoginItemSettings` 写入后**回读**系统状态，默认开启；不可用/待批准如实显示 |
+| #44 | 文档与 sidecar 参数校准 | `LLAMA_USE_PREBUILT_UI=OFF` 写进文档；sidecar 改用规范写法 `--no-ui` |
+| #43 | release 幂等创建（SSH 落地） | `gh release view` 三分支：缺失→create、draft→promote、已发布→skip；只有精确 `release not found` 才落到 create |
 | #39 | 自动更新 + tag 发布流水线 | electron-updater（feed 固定 GitHub Releases；手动默认/自动 opt-in 每天一次；未签名构建如实提示不发请求）；`release.yml`：`v*` tag → 源码构建 transcribe.cpp+llama.cpp → DMG/ZIP/latest-mac.yml → 自动发布（GITHUB_TOKEN，无 secrets）；OpenSpec `app-update` |
 | #37 | GitHub Actions CI | typecheck/test/build/openspec 门槛在每次 push 与 PR 上跑；不跑 E2E 与覆盖率（原因写在 workflow 注释里） |
 | #36 | 菜单栏常驻 + 应用图标 | 关窗即隐藏（`menubar-residency` spec）；退出全部显式；`quitting` 在 `before-quit` 设；隐藏渲染进程 `backgroundThrottling: false`；打包用自带 icon；两轮独立 review（5 Important 全修复，复核 GO） |
@@ -98,7 +103,7 @@ PR 链接：`https://github.com/speakworks/justspeak/pull/<number>`。
 | `src/preload/index.ts` | 类型化 bridge | 只暴露 `JustSpeakApi`，不要加宽 |
 | `src/renderer/src` | React UI | `HotkeyRecorder.tsx`、`SettingsPanel.tsx`、`App.tsx` |
 | `src/shared/ipc.ts` | 主/渲染共享契约 | 新 IPC 同时改 preload 和类型 |
-| `openspec/specs` | 15 个权威行为 spec（含 `menubar-residency`） | 当前无 active change |
+| `openspec/specs` | 18 个权威行为 spec（含 `menubar-residency`、`injection-undo`、`real-machine-verification`） | 当前无 active change |
 | `tests/` | Vitest | `tests/e2e/` 是 Playwright，`pnpm test` 不跑它 |
 | `scripts/` | 评测、打包、模型下载 | `llm-eval.ts`、`verify-mac-app.ts` 等 |
 
@@ -196,9 +201,14 @@ pnpm verify:mac          # 检查打包后的 runtime/LLM/catalog
 
 3. ~~修 spec 漂移~~ — 已由 PR #32 完成：`settings-surface` 与 `app-shell` 都改为“设置页拥有可编辑选择器、header 不再有 picker”。
 4. ~~修文档漂移~~ — 已由 PR #32 完成：`TECH-DECISIONS.md` 与 `ASR-RESEARCH.md` 记录 SenseVoice Small 为已交付默认，`CHANGELOG.md` 补上已交付能力。
-5. **补 OS 级验证**：
-   - 真机按键验证录制中 `Cmd+Q` / `Cmd+R` 被菜单抑制并显示“被 macOS 占用”，而不是退出/重载。E2E 用的是 Playwright 合成事件，不经过原生菜单。
-   - 验证 Electron `globalShortcut` 是否接受 `Command+'`（解析/捕获已通过，OS 接受度未验证）。
+5. **补 OS 级验证** — 用例已就位，**真机尚未跑通**（PR #47）：
+   - `tests/e2e/undo-real-ax.spec.ts`（`JUSTSPEAK_REAL_AX=1`）与
+     `tests/e2e/hotkey-real-keys.spec.ts`（`JUSTSPEAK_REAL_KEYS=1`）用真实 TextEdit 与
+     系统按键覆盖：撤销精确减字、切走目标后拒绝、目标退出后拒绝、`Command+'` 是否被
+     `globalShortcut` 接受、录制快捷键时 `Cmd+Q` 是否被抑制。
+   - 默认跳过，`pnpm test` / `pnpm e2e`（未设变量时）与 CI 均不受影响。
+   - 为什么还没跑：执行会话在 launchd `Background` 域（SSH+tmux）且屏幕锁定，跨 App
+     AX 退化、无法发送系统按键。逐项状态与补跑命令见 `docs/REAL-MACHINE-CHECKS.md`。
 6. ~~补一个测试~~ — 已由 PR #32 完成：`hotkeyChangeRefusal(state)` 落在 `src/core/hotkey`，状态表由单测覆盖，capture 与应用两条路径共用同一判断。
 7. ~~开机启动尚未实现~~ — 已由 `login-item-autostart` 完成：首次运行默认开启（写入系统后回读），设置页「开机自动启动」开关始终显示 `getLoginItemSettings().openAtLogin`，系统设置里手动关闭后应用内同步为 off；未签名/未放入 `/Applications` 的构建可能不生效，界面会如实显示不可用或失败原因。
 8. **托盘/翻译细节遗留**（review 复核标记的 Minor，均为后续小卡片）：工具提示打印的是原始 accelerator 字符串（如 `CommandOrControl+Shift+Space`）而非 `⌘⇧Space`；应用菜单没有 `role:'close'`，`Cmd+W` 不关窗；Windows 移植时托盘左击需恢复窗口（macOS 不适用）。

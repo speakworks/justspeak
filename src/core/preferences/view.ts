@@ -153,6 +153,11 @@ export function describeVocabulary(vocabulary: VocabularySummary): SettingState 
     // Count only; the discarded term strings are never shown.
     notes.push(`${vocabulary.droppedTermCount} 条术语因含英文逗号被忽略。`)
   }
+  if (vocabulary.droppedByCapCount > 0) {
+    // A file above the decode-time cap keeps only its first 32 terms; say so
+    // instead of letting the missing tail look like a silent edit.
+    notes.push(`${vocabulary.droppedByCapCount} 条超出 32 条上限未写入。`)
+  }
   if (vocabulary.termCount > 0 && !vocabulary.providerSupportsTerms) {
     notes.push('当前 ASR 模型不支持解码期术语偏置，术语未生效。')
   }
@@ -161,6 +166,15 @@ export function describeVocabulary(vocabulary: VocabularySummary): SettingState 
     statusLabel: STATUS_LABEL.override,
     detail: [`已加载 ${counts}。`, ...notes].join(' ')
   }
+}
+
+/**
+ * The starter-load result line. A non-zero overflow states plainly that the
+ * missing entries were not written, so the surface cannot imply 已全部载入.
+ */
+export function describeStarterLoadOverflow(excludedByCap: number): string | undefined {
+  if (excludedByCap <= 0) return undefined
+  return `${excludedByCap} 条起始词因超出 32 条上限未写入，请先删除部分词条。`
 }
 
 /** Why a provider row cannot be changed right now, in the user's words. */

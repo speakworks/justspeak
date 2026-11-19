@@ -84,6 +84,22 @@ every starter term is already present; the button SHALL then read
 - **THEN** the button reads `已全部载入`
 - **AND** no write is sent
 
+#### Scenario: More terms than the cap during a load
+
+- **WHEN** the list has 25 terms and the user loads the ten starter terms
+- **THEN** 32 terms are written (the 25 existing plus the first seven missing
+  starter terms)
+- **AND** the surface reports that three starter terms were not written because
+  of the 32-term cap
+
+#### Scenario: A list already at the cap
+
+- **WHEN** the list already holds 32 terms that do not include the starter entries
+- **THEN** no starter term is written
+- **AND** the surface reports the cap overflow as
+  `N 条起始词因超出 32 条上限未写入，请先删除部分词条。`
+- **AND** the button does not read `已全部载入`
+
 #### Scenario: First run stays empty
 
 - **WHEN** the app starts with no vocabulary file
@@ -140,6 +156,27 @@ in-memory options or claim success.
 - **THEN** the result is `ok: false` with a reason
 - **AND** the previous options remain in use
 
+### Requirement: A save SHALL preserve rule switches and the repetition threshold
+
+Saving the editor's three lists SHALL read the current `vocabulary.json` first and
+SHALL carry its `rules` and `repetitionThreshold` into the written options. A
+hand-edited rule switch or threshold SHALL survive an interface save. When the
+file is unreadable there is nothing to preserve, and the existing repair
+behaviour applies.
+
+#### Scenario: A hand-edited rule switch survives
+
+- **WHEN** `vocabulary.json` contains `rules: { filler: false }` and
+  `repetitionThreshold: 5`
+- **THEN** saving new terms keeps both values in the file
+- **AND** the read-back options still carry them
+
+#### Scenario: An unreadable file is repaired
+
+- **WHEN** the file is not valid JSON
+- **THEN** a save writes a fresh valid file
+- **AND** no rule switch or threshold is invented
+
 ### Requirement: The editor SHALL keep the unsupported-provider notice
 
 When the live ASR provider does not support decode-time vocabulary bias and the
@@ -172,3 +209,10 @@ editable and SHALL save an empty `terms` array when none are added.
 - **WHEN** an old file has `replace` and `protect` but no `terms`
 - **THEN** the editor shows an empty term list
 - **AND** saving keeps the replacements and protects the user did not change
+
+#### Scenario: A file above the term cap
+
+- **WHEN** `vocabulary.json` holds more than 32 terms
+- **THEN** the view exposes the first 32 terms and the count of the over-cap tail
+- **AND** the 词典 area shows `N 条超出 32 条上限未写入`
+- **AND** the comma-discard wording is unchanged

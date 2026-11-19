@@ -91,6 +91,8 @@ export interface VocabularySummary {
   protectCount: number
   /** Terms dropped because they contain an ASCII comma; never term content. */
   droppedTermCount: number
+  /** Terms dropped because the file held more than the 32-entry cap. */
+  droppedByCapCount: number
   /** Whether the live provider declares `vocabularyBias` (from capabilities). */
   providerSupportsTerms: boolean
   /**

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   importReplacementLines,
   importTermLines,
@@ -18,6 +18,7 @@ import {
   type VocabularyStoreDeps
 } from '../src/main/vocabulary-store'
 import {
+  createSaveQueue,
   saveVocabularyPayload,
   type VocabularySaveStore
 } from '../src/main/vocabulary-save'
@@ -185,11 +186,15 @@ describe('atomic vocabulary save', () => {
     await writeFile(vocabularyFile(dir), original, 'utf8')
 
     const failure = new Error('disk full')
+    // Write a real partial temporary file first, then fail mid-write, so this
+    // exercises the cleanup path rather than a write that never started.
+    const partialWrite = (async (...args: Parameters<typeof writeFile>) => {
+      await writeFile(args[0], typeof args[1] === 'string' ? args[1].slice(0, 12) : args[1])
+      throw failure
+    }) as typeof writeFile
     const deps: VocabularyStoreDeps = {
       readFile,
-      writeFile: async () => {
-        throw failure
-      },
+      writeFile: partialWrite,
       mkdir,
       rename,
       unlink
@@ -197,6 +202,7 @@ describe('atomic vocabulary save', () => {
     const store = new VocabularyStore(dir, deps)
     await expect(store.save({ terms: ['GPT-4o'] })).rejects.toThrow('disk full')
     expect(await readFile(vocabularyFile(dir), 'utf8')).toBe(original)
+    // The partial temporary file was written and then unlinked.
     expect(await readdir(dir)).toEqual([VOCABULARY_FILE])
   })
 
@@ -283,6 +289,39 @@ describe('save and read-back', () => {
     })
   })
 
+  it('preserves rules and repetitionThreshold from the file while the payload owns the lists', async () => {
+    const dir = makeDir()
+    await writeFile(
+      vocabularyFile(dir),
+      JSON.stringify({
+        terms: ['Old'],
+        replace: [],
+        protect: [],
+        rules: { filler: false },
+        repetitionThreshold: 5
+      }),
+      'utf8'
+    )
+    const store = new VocabularyStore(dir)
+    const outcome = await saveVocabularyPayload(store, {
+      terms: ['Kubernetes', 'GPT-4o'],
+      replace: [{ from: '库贝内特斯', to: 'Kubernetes' }],
+      protect: ['JustSpeak']
+    })
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.options.rules).toEqual({ filler: false })
+    expect(outcome.options.repetitionThreshold).toBe(5)
+
+    const written = JSON.parse(await readFile(vocabularyFile(dir), 'utf8'))
+    expect(written.rules).toEqual({ filler: false })
+    expect(written.repetitionThreshold).toBe(5)
+    // The payload still replaces all three lists.
+    expect(written.terms).toEqual(['Kubernetes', 'GPT-4o'])
+    expect(written.replace).toEqual([{ from: '库贝内特斯', to: 'Kubernetes' }])
+    expect(written.protect).toEqual(['JustSpeak'])
+  })
+
   it('repairs an unreadable file with a fresh valid save', async () => {
     const dir = makeDir()
     await writeFile(vocabularyFile(dir), '{ not json', 'utf8')
@@ -328,9 +367,18 @@ describe('save and read-back', () => {
       save: async () => {
         throw new Error('read-only volume')
       },
-      loadDetailed: async () => {
-        throw new Error('must not be reached')
-      }
+      // The save path reads the current file first to preserve rule settings.
+      loadDetailed: async () => ({
+        options: {},
+        state: 'default',
+        termList: {
+          terms: [],
+          droppedByComma: 0,
+          droppedByCap: 0,
+          droppedByInvalid: 0,
+          droppedTermCount: 0
+        }
+      })
     }
     const outcome = await saveVocabularyPayload(store, {
       terms: ['Kubernetes'],
@@ -386,10 +434,10 @@ describe('starter vocabulary', () => {
 
   it('loads all ten into an empty list and is idempotent on the second call', () => {
     const first = planStarterLoad([], EXPECTED_STARTER)
-    expect(first).toEqual({ terms: EXPECTED_STARTER, added: 10, complete: false })
+    expect(first).toEqual({ terms: EXPECTED_STARTER, added: 10, excludedByCap: 0, complete: false })
 
     const second = planStarterLoad(first.terms, EXPECTED_STARTER)
-    expect(second).toEqual({ terms: EXPECTED_STARTER, added: 0, complete: true })
+    expect(second).toEqual({ terms: EXPECTED_STARTER, added: 0, excludedByCap: 0, complete: true })
   })
 
   it('keeps existing terms first and appends only the missing starter entries', () => {
@@ -408,6 +456,7 @@ describe('starter vocabulary', () => {
       '汽水音乐'
     ])
     expect(plan.added).toBe(8)
+    expect(plan.excludedByCap).toBe(0)
     expect(plan.complete).toBe(false)
   })
 
@@ -416,6 +465,7 @@ describe('starter vocabulary', () => {
     const plan = planStarterLoad(existing, EXPECTED_STARTER)
     expect(plan.complete).toBe(true)
     expect(plan.added).toBe(0)
+    expect(plan.excludedByCap).toBe(0)
     expect(plan.terms).toEqual(existing)
 
     // The renderer guard: a complete plan skips the save call entirely.
@@ -429,7 +479,12 @@ describe('starter vocabulary', () => {
 
   it('treats trimmed entries as already present', () => {
     const plan = planStarterLoad([' Kubernetes ', '豆包 '], ['Kubernetes', '豆包'])
-    expect(plan).toEqual({ terms: ['Kubernetes', '豆包'], added: 0, complete: true })
+    expect(plan).toEqual({
+      terms: ['Kubernetes', '豆包'],
+      added: 0,
+      excludedByCap: 0,
+      complete: true
+    })
   })
 
   it('saves the merged list through the normal path and reports the read-back count', async () => {
@@ -450,6 +505,64 @@ describe('starter vocabulary', () => {
       terms: ['Kubernetes', ...EXPECTED_STARTER]
     })
   })
+
+  it('caps a merged load at 32 and reports the starter terms that did not fit', async () => {
+    const dir = makeDir()
+    const store = new VocabularyStore(dir)
+    const existing = Array.from({ length: 25 }, (_, index) => `term-${index}`)
+    const plan = planStarterLoad(existing, EXPECTED_STARTER)
+    expect(plan.terms).toHaveLength(32)
+    expect(plan.added).toBe(7)
+    expect(plan.excludedByCap).toBe(3)
+    expect(plan.complete).toBe(false)
+
+    const outcome = await saveVocabularyPayload(store, {
+      terms: plan.terms,
+      replace: [],
+      protect: []
+    })
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    // Read-back confirms the same 32 entries; the overflow was capped before
+    // the write, so the file itself never holds a dropped tail.
+    expect(outcome.load.termList.terms).toEqual(plan.terms)
+    expect(outcome.load.termList.droppedByCap).toBe(0)
+    expect(JSON.parse(await readFile(vocabularyFile(dir), 'utf8')).terms).toHaveLength(32)
+  })
+
+  it('writes no starter term when the list is already at the cap and states the overflow', () => {
+    const existing = Array.from({ length: 32 }, (_, index) => `term-${index}`)
+    const plan = planStarterLoad(existing, EXPECTED_STARTER)
+    expect(plan.added).toBe(0)
+    expect(plan.excludedByCap).toBe(EXPECTED_STARTER.length)
+    expect(plan.complete).toBe(false)
+    expect(plan.terms).toEqual(existing)
+  })
+
+  it('does not write when all ten starter terms already fit in the cap', () => {
+    const existing = [
+      ...EXPECTED_STARTER,
+      ...Array.from({ length: 22 }, (_, index) => `term-${index}`)
+    ]
+    const plan = planStarterLoad(existing, EXPECTED_STARTER)
+    expect(plan.complete).toBe(true)
+    expect(plan.added).toBe(0)
+    expect(plan.excludedByCap).toBe(0)
+    expect(plan.terms).toEqual(existing)
+  })
+
+  it('reports the over-cap tail from a hand-edited file on read-back', async () => {
+    const dir = makeDir()
+    const terms = Array.from({ length: 35 }, (_, index) => `term-${index}`)
+    await writeFile(
+      vocabularyFile(dir),
+      JSON.stringify({ terms, replace: [], protect: [] }),
+      'utf8'
+    )
+    const loaded = await new VocabularyStore(dir).loadDetailed()
+    expect(loaded.termList.terms).toHaveLength(32)
+    expect(loaded.termList.droppedByCap).toBe(3)
+  })
 })
 
 describe('vocabulary view copy', () => {
@@ -460,6 +573,7 @@ describe('vocabulary view copy', () => {
     replaceCount: 1,
     protectCount: 1,
     droppedTermCount: 0,
+    droppedByCapCount: 0,
     providerSupportsTerms: true,
     terms: ['Kubernetes', 'GPT-4o'],
     replace: [{ from: '库贝内特斯', to: 'Kubernetes' }],
@@ -482,5 +596,44 @@ describe('vocabulary view copy', () => {
       status: 'unavailable',
       detail: '词汇表文件不是有效的 JSON。'
     })
+  })
+})
+
+describe('vocabulary save queue', () => {
+  it('runs overlapping tasks one at a time in call order', async () => {
+    const enqueue = createSaveQueue()
+    const order: string[] = []
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const first = enqueue(async () => {
+      order.push('first-start')
+      await gate
+      order.push('first-end')
+      return 1
+    })
+    const second = enqueue(async () => {
+      order.push('second-start')
+      order.push('second-end')
+      return 2
+    })
+
+    await Promise.resolve()
+    // The second task cannot start while the first is still in flight.
+    expect(order).toEqual(['first-start'])
+    release()
+    await expect(Promise.all([first, second])).resolves.toEqual([1, 2])
+    expect(order).toEqual(['first-start', 'first-end', 'second-start', 'second-end'])
+  })
+
+  it('keeps accepting tasks after a rejected one', async () => {
+    const enqueue = createSaveQueue()
+    await expect(
+      enqueue(async () => {
+        throw new Error('boom')
+      })
+    ).rejects.toThrow('boom')
+    await expect(enqueue(async () => 'ok')).resolves.toBe('ok')
   })
 })

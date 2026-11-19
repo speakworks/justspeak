@@ -172,7 +172,7 @@ import { UpdateController } from './update'
 import { PcmBuffer } from './pcm-buffer'
 import { ThemeStore } from './theme-store'
 import { VocabularyStore, type VocabularyLoadResult } from './vocabulary-store'
-import { saveVocabularyPayload } from './vocabulary-save'
+import { createSaveQueue, saveVocabularyPayload } from './vocabulary-save'
 import { STARTER_VOCABULARY_TERMS } from './vocabulary-starter'
 import { createLoginItemController, type LoginItemController } from './login-item'
 
@@ -874,6 +874,8 @@ function summarizeVocabulary(result: VocabularyLoadResult): VocabularySummary {
     starterTerms: [...STARTER_VOCABULARY_TERMS],
     // Only the visible comma reason; the cap and invalid discards stay silent.
     droppedTermCount: result.termList.droppedByComma,
+    // The cap discard is surfaced in the 词典 area, not as a save failure.
+    droppedByCapCount: result.termList.droppedByCap,
     providerSupportsTerms: resolveProviderSupportsTerms(
       activeProvider?.capabilities,
       selectedCapabilities
@@ -2175,6 +2177,10 @@ app.whenReady().then(async () => {
     }
   )
 
+  // One lane for every vocabulary write. Two overlapping saves would otherwise
+  // be able to read each other's file back and report the wrong snapshot.
+  const vocabularySaveQueue = createSaveQueue()
+
   ipcMain.handle(
     'vocabulary:save',
     async (event, payload: unknown): Promise<VocabularySaveResult> => {
@@ -2185,12 +2191,16 @@ app.whenReady().then(async () => {
       // The renderer is never trusted: normalise through the file parser, write
       // atomically, then adopt only the read-back options. A failed save must
       // leave the previous in-memory configuration and the old file untouched.
-      const outcome = await saveVocabularyPayload(vocabularyStore, payload)
-      if (!outcome.ok) return { ok: false, message: outcome.message }
-      postprocessOptions = outcome.options
-      const view = await readPreferencesView()
-      mainWindow?.webContents.send('preferences:changed', view)
-      return { ok: true, view }
+      // The save, the adopt, and the view read share the lane so a later save
+      // cannot slip a different file under this report.
+      return vocabularySaveQueue(async () => {
+        const outcome = await saveVocabularyPayload(vocabularyStore, payload)
+        if (!outcome.ok) return { ok: false, message: outcome.message }
+        postprocessOptions = outcome.options
+        const view = await readPreferencesView()
+        mainWindow?.webContents.send('preferences:changed', view)
+        return { ok: true, view }
+      })
     }
   )
 

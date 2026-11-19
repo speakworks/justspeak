@@ -323,38 +323,57 @@ export function normalizeVocabularySavePayload(raw: unknown): PostprocessOptions
 export interface StarterLoadPlan {
   /** Existing entries first, then missing starter entries in starter order. */
   terms: string[]
-  /** How many starter entries the existing list did not already contain. */
+  /** How many missing starter entries were actually appended within the cap. */
   added: number
-  /** True when every starter entry is already present, so no save is needed. */
+  /** Missing starter entries the cap kept out of `terms`; never dropped silently. */
+  excludedByCap: number
+  /** True when nothing was appended or overflowed, so no save is needed. */
   complete: boolean
 }
 
 /**
  * Plan an explicit starter-list load. Presence is exact after trimming, which
  * matches what a save will store; entries already in the editor are never
- * duplicated, and the starter order only applies to the missing tail.
+ * duplicated, and the starter order only applies to the missing tail. The plan
+ * is capped at `cap` entries (the same cap a save enforces), so a full list
+ * reports its overflow through `excludedByCap` instead of silently vanishing on
+ * the next read-back.
  */
 export function planStarterLoad(
   existing: readonly string[],
-  starter: readonly string[]
+  starter: readonly string[],
+  cap: number = MAX_VOCABULARY_TERMS
 ): StarterLoadPlan {
+  const limit = Math.max(0, Math.floor(cap))
   const merged: string[] = []
   const seen = new Set<string>()
   for (const candidate of existing) {
     const term = candidate.trim()
     if (!term || seen.has(term)) continue
+    // Entries beyond the cap are not part of the plan result; leaving them out
+    // of `seen` lets a starter term that only sits past the cap be reported as
+    // excluded instead of looping the button forever.
+    if (merged.length >= limit) continue
     seen.add(term)
     merged.push(term)
   }
   let added = 0
+  let excludedByCap = 0
   for (const candidate of starter) {
     const term = candidate.trim()
     if (!term || seen.has(term)) continue
+    if (merged.length >= limit) {
+      excludedByCap += 1
+      continue
+    }
     seen.add(term)
     merged.push(term)
     added += 1
   }
-  return { terms: merged, added, complete: added === 0 }
+  // No append and no overflow means every starter entry was already part of the
+  // editable list, so the caller can keep the existing "no write" behaviour.
+  const complete = added === 0 && excludedByCap === 0
+  return { terms: merged, added, excludedByCap, complete }
 }
 
 export interface ParsedVocabularyConfig {

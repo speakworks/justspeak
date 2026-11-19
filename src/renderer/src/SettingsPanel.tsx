@@ -1,6 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { importReplacementLines, importTermLines, planStarterLoad } from '../../core/postprocess'
-import type { SettingState, SettingsRows } from '../../core/preferences/view'
+import {
+  importReplacementLines,
+  importTermLines,
+  MAX_VOCABULARY_TERMS,
+  planStarterLoad
+} from '../../core/postprocess'
+import {
+  describeStarterLoadOverflow,
+  type SettingState,
+  type SettingsRows
+} from '../../core/preferences/view'
 import { THEME_LABEL, THEME_PREFERENCES } from '../../core/theme/theme'
 import type {
   AsrProviderSelection,
@@ -218,7 +227,10 @@ export function SettingsPanel({
     onReload()
   }
 
-  const persistVocabulary = async (lists: VocabularySavePayload): Promise<boolean> => {
+  const persistVocabulary = async (
+    lists: VocabularySavePayload,
+    outcome?: { excludedByCap?: number }
+  ): Promise<boolean> => {
     setVocabularyBusy(true)
     setVocabularyFeedback(undefined)
     try {
@@ -232,10 +244,14 @@ export function SettingsPanel({
       vocabularyDirty.current = false
       setVocabularyFeedbackError(false)
       const vocabulary = result.view?.vocabulary
+      // A starter load that did not fit under the cap must not read as a full
+      // success: name the overflow and keep the ordinary saved copy when none.
+      const overflow = describeStarterLoadOverflow(outcome?.excludedByCap ?? 0)
       setVocabularyFeedback(
-        vocabulary
-          ? `已保存：术语 ${vocabulary.termCount} 条 / 替换 ${vocabulary.replaceCount} 条 / 保护 ${vocabulary.protectCount} 条。`
-          : '已保存。'
+        overflow ??
+          (vocabulary
+            ? `已保存：术语 ${vocabulary.termCount} 条 / 替换 ${vocabulary.replaceCount} 条 / 保护 ${vocabulary.protectCount} 条。`
+            : '已保存。')
       )
       return true
     } catch (error) {
@@ -262,19 +278,31 @@ export function SettingsPanel({
   const loadStarterVocabulary = async (): Promise<void> => {
     const starter = preferences?.vocabulary.starterTerms ?? []
     if (starter.length === 0) return
-    const plan = planStarterLoad(termDraft, starter)
+    const plan = planStarterLoad(termDraft, starter, MAX_VOCABULARY_TERMS)
     if (plan.complete) {
       setVocabularyFeedbackError(false)
       setVocabularyFeedback('起始词表已全部载入。')
       return
     }
+    if (plan.added === 0) {
+      // complete is false with nothing appended only when the cap blocked every
+      // missing entry; rewriting the same list would hide the reason.
+      setVocabularyFeedbackError(false)
+      setVocabularyFeedback(
+        describeStarterLoadOverflow(plan.excludedByCap) ?? '没有新的起始词可载入。'
+      )
+      return
+    }
     setTermDraft(plan.terms)
     markVocabularyDirty()
-    await persistVocabulary({
-      terms: plan.terms,
-      replace: replaceDraft,
-      protect: protectDraft
-    })
+    await persistVocabulary(
+      {
+        terms: plan.terms,
+        replace: replaceDraft,
+        protect: protectDraft
+      },
+      { excludedByCap: plan.excludedByCap }
+    )
   }
 
   const commitUndoWindow = (): void => {
@@ -293,7 +321,11 @@ export function SettingsPanel({
 
   const starterComplete =
     preferences !== null &&
-    planStarterLoad(termDraft, preferences.vocabulary.starterTerms).complete
+    planStarterLoad(
+      termDraft,
+      preferences.vocabulary.starterTerms,
+      MAX_VOCABULARY_TERMS
+    ).complete
 
   return (
     <section

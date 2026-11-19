@@ -23,7 +23,9 @@ import type {
   UndoStateView,
   UpdateAutoCheckPatch,
   UpdateEvent,
-  UpdateStatusView
+  UpdateStatusView,
+  VocabularySavePayload,
+  VocabularySaveResult
 } from '../shared/ipc'
 
 const api: JustSpeakApi = {
@@ -38,6 +40,8 @@ const api: JustSpeakApi = {
   getPreferences: () => ipcRenderer.invoke('preferences:get') as Promise<PreferencesView>,
   setPreferences: (patch: PreferencesPatch) =>
     ipcRenderer.invoke('preferences:set', patch) as Promise<PreferencesSetResult>,
+  saveVocabulary: (payload: VocabularySavePayload) =>
+    ipcRenderer.invoke('vocabulary:save', payload) as Promise<VocabularySaveResult>,
   beginHotkeyCapture: () =>
     ipcRenderer.invoke('hotkey:capture-start') as Promise<HotkeyCaptureStartResult>,
   endHotkeyCapture: () =>

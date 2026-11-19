@@ -91,10 +91,42 @@ export interface VocabularySummary {
   protectCount: number
   /** Terms dropped because they contain an ASCII comma; never term content. */
   droppedTermCount: number
+  /** Terms dropped because the file held more than the 32-entry cap. */
+  droppedByCapCount: number
   /** Whether the live provider declares `vocabularyBias` (from capabilities). */
   providerSupportsTerms: boolean
+  /**
+   * The accepted entries the editor starts from. These are the user's own
+   * words; the counts above stay the derived summary.
+   */
+  terms: string[]
+  replace: { from: string; to: string }[]
+  protect: string[]
+  /**
+   * The built-in starter terms from `resources/vocabulary-starter.json`, read
+   * by main. The renderer merges them only when the user asks to load them.
+   */
+  starterTerms: string[]
   /** Why the file could not be used; only set when `state` is `unreadable`. */
   message?: string
+}
+
+/** The editor's three lists, re-normalised by main before any write. */
+export interface VocabularySavePayload {
+  terms: string[]
+  replace: { from: string; to: string }[]
+  protect: string[]
+}
+
+/**
+ * A save round trip. `view` is present on success and carries the read-back
+ * counts; a failure carries the reason and no view, so the renderer keeps its
+ * unsaved draft.
+ */
+export interface VocabularySaveResult {
+  ok: boolean
+  message?: string
+  view?: PreferencesView
 }
 
 export interface ProviderSummary {
@@ -360,6 +392,8 @@ export interface JustSpeakApi {
   getPreferences: () => Promise<PreferencesView>
   /** Writes one or more preferences through the single preferences surface. */
   setPreferences: (patch: PreferencesPatch) => Promise<PreferencesSetResult>
+  /** Replaces the vocabulary file after main re-normalises and reads it back. */
+  saveVocabulary: (payload: VocabularySavePayload) => Promise<VocabularySaveResult>
   /** Temporarily unregisters the dictation hotkey so a new chord can be pressed. */
   beginHotkeyCapture: () => Promise<HotkeyCaptureStartResult>
   /** Restores the previous hotkey after a cancelled or timed-out recording. */

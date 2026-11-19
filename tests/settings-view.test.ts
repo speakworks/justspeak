@@ -15,6 +15,7 @@ import {
   PROVIDER_FAKE_REASON,
   describeTheme,
   describeUndoWindow,
+  describeStarterLoadOverflow,
   describeVocabulary
 } from '../src/core/preferences/view'
 import type { PreferencesView, VocabularySummary } from '../src/shared/ipc'
@@ -26,7 +27,12 @@ const VOCABULARY_DEFAULT: VocabularySummary = {
   replaceCount: 0,
   protectCount: 0,
   droppedTermCount: 0,
-  providerSupportsTerms: true
+  droppedByCapCount: 0,
+  providerSupportsTerms: true,
+  terms: [],
+  replace: [],
+  protect: [],
+  starterTerms: []
 }
 
 const PREFERENCES: PreferencesView = {
@@ -251,6 +257,18 @@ describe('vocabulary state', () => {
     expect(state.detail).toContain('2 条术语因含英文逗号被忽略')
   })
 
+  it('names the over-cap tail without changing the comma wording', () => {
+    const state = describeVocabulary({
+      ...VOCABULARY_DEFAULT,
+      state: 'loaded',
+      termCount: 32,
+      droppedTermCount: 1,
+      droppedByCapCount: 3
+    })
+    expect(state.detail).toContain('3 条超出 32 条上限未写入')
+    expect(state.detail).toContain('1 条术语因含英文逗号被忽略')
+  })
+
   it('states that terms are not applied when the provider lacks the capability', () => {
     const state = describeVocabulary({
       ...VOCABULARY_DEFAULT,
@@ -278,6 +296,19 @@ describe('vocabulary state', () => {
       message: '词汇表文件不是有效的 JSON。'
     })
     expect(state).toMatchObject({ status: 'unavailable', detail: '词汇表文件不是有效的 JSON。' })
+  })
+})
+
+describe('starter load overflow copy', () => {
+  it('stays silent when nothing overflowed', () => {
+    expect(describeStarterLoadOverflow(0)).toBeUndefined()
+    expect(describeStarterLoadOverflow(-1)).toBeUndefined()
+  })
+
+  it('states the count and the remedy when the cap blocked starter terms', () => {
+    expect(describeStarterLoadOverflow(3)).toBe(
+      '3 条起始词因超出 32 条上限未写入，请先删除部分词条。'
+    )
   })
 })
 

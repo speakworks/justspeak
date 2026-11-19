@@ -28,6 +28,10 @@ export {
   parseVocabularyConfigDetailed,
   parseTermList,
   serializeVocabularyConfig,
+  importTermLines,
+  importReplacementLines,
+  normalizeVocabularySavePayload,
+  planStarterLoad,
   MAX_VOCABULARY_TERMS,
   findLiteralSpans,
   applyVocabulary

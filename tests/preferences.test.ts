@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs'
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -588,7 +588,9 @@ describe('vocabulary store', () => {
         throw failure
       },
       writeFile,
-      mkdir
+      mkdir,
+      rename,
+      unlink
     }
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {

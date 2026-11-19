@@ -16,7 +16,12 @@ const PREFERENCES: PreferencesView = {
     replaceCount: 3,
     protectCount: 2,
     droppedTermCount: 1,
-    providerSupportsTerms: true
+    droppedByCapCount: 0,
+    providerSupportsTerms: true,
+    terms: ['Kubernetes'],
+    replace: [{ from: '库贝内特斯', to: 'Kubernetes' }],
+    protect: ['JustSpeak'],
+    starterTerms: []
   },
   provider: {
     id: 'qwen3',

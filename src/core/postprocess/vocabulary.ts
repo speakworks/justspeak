@@ -231,6 +231,151 @@ export function parseTermList(value: unknown): TermListParse {
   }
 }
 
+/**
+ * One pasted block imported into an editable vocabulary list. `duplicates`
+ * counts lines that repeated an earlier entry; `invalidLines` counts lines that
+ * could not be parsed at all. Neither is silently folded into `entries`.
+ */
+export interface VocabularyImport<T> {
+  entries: T[]
+  duplicates: number
+  invalidLines: number
+}
+
+/**
+ * Split pasted text into terms or protected words: one per line, trimmed,
+ * blank lines skipped, exact duplicates keeping the first occurrence. The
+ * 32-term cap and the comma/invalid-character rules are deliberately not
+ * applied here; saving normalises through `parseTermList`, so the editor may
+ * hold more drafts than the file will accept.
+ */
+export function importTermLines(text: string): VocabularyImport<string> {
+  const entries: string[] = []
+  const seen = new Set<string>()
+  let duplicates = 0
+
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line) continue
+    if (seen.has(line)) {
+      duplicates += 1
+      continue
+    }
+    seen.add(line)
+    entries.push(line)
+  }
+
+  return { entries, duplicates, invalidLines: 0 }
+}
+
+/**
+ * Split pasted replacement lines as `from => to`. Both sides are trimmed; a
+ * line without `=>`, or with either side empty, is counted as invalid instead
+ * of being dropped silently. Duplicates are keyed by `from`, keeping the first
+ * occurrence so a later line cannot silently win.
+ */
+export function importReplacementLines(text: string): VocabularyImport<VocabularyReplacement> {
+  const entries: VocabularyReplacement[] = []
+  const seen = new Set<string>()
+  let duplicates = 0
+  let invalidLines = 0
+
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line) continue
+    const arrow = line.indexOf('=>')
+    if (arrow < 0) {
+      invalidLines += 1
+      continue
+    }
+    const from = line.slice(0, arrow).trim()
+    const to = line.slice(arrow + 2).trim()
+    if (!from || !to) {
+      invalidLines += 1
+      continue
+    }
+    if (seen.has(from)) {
+      duplicates += 1
+      continue
+    }
+    seen.add(from)
+    entries.push({ from, to })
+  }
+
+  return { entries, duplicates, invalidLines }
+}
+
+/**
+ * Normalise an untrusted save payload with the same parser the file read path
+ * uses, so an accepted save cannot apply rules the file would reject on the
+ * next load. Only `terms`, `replace`, and `protect` are read; rule switches
+ * and thresholds are not part of the editor's payload.
+ */
+export function normalizeVocabularySavePayload(raw: unknown): PostprocessOptions {
+  if (!isRecord(raw)) return {}
+  return parseVocabularyConfig({
+    terms: raw.terms,
+    replace: raw.replace,
+    protect: raw.protect
+  })
+}
+
+export interface StarterLoadPlan {
+  /** Existing entries first, then missing starter entries in starter order. */
+  terms: string[]
+  /** How many missing starter entries were actually appended within the cap. */
+  added: number
+  /** Missing starter entries the cap kept out of `terms`; never dropped silently. */
+  excludedByCap: number
+  /** True when nothing was appended or overflowed, so no save is needed. */
+  complete: boolean
+}
+
+/**
+ * Plan an explicit starter-list load. Presence is exact after trimming, which
+ * matches what a save will store; entries already in the editor are never
+ * duplicated, and the starter order only applies to the missing tail. The plan
+ * is capped at `cap` entries (the same cap a save enforces), so a full list
+ * reports its overflow through `excludedByCap` instead of silently vanishing on
+ * the next read-back.
+ */
+export function planStarterLoad(
+  existing: readonly string[],
+  starter: readonly string[],
+  cap: number = MAX_VOCABULARY_TERMS
+): StarterLoadPlan {
+  const limit = Math.max(0, Math.floor(cap))
+  const merged: string[] = []
+  const seen = new Set<string>()
+  for (const candidate of existing) {
+    const term = candidate.trim()
+    if (!term || seen.has(term)) continue
+    // Entries beyond the cap are not part of the plan result; leaving them out
+    // of `seen` lets a starter term that only sits past the cap be reported as
+    // excluded instead of looping the button forever.
+    if (merged.length >= limit) continue
+    seen.add(term)
+    merged.push(term)
+  }
+  let added = 0
+  let excludedByCap = 0
+  for (const candidate of starter) {
+    const term = candidate.trim()
+    if (!term || seen.has(term)) continue
+    if (merged.length >= limit) {
+      excludedByCap += 1
+      continue
+    }
+    seen.add(term)
+    merged.push(term)
+    added += 1
+  }
+  // No append and no overflow means every starter entry was already part of the
+  // editable list, so the caller can keep the existing "no write" behaviour.
+  const complete = added === 0 && excludedByCap === 0
+  return { terms: merged, added, excludedByCap, complete }
+}
+
 export interface ParsedVocabularyConfig {
   options: PostprocessOptions
   /** The accepted terms and discard counts, kept beside the options shape. */

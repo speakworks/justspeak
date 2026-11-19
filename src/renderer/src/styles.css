@@ -794,6 +794,41 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* Editable vocabulary lists: one row per entry, plus a batch-paste box. */
+.vocabulary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.vocabulary-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vocabulary-entry .vocabulary-input {
+  flex: 1 1 160px;
+  max-width: none;
+}
+
+.vocabulary-replace .vocabulary-input {
+  flex: 1 1 120px;
+}
+
+.vocabulary-paste {
+  display: block;
+  width: 100%;
+  max-width: none;
+  height: 72px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.4;
+}
+
 .settings-select {
   height: 26px;
   max-width: 100%;

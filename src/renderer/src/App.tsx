@@ -16,7 +16,9 @@ import type {
   PreferencesView,
   ResolvedTheme,
   SelectableAsrProviderId,
-  ThemePreference
+  ThemePreference,
+  VocabularySavePayload,
+  VocabularySaveResult
 } from '../../shared/ipc'
 import { SettingsPanel } from './SettingsPanel'
 import { Sidebar, type Destination } from './Sidebar'
@@ -294,6 +296,24 @@ export function App(): React.JSX.Element {
         setPreferencesError(error instanceof Error ? error.message : String(error))
       })
   }, [])
+
+  // The editor sends its three lists; main owns normalisation, the atomic
+  // write, and the read-back, so the counts shown afterwards are never guessed.
+  const saveVocabulary = useCallback(
+    async (payload: VocabularySavePayload): Promise<VocabularySaveResult> => {
+      try {
+        const outcome = await window.justspeak.saveVocabulary(payload)
+        if (outcome.view) setPreferences(outcome.view)
+        return outcome
+      } catch (error: unknown) {
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : String(error)
+        }
+      }
+    },
+    []
+  )
 
   const applyPreferencePatch = useCallback(async (patch: PreferencesPatch): Promise<boolean> => {
     setPreferencesError(undefined)
@@ -606,6 +626,7 @@ export function App(): React.JSX.Element {
     autostartBusy,
     onUndoWindow: changeUndoWindow,
     onReload: reloadPreferences,
+    onVocabularySave: saveVocabulary,
     onLlmBackend: changeLlmBackend,
     onLlmEndpointSave: saveLlmEndpoint,
     onLlmKeySave: saveLlmKey,

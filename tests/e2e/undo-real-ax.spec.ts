@@ -47,7 +47,8 @@ import {
   graphemeCount,
   openTextEditDocument,
   quitTextEditIfRunning,
-  readTextEditDocument
+  readTextEditDocument,
+  readTextEditDocumentNamed
 } from './real-machine'
 
 const ENABLED = process.env.JUSTSPEAK_REAL_AX === '1'
@@ -216,6 +217,8 @@ test('a moved focus is refused and no other window loses text', async () => {
   const userData = mkdtempSync(path.join(tmpdir(), 'justspeak-real-ax-userdata-'))
   const first = path.join(dir, 'first.txt')
   const second = path.join(dir, 'second.txt')
+  const FIRST_NAME = 'first.txt'
+  const SECOND_NAME = 'second.txt'
   writeFileSync(first, ORIGINAL)
   writeFileSync(second, '第二个文档 original')
   let app: ElectronApplication | undefined
@@ -227,20 +230,20 @@ test('a moved focus is refused and no other window loses text', async () => {
     focusTextEditCaretAtEnd()
 
     await recordUtterance(launched.app, launched.page)
-    await expect.poll(() => readTextEditDocument(1), { timeout: 15_000 }).toContain(
-      TRANSCRIPT
-    )
-    const firstAfterInsert = readTextEditDocument(1)
+    await expect
+      .poll(() => readTextEditDocumentNamed(FIRST_NAME), { timeout: 15_000 })
+      .toContain(TRANSCRIPT)
+    const firstAfterInsert = readTextEditDocumentNamed(FIRST_NAME)
 
-    // The user moves to another app and then to a different TextEdit document.
+    // A second document takes the focus, then the user moves to another app.
     // JustSpeak deliberately reactivates the recorded app before undoing
     // (`src/main/index.ts`, the `activateRunningApp` branch), so the refusal
     // here must come from the focused-element identity, not from the app name.
-    activateApp('Finder')
     openTextEditDocument(second)
-    focusTextEditCaretAtEnd()
-    const secondBefore = readTextEditDocument(2)
-    expect(frontmostApp()).toBe('TextEdit')
+    focusTextEditCaretAtEnd(SECOND_NAME)
+    const secondBefore = readTextEditDocumentNamed(SECOND_NAME)
+    activateApp('Finder')
+    expect(frontmostApp()).toBe('Finder')
 
     const panelPromise = waitForPanel(launched.app)
     const undo = await launched.page.evaluate(() =>
@@ -249,8 +252,8 @@ test('a moved focus is refused and no other window loses text', async () => {
     expect(undo.ok).toBe(false)
 
     // Nothing was deleted anywhere: not the recorded document, not the other one.
-    expect(readTextEditDocument(1)).toBe(firstAfterInsert)
-    expect(readTextEditDocument(2)).toBe(secondBefore)
+    expect(readTextEditDocumentNamed(FIRST_NAME)).toBe(firstAfterInsert)
+    expect(readTextEditDocumentNamed(SECOND_NAME)).toBe(secondBefore)
 
     const panel = await panelPromise
     await panel.waitForLoadState('domcontentloaded')

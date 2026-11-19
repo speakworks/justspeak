@@ -142,17 +142,35 @@ export function readTextEditDocument(index = 1): string {
 }
 
 /**
- * Put the keyboard focus into the first text area of the front document and
- * leave the caret at the very end. Undo assumes the caret sits after the
- * inserted text, so the check has to establish that state explicitly.
+ * The text of the document with this name. TextEdit's `document 1` follows
+ * window order, which changes as documents are opened and focused, so a test
+ * that adds a second document must address documents by name.
  */
-export function focusTextEditCaretAtEnd(): void {
+export function readTextEditDocumentNamed(name: string): string {
+  const escaped = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  return mustRunAppleScript(
+    `with timeout of 10 seconds\ntell application "TextEdit" to return text of document "${escaped}"\nend timeout`
+  )
+}
+
+/**
+ * Put the keyboard focus into the first text area of a document and leave the
+ * caret at the very end. Undo assumes the caret sits after the inserted text,
+ * so the check has to establish that state explicitly. Pass a document name
+ * when more than one document is open — `window 1` is whatever was focused
+ * last.
+ */
+export function focusTextEditCaretAtEnd(documentName?: string): void {
+  const target =
+    documentName === undefined
+      ? 'window 1'
+      : `window "${documentName.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
   mustRunAppleScript(
     `tell application "TextEdit" to activate
 tell application "System Events"
   tell process "TextEdit"
     set frontmost to true
-    set focused of text area 1 of scroll area 1 of window 1 to true
+    set focused of text area 1 of scroll area 1 of ${target} to true
   end tell
   -- Command+Down moves the caret to the end of the document.
   key code 125 using command down

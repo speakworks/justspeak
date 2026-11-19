@@ -52,6 +52,7 @@ const PREFERENCES: PreferencesView = {
     preference: 'auto',
     effective: 'auto',
     source: 'preference',
+    providerReady: true,
     restartRequired: false
   }
 }

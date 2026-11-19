@@ -24,6 +24,12 @@ describe('segment duration formatting', () => {
     expect(formatSegmentDuration(600_000)).toBe('10:00')
   })
 
+  it('rounds across minute boundaries without printing 60 seconds', () => {
+    expect(formatSegmentDuration(59_600)).toBe('1:00')
+    expect(formatSegmentDuration(3_599_000)).toBe('59:59')
+    expect(formatSegmentDuration(3_599_600)).toBe('60:00')
+  })
+
   it('clamps negative and non-finite values instead of breaking the label', () => {
     expect(formatSegmentDuration(-1)).toBe('0:00')
     expect(formatSegmentDuration(Number.NaN)).toBe('0:00')

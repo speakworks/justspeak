@@ -94,6 +94,34 @@ export function resolveSegmentationMode(
   }
 }
 
+export interface SegmentationRebuildInput {
+  /** The env/preference resolution for the saved choice. */
+  resolved: SegmentationResolution
+  /** The mode the running provider was built with. */
+  currentMode: SegmentationMode
+  /** True while recording, transcribing, or pasting. */
+  busy: boolean
+  /** True while a provider build is already in flight. */
+  initializing: boolean
+}
+
+/**
+ * Whether saving the 长句听写 preference should rebuild the provider now.
+ *
+ * Only an idle pipeline with a valid preference in charge can apply
+ * immediately. An env takeover owns the mode, a busy pipeline must not be
+ * interrupted, and an in-flight build already reads the new preference.
+ */
+export function shouldRebuildForSegmentation(input: SegmentationRebuildInput): boolean {
+  const { resolved, currentMode, busy, initializing } = input
+  return (
+    resolved.source === 'preference' &&
+    resolved.effective !== currentMode &&
+    !busy &&
+    !initializing
+  )
+}
+
 export interface SegmentationConfig {
   mode: SegmentationMode
   segmenter: SegmenterOptions

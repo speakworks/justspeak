@@ -89,11 +89,18 @@ Segmented transcription SHALL be the default mode in its `auto` form — the one
 - **THEN** it returns one final result after all segments complete
 - **AND** it does not emit intermediate transcript events during recording
 
-#### Scenario: Invalid configuration fails closed
+#### Scenario: Invalid env mode falls back to the preference
 
-- **WHEN** the opt-in selector has an unknown value or a VAD knob is invalid
+- **WHEN** the opt-in selector `JUSTSPEAK_SEGMENTED` has an unknown value
+- **THEN** the effective mode is the stored preference
+- **AND** the session remains usable
+- **AND** the settings surface names the invalid value and the effective preference
+
+#### Scenario: Invalid VAD parameter fails closed
+
+- **WHEN** a VAD parameter (`JUSTSPEAK_VAD_*` or `JUSTSPEAK_SEGMENT_MIN_MS`) is invalid
 - **THEN** startup reports a visible error
-- **AND** the application does not silently run the single-shot path in place of the requested mode
+- **AND** the application does not silently run a different VAD configuration
 
 ### Requirement: Segment failures SHALL keep successes and name the failed index
 
@@ -197,23 +204,35 @@ saved preference SHALL NOT be reported as effective.
 ### Requirement: Segmented results SHALL carry successful segment metadata
 
 A segmented provider SHALL include `segments` on a successful result when at
-least two utterances succeeded. Each element SHALL be
+least two provider calls succeeded. Entries SHALL be aggregated by the
+segmenter's original VAD utterance, not by the provider's internal chunks: one
+entry per utterance, so a single continuous utterance split for a provider's
+per-call limit is one segment rather than several. Each element SHALL be
 `{ index, startMs, durationMs }`, where `index` is the segmenter's zero-based
-utterance index, `startMs` is the segment start relative to the capture, and
-`durationMs` is its length, both converted from the 16 kHz sample range and
-rounded to whole milliseconds. The array SHALL be ordered by utterance and
-SHALL contain successful segments only. A one-shot result, a segmented run with
-fewer than two successful segments, and a no-speech result SHALL leave the
-field absent rather than fabricate entries.
+utterance index, `startMs` is that utterance's first chunk start relative to
+the capture, and `durationMs` is the sum of the utterance's successful chunk
+durations, both converted from the 16 kHz sample range and rounded to whole
+milliseconds. A failed chunk SHALL NOT contribute duration, and an utterance
+SHALL appear when at least one of its chunks succeeded. The array SHALL be
+ordered by utterance and SHALL contain utterances with successful chunks only.
+A one-shot result, a segmented run with fewer than two successful provider
+calls, and a no-speech result SHALL leave the field absent rather than
+fabricate entries.
 
 An adapter that assembles its own provider result SHALL forward metadata
 supplied by its runner unchanged.
 
-#### Scenario: Two or more successful segments
+#### Scenario: Two or more successful provider calls
 
 - **WHEN** a segmented run succeeds for two utterances
 - **THEN** the result carries two metadata entries in utterance order
 - **AND** their start and duration values match the sample ranges converted to milliseconds
+
+#### Scenario: One long utterance split internally
+
+- **WHEN** a single continuous utterance is longer than the provider's per-call limit
+- **THEN** it is transcribed in several chunks but reported as one metadata entry
+- **AND** its duration is the sum of the successful chunks
 
 #### Scenario: Zero-duration boundary
 

@@ -183,3 +183,22 @@ describe('SenseVoice capabilities are honest', () => {
     }
   })
 })
+
+describe('InferenceProvider result metadata', () => {
+  it('forwards runner-supplied segments unchanged', async () => {
+    const segments = [
+      { index: 0, startMs: 0, durationMs: 400 },
+      { index: 1, startMs: 1000, durationMs: 400 }
+    ]
+    const instance = provider({
+      async run() {
+        return { ok: true, value: { text: '你好', language: 'zh', segments } }
+      }
+    })
+
+    const result = await instance.transcribe(pcmInput(1600, { durationMs: 1000 }), {})
+
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.segments).toEqual(segments)
+  })
+})

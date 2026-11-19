@@ -64,6 +64,7 @@ const PREFERENCES: PreferencesView = {
     preference: 'auto',
     effective: 'auto',
     source: 'preference',
+    providerReady: true,
     restartRequired: false
   }
 }
@@ -362,6 +363,7 @@ describe('segmentation state', () => {
         preference: 'auto',
         effective: 'auto',
         source: 'preference',
+        providerReady: true,
         restartRequired: false
       })
     ).toMatchObject({ status: 'default', statusLabel: '默认', detail: '当前生效：自动（超限才分段）。' })
@@ -373,39 +375,41 @@ describe('segmentation state', () => {
         preference: 'vad',
         effective: 'vad',
         source: 'preference',
+        providerReady: true,
         restartRequired: false
       })
     ).toMatchObject({ status: 'override', statusLabel: '已修改' })
   })
 
-  it('reports an env takeover as such and names the env mode as effective', () => {
+  it('reports an env takeover and names the raw env value', () => {
     const state = describeSegmentation({
       preference: 'auto',
       effective: 'vad',
       source: 'env',
       envValue: 'vad',
-      message: '当前由环境变量接管（JUSTSPEAK_SEGMENTED=vad）',
+      providerReady: true,
       restartRequired: false
     })
     expect(state.status).toBe('override')
     expect(state.statusLabel).toBe('环境变量')
-    expect(state.detail).toContain('按静音分段')
+    expect(state.detail).toBe('当前由环境变量接管（JUSTSPEAK_SEGMENTED=vad）')
   })
 
-  it('surfaces the exact fallback sentence when the env value is invalid', () => {
-    const message =
-      'JUSTSPEAK_SEGMENTED 的值无效（loud），已回退到设置中的「整段不分」。'
-    expect(
-      describeSegmentation({
-        preference: 'single',
-        effective: 'single',
-        source: 'preference',
-        envValue: 'loud',
-        envInvalid: true,
-        message,
-        restartRequired: false
-      })
-    ).toMatchObject({ status: 'unavailable', statusLabel: '已回退', detail: message })
+  it('regenerates the fallback sentence from the current preference', () => {
+    const state = describeSegmentation({
+      preference: 'single',
+      effective: 'single',
+      source: 'preference',
+      envValue: 'loud',
+      envInvalid: true,
+      providerReady: true,
+      restartRequired: false
+    })
+    expect(state).toMatchObject({
+      status: 'unavailable',
+      statusLabel: '已回退',
+      detail: 'JUSTSPEAK_SEGMENTED 的值无效（loud），已回退到设置中的「整段不分」。'
+    })
   })
 
   it('says a deferred save applies next launch and names what is running now', () => {
@@ -413,12 +417,42 @@ describe('segmentation state', () => {
       preference: 'vad',
       effective: 'auto',
       source: 'preference',
+      providerReady: true,
       restartRequired: true
     })
     expect(state.status).toBe('pending')
     expect(state.statusLabel).toBe('未生效')
-    expect(state.detail).toContain('下次启动生效')
-    expect(state.detail).toContain('自动（超限才分段）')
+    expect(state.detail).toBe('已保存，下次启动生效；当前生效：自动（超限才分段）。')
+  })
+
+  it('shows both the env fallback and the deferred-save notice', () => {
+    const state = describeSegmentation({
+      preference: 'vad',
+      effective: 'single',
+      source: 'preference',
+      envValue: 'loud',
+      envInvalid: true,
+      providerReady: true,
+      restartRequired: true
+    })
+    expect(state.status).toBe('pending')
+    expect(state.detail).toContain(
+      'JUSTSPEAK_SEGMENTED 的值无效（loud），已回退到设置中的「按静音分段」。'
+    )
+    expect(state.detail).toContain('已保存，下次启动生效；当前生效：整段不分。')
+  })
+
+  it('does not name an effective mode before a provider is live', () => {
+    const state = describeSegmentation({
+      preference: 'vad',
+      effective: 'vad',
+      source: 'preference',
+      providerReady: false,
+      restartRequired: false
+    })
+    expect(state.status).toBe('unavailable')
+    expect(state.detail).not.toContain('当前生效：按静音分段')
+    expect(state.detail).toContain('ASR 尚未就绪')
   })
 })
 

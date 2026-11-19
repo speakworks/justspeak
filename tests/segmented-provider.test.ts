@@ -368,6 +368,7 @@ describe('segment metadata', () => {
       segmentMetadata([
         {
           index: 0,
+          utteranceIndex: 0,
           startSample: 0,
           endSample: 0,
           text: 'a',
@@ -377,6 +378,7 @@ describe('segment metadata', () => {
         },
         {
           index: 1,
+          utteranceIndex: 1,
           startSample: 16000,
           endSample: 16000,
           text: 'b',
@@ -391,12 +393,41 @@ describe('segment metadata', () => {
     ])
   })
 
+  it('aggregates chunks of one utterance into a single entry', () => {
+    // A 40 s utterance cut into 30 s + 10 s provider calls is one utterance.
+    expect(
+      segmentMetadata([
+        {
+          index: 0,
+          utteranceIndex: 0,
+          startSample: 0,
+          endSample: 480_000,
+          text: 'a',
+          modelId: 'm',
+          runtimeId: 'r',
+          warnings: []
+        },
+        {
+          index: 1,
+          utteranceIndex: 0,
+          startSample: 480_000,
+          endSample: 640_000,
+          text: 'b',
+          modelId: 'm',
+          runtimeId: 'r',
+          warnings: []
+        }
+      ])
+    ).toEqual([{ index: 0, startMs: 0, durationMs: 40_000 }])
+  })
+
   it('returns undefined below two segments', () => {
     expect(segmentMetadata([])).toBeUndefined()
     expect(
       segmentMetadata([
         {
           index: 0,
+          utteranceIndex: 0,
           startSample: 0,
           endSample: 1600,
           text: 'a',
@@ -541,5 +572,44 @@ describe('auto segmentation mode', () => {
     for (const call of calls) {
       expect(call.pcm.length).toBeLessThanOrEqual(30_000 * 16)
     }
+  })
+
+  it('reports one continuous utterance split for the provider as one segment', async () => {
+    const { provider } = makeProvider(30_000)
+    const selected = createTranscriptionProvider(provider, 'auto')
+    const pcm = new Int16Array(640_000).fill(8000)
+
+    const result = await selected.transcribe(
+      { pcm, sampleRate: 16000, channels: 1, durationMs: 40_000 },
+      {}
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // "一句很长" must read as one segment, not two provider chunks.
+    expect(result.value.segments).toHaveLength(1)
+    expect(result.value.segments?.[0].index).toBe(0)
+    expect(result.value.segments?.[0].durationMs).toBeGreaterThanOrEqual(39_000)
+    expect(result.value.segments?.[0].durationMs).toBeLessThanOrEqual(41_000)
+  })
+
+  it('keeps two separately split utterances as two segments', async () => {
+    const { provider } = makeProvider(30_000)
+    const selected = createTranscriptionProvider(provider, 'auto')
+    const pcm = signalPcm([
+      { ms: 40_000, amplitude: SPEECH_B },
+      { ms: 1_000, amplitude: QUIET },
+      { ms: 40_000, amplitude: SPEECH_C }
+    ])
+
+    const result = await selected.transcribe(
+      { pcm, sampleRate: 16000, channels: 1, durationMs: 81_000 },
+      {}
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.segments?.map((segment) => segment.index)).toEqual([0, 1])
+    expect(result.value.segments).toHaveLength(2)
   })
 })

@@ -510,11 +510,6 @@ export function SettingsPanel({
                 </label>
               ))}
             </div>
-            {segmentation?.message ? (
-              <p className="settings-detail" role="status" aria-live="polite">
-                {segmentation.message}
-              </p>
-            ) : null}
             <p className="settings-detail">{rows.segmentation.detail}</p>
           </div>
           </>

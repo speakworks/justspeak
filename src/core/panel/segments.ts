@@ -1,4 +1,4 @@
-import type { TranscriptSegmentMeta } from '../../shared/ipc'
+import type { TranscriptSegmentMeta } from '../asr/types'
 
 /**
  * `m:ss` for one segment duration. Whole seconds are rounded; a negative or

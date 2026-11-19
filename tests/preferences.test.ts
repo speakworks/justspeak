@@ -268,6 +268,23 @@ describe('preferences store', () => {
       segmentation: 'auto'
     })
   })
+
+  it('does not write a preferences file just because one was missing', async () => {
+    const dir = makeDir()
+    await new ThemeStore(dir).loadPreferences()
+    await expect(readdir(dir)).resolves.toEqual([])
+  })
+
+  it('leaves a corrupt preferences file untouched when falling back', async () => {
+    const dir = makeDir()
+    const corrupt = '{ not json'
+    await writeFile(preferencesFile(dir), corrupt, 'utf8')
+    await expect(new ThemeStore(dir).loadPreferences()).resolves.toMatchObject({
+      segmentation: 'auto'
+    })
+    // Fallback is a read-time repair in memory, never a silent rewrite.
+    expect(await readFile(preferencesFile(dir), 'utf8')).toBe(corrupt)
+  })
 })
 
 describe('preference merge', () => {

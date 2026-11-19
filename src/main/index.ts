@@ -136,6 +136,7 @@ import { downloadFailureHint, runtimeMissingHint } from './asr/download-hint'
 import {
   parseSegmentationConfig,
   resolveSegmentationMode,
+  shouldRebuildForSegmentation,
   type SegmentationMode,
   type SegmentationResolution
 } from './asr/segmentation-mode'
@@ -168,7 +169,8 @@ import {
   scheduleResultPanelHide,
   setResultPanelTarget,
   showResultPanel,
-  suspendResultPanelEscape
+  suspendResultPanelEscape,
+  type ResultPanelShowOptions
 } from './result-panel'
 import { isTrustedSender } from './ipc-sender'
 import { createTray, destroyTray, refreshTray } from './tray'
@@ -209,6 +211,12 @@ let sessionMode: AsrMode = DEFAULT_ASR_MODE
 let activeProvider: AsrProvider | null = null
 let providerError: string | undefined
 let initializing = false
+/**
+ * True once a provider build has completed with a usable session. Until then
+ * the saved 长句听写 preference must not be reported as "applies next launch":
+ * the first build simply has not run yet.
+ */
+let providerInitialized = false
 let pcmBuffer = new PcmBuffer()
 let activeModelInfo: ModelInfo | undefined
 let themePreference: ThemePreference = 'system'
@@ -336,6 +344,23 @@ const undoLock = new UndoLock()
 const lockedPaste = createLockedPaste(undoLock, pasteText)
 
 /**
+ * The copy panel for a fresh transcript. Every fallback path uses this so the
+ * run's segment metadata can never be dropped just because a paste was
+ * refused.
+ */
+function showTranscriptPanel(
+  text: string,
+  options: ResultPanelShowOptions = {}
+): void {
+  showResultPanel(text, effectiveTheme(), {
+    ...options,
+    ...(pendingTranscriptSegments === undefined
+      ? {}
+      : { segments: pendingTranscriptSegments })
+  })
+}
+
+/**
  * The delivery-port paste. A lock-busy refusal must not hide the text: write
  * it to the clipboard and show the result panel before re-throwing, so the
  * session's error path is honest and the words remain visible and copyable.
@@ -346,7 +371,7 @@ async function pasteWithVisibility(text: string): Promise<void> {
   } catch (error) {
     if (isPasteLockBusyError(error)) {
       clipboard.writeText(text)
-      showResultPanel(text, effectiveTheme(), {
+      showTranscriptPanel(text, {
         title: '撤销正在进行，未插入',
         notice: PASTE_LOCK_BUSY_NOTICE
       })
@@ -498,12 +523,7 @@ function deliveryPorts(): DeliveryPorts {
     probeTarget: probeFocusTarget,
     insert: (out) => mainWindow?.webContents.send('transcript:insert', out),
     paste: pasteWithVisibility,
-    showPanel: (out) =>
-      showResultPanel(out, effectiveTheme(), {
-        ...(pendingTranscriptSegments === undefined
-          ? {}
-          : { segments: pendingTranscriptSegments })
-      })
+    showPanel: (out) => showTranscriptPanel(out)
   }
 }
 
@@ -971,12 +991,13 @@ async function readPreferencesView(loginItemNotice?: string): Promise<Preference
         ? {}
         : { envValue: segmentationResolution.envValue }),
       ...(segmentationResolution.envInvalid ? { envInvalid: true } : {}),
-      ...(segmentationResolution.message === undefined
-        ? {}
-        : { message: segmentationResolution.message }),
+      // A mode can only be named as effective while a provider is live.
+      providerReady: activeProvider !== null && providerError === undefined && !initializing,
       // A busy pipeline defers the rebuild; the saved choice then applies on
-      // the next provider build (a provider switch, retry, or launch).
+      // the next provider build (a provider switch, retry, or launch). Before
+      // the first build has finished there is nothing to compare against.
       restartRequired:
+        providerInitialized &&
         segmentationResolution.source === 'preference' &&
         stored.segmentation !== segmentationMode
     }
@@ -1254,6 +1275,7 @@ async function disposeActiveProvider(): Promise<void> {
 async function initializeProvider(): Promise<void> {
   if (initializing) return
   initializing = true
+  providerInitialized = false
   providerError = undefined
   activeModelInfo = undefined
   pendingSegmentFailure = undefined
@@ -1318,6 +1340,7 @@ async function initializeProvider(): Promise<void> {
     activeProvider = built.provider
     session = makeSession(built.provider, true)
     initializing = false
+    providerInitialized = true
     sendState('idle', 'FAKE ASR（测试模式）')
     return
   }
@@ -1408,6 +1431,7 @@ async function initializeProvider(): Promise<void> {
     activeModelInfo = modelInfoFor(model, provider)
     session = makeSession(provider, false)
     initializing = false
+    providerInitialized = true
     sendState('idle', `模型就绪：${model.name} · ${model.license}`)
   } catch (error) {
     session = makeSession(new UnavailableAsrProvider(), false)
@@ -2224,10 +2248,12 @@ app.whenReady().then(async () => {
       if (ok && plan.update.segmentation !== undefined) {
         const resolved = resolveSegmentationMode(process.env, plan.update.segmentation)
         if (
-          resolved.source === 'preference' &&
-          resolved.effective !== segmentationMode &&
-          !pipelineBusy() &&
-          !initializing
+          shouldRebuildForSegmentation({
+            resolved,
+            currentMode: segmentationMode,
+            busy: pipelineBusy(),
+            initializing
+          })
         ) {
           await runProviderInitialization()
         }

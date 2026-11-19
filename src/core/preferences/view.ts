@@ -292,38 +292,65 @@ export function describeUndoWindow(minutes: number): SettingState {
   }
 }
 
+/** Why the 长句听写 row cannot name a mode yet, in the user's words. */
+export const SEGMENTATION_NOT_READY_REASON = 'ASR 尚未就绪，暂时无法确认当前生效档位。'
+
 /**
  * The 长句听写 row. It always names the *effective* mode, never a stored choice
- * the running provider has not adopted. A valid env override is an explicit
- * takeover; an invalid one is a visible, non-blocking fallback.
+ * the running provider has not adopted. All copy is regenerated from the raw
+ * view values and the *current* preference, so a deferred save cannot leave a
+ * stale mode name in the sentence.
  */
 export function describeSegmentation(view: SegmentationView): SettingState {
-  const label = SEGMENTATION_LABELS[view.effective]
+  const effectiveLabel = SEGMENTATION_LABELS[view.effective]
+  const preferenceLabel = SEGMENTATION_LABELS[view.preference]
+
+  // Without a live provider no mode is running; claiming one would be false.
+  if (!view.providerReady) {
+    return {
+      status: 'unavailable',
+      statusLabel: STATUS_LABEL.unavailable,
+      detail: SEGMENTATION_NOT_READY_REASON
+    }
+  }
+
+  const restartNotice = `已保存，下次启动生效；当前生效：${effectiveLabel}。`
+
   if (view.source === 'env') {
     return {
       status: 'override',
       statusLabel: '环境变量',
-      detail: `当前生效：${label}。环境变量移除后恢复保存的档位。`
+      detail: `当前由环境变量接管（JUSTSPEAK_SEGMENTED=${view.envValue ?? view.effective}）`
     }
   }
+
   if (view.envInvalid) {
-    return {
-      status: 'unavailable',
-      statusLabel: '已回退',
-      detail: view.message ?? `JUSTSPEAK_SEGMENTED 的值无效，已回退到「${label}」。`
+    const fallback = `JUSTSPEAK_SEGMENTED 的值无效（${view.envValue ?? ''}），已回退到设置中的「${preferenceLabel}」。`
+    if (view.restartRequired) {
+      // Both facts matter: the env value was rejected, and a later save is
+      // waiting for the next launch. The fallback names the current preference;
+      // the restart notice names what is still running.
+      return {
+        status: 'pending',
+        statusLabel: STATUS_LABEL.pending,
+        detail: `${fallback} ${restartNotice}`
+      }
     }
+    return { status: 'unavailable', statusLabel: '已回退', detail: fallback }
   }
+
   if (view.restartRequired) {
     return {
       status: 'pending',
       statusLabel: STATUS_LABEL.pending,
-      detail: `已保存，下次启动生效；当前生效：${label}。`
+      detail: restartNotice
     }
   }
+
   return {
     status: view.preference === 'auto' ? 'default' : 'override',
     statusLabel: view.preference === 'auto' ? STATUS_LABEL.default : STATUS_LABEL.override,
-    detail: `当前生效：${label}。`
+    detail: `当前生效：${effectiveLabel}。`
   }
 }
 

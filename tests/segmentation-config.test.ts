@@ -5,7 +5,8 @@ import {
   formatEnvTakeoverMessage,
   parseSegmentationConfig,
   parseSegmentationMode,
-  resolveSegmentationMode
+  resolveSegmentationMode,
+  shouldRebuildForSegmentation
 } from '../src/main/asr/segmentation-mode'
 
 describe('parseSegmentationMode', () => {
@@ -88,6 +89,69 @@ describe('segmentation resolution', () => {
     expect(result.config.mode).toBe('single')
     expect(result.resolution.envInvalid).toBe(true)
     expect(result.resolution.message).toContain('loud')
+  })
+})
+
+describe('segmentation rebuild decision', () => {
+  const preference = (effective: 'auto' | 'vad' | 'single') => ({
+    effective,
+    source: 'preference' as const
+  })
+  const env = (effective: 'auto' | 'vad' | 'single') => ({
+    effective,
+    source: 'env' as const
+  })
+
+  it('rebuilds immediately when idle with a different preference', () => {
+    expect(
+      shouldRebuildForSegmentation({
+        resolved: preference('vad'),
+        currentMode: 'auto',
+        busy: false,
+        initializing: false
+      })
+    ).toBe(true)
+  })
+
+  it('defers while recording, transcribing, or pasting', () => {
+    expect(
+      shouldRebuildForSegmentation({
+        resolved: preference('vad'),
+        currentMode: 'auto',
+        busy: true,
+        initializing: false
+      })
+    ).toBe(false)
+  })
+
+  it('defers while a provider build is already in flight', () => {
+    expect(
+      shouldRebuildForSegmentation({
+        resolved: preference('vad'),
+        currentMode: 'auto',
+        busy: false,
+        initializing: true
+      })
+    ).toBe(false)
+  })
+
+  it('never rebuilds on an env takeover or when the mode already matches', () => {
+    expect(
+      shouldRebuildForSegmentation({
+        resolved: env('vad'),
+        currentMode: 'auto',
+        busy: false,
+        initializing: false
+      })
+    ).toBe(false)
+    expect(
+      shouldRebuildForSegmentation({
+        resolved: preference('auto'),
+        currentMode: 'auto',
+        busy: false,
+        initializing: false
+      })
+    ).toBe(false)
   })
 })
 

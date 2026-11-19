@@ -78,10 +78,11 @@ export interface HotkeyCaptureEndResult {
 export type ThemePreference = 'system' | 'light' | 'dark'
 
 /**
- * The 长句听写 row. `effective` is the mode the live provider was built with;
- * `source` says whether a valid `JUSTSPEAK_SEGMENTED` overrode the stored
- * preference. `message` is the exact sentence the panel must show for an env
- * takeover or an invalid env value.
+ * The 长句听写 row. These are raw values, not copy: the pure presentation rules
+ * regenerate the sentence from the *current* preference, so a deferred save
+ * cannot leave a stale mode name behind. `effective` is the mode the live
+ * provider was built with; `source` says whether a valid
+ * `JUSTSPEAK_SEGMENTED` overrode the stored preference.
  */
 export interface SegmentationView {
   preference: SegmentationPreference
@@ -91,8 +92,8 @@ export interface SegmentationView {
   envValue?: string
   /** True when the env value was rejected and the preference was used. */
   envInvalid?: boolean
-  /** Exact user-facing takeover or fallback sentence. */
-  message?: string
+  /** False until a provider is live, so no mode may be claimed as effective. */
+  providerReady: boolean
   /** The saved preference has not reached the running provider yet. */
   restartRequired: boolean
 }

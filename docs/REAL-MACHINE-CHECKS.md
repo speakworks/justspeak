@@ -60,6 +60,14 @@ JUSTSPEAK_REAL_KEYS=1 npx playwright test tests/e2e/hotkey-real-keys.spec.ts # �
 失败时把输出贴回本文件对应的行，把状态从 `blocked` 改成 `pass` 或 `fail`——
 不允许在没有输出证据的情况下改。
 
+### 跳过与失败的边界（本次已实测）
+
+- 不设变量：`npx playwright test tests/e2e/undo-real-ax.spec.ts tests/e2e/hotkey-real-keys.spec.ts`
+  → **5 skipped**，一个窗口都不开。
+- 设了变量但环境不可用（本次即是）：→ **1 failed / 2 did not run**，报错原文
+  `This session runs in the launchd "Background" domain, which cannot activate or drive real windows.`
+  换言之，它不会把跑不了伪装成跳过。
+
 ### 与计划的一处偏差（须知）
 
 计划里第 2 项写的是「撤销前切到另一个 App，断言不发送删除」。但产品**故意**在

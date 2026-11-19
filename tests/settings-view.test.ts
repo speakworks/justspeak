@@ -26,7 +26,11 @@ const VOCABULARY_DEFAULT: VocabularySummary = {
   replaceCount: 0,
   protectCount: 0,
   droppedTermCount: 0,
-  providerSupportsTerms: true
+  providerSupportsTerms: true,
+  terms: [],
+  replace: [],
+  protect: [],
+  starterTerms: []
 }
 
 const PREFERENCES: PreferencesView = {

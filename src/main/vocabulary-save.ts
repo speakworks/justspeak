@@ -1,0 +1,63 @@
+import {
+  normalizeVocabularySavePayload,
+  type PostprocessOptions
+} from '../core/postprocess'
+import type { VocabularyLoadResult, VocabularyStore } from './vocabulary-store'
+
+/** The store surface the save path needs; tests may supply a fake. */
+export type VocabularySaveStore = Pick<VocabularyStore, 'save' | 'loadDetailed'>
+
+export type VocabularySaveOutcome =
+  | { ok: true; options: PostprocessOptions; load: VocabularyLoadResult }
+  | { ok: false; message: string }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * A save payload must carry all three lists so a malformed call cannot be
+ * coerced into an empty file by the tolerant parser. Contents are still
+ * re-normalised afterwards; this only rejects a missing or wrong-shaped field.
+ */
+export function isVocabularySavePayload(
+  raw: unknown
+): raw is { terms: unknown[]; replace: unknown[]; protect: unknown[] } {
+  return (
+    isRecord(raw) &&
+    Array.isArray(raw.terms) &&
+    Array.isArray(raw.replace) &&
+    Array.isArray(raw.protect)
+  )
+}
+
+/**
+ * The single save-and-read-back step. Normalisation reuses the file parser, the
+ * store writes atomically, and only a successful read-back yields the options
+ * main may hand to the next dictation. Any failure returns a reason and no
+ * options, so the caller cannot accidentally apply a half-saved state.
+ */
+export async function saveVocabularyPayload(
+  store: VocabularySaveStore,
+  raw: unknown
+): Promise<VocabularySaveOutcome> {
+  if (!isVocabularySavePayload(raw)) {
+    return { ok: false, message: '词汇表数据无效。' }
+  }
+
+  const options = normalizeVocabularySavePayload(raw)
+  try {
+    await store.save(options)
+  } catch (error) {
+    return {
+      ok: false,
+      message: `保存词汇表失败：${error instanceof Error ? error.message : String(error)}`
+    }
+  }
+
+  const load = await store.loadDetailed()
+  if (load.state === 'unreadable') {
+    return { ok: false, message: load.message ?? '词汇表已写入但无法读回。' }
+  }
+  return { ok: true, options: load.options, load }
+}

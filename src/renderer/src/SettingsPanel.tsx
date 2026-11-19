@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
+import { importReplacementLines, importTermLines, planStarterLoad } from '../../core/postprocess'
 import type { SettingState, SettingsRows } from '../../core/preferences/view'
 import { THEME_LABEL, THEME_PREFERENCES } from '../../core/theme/theme'
 import type {
@@ -6,7 +7,9 @@ import type {
   LlmBackend,
   PreferencesView,
   SelectableAsrProviderId,
-  ThemePreference
+  ThemePreference,
+  VocabularySavePayload,
+  VocabularySaveResult
 } from '../../shared/ipc'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import { UpdateRow } from './UpdateRow'
@@ -30,6 +33,8 @@ export interface SettingsPanelProps {
   /** Writes the 撤销时间窗 in whole minutes (1–60). */
   onUndoWindow: (minutes: number) => void
   onReload: () => void
+  /** Saves the three vocabulary lists; main normalises, writes, and reads back. */
+  onVocabularySave: (payload: VocabularySavePayload) => Promise<VocabularySaveResult>
   onLlmBackend: (backend: LlmBackend) => void
   onLlmEndpointSave: (baseUrl: string, model: string) => void
   onLlmKeySave: (key: string) => void
@@ -61,6 +66,18 @@ function StatusChip({ state }: { state: SettingState }): React.JSX.Element {
   return <span className={`settings-status ${state.status}`}>{state.statusLabel}</span>
 }
 
+/** One import outcome in the user's words; zero counts stay off the line. */
+function describeImport(result: {
+  entries: unknown[]
+  duplicates: number
+  invalidLines: number
+}): string {
+  const parts = [`导入 ${result.entries.length} 条`]
+  if (result.duplicates > 0) parts.push(`去重 ${result.duplicates} 行`)
+  if (result.invalidLines > 0) parts.push(`无效 ${result.invalidLines} 行`)
+  return `${parts.join('，')}。`
+}
+
 /**
  * One panel for every user preference. It owns no persisted state: the values
  * come from `preferences` (main's read of disk / the live OS binding), and
@@ -83,6 +100,7 @@ export function SettingsPanel({
   autostartBusy,
   onUndoWindow,
   onReload,
+  onVocabularySave,
   onLlmBackend,
   onLlmEndpointSave,
   onLlmKeySave,
@@ -108,6 +126,24 @@ export function SettingsPanel({
   const [undoWindowDraft, setUndoWindowDraft] = useState('')
   const [undoWindowError, setUndoWindowError] = useState<string | undefined>()
 
+  // The vocabulary editor keeps a draft per list. Drafts survive unrelated
+  // preference pushes (LLM status, hotkey events) unless the file on disk
+  // actually changed, so a background refresh cannot erase typing.
+  const [termDraft, setTermDraft] = useState<string[]>([])
+  const [replaceDraft, setReplaceDraft] = useState<VocabularySavePayload['replace']>([])
+  const [protectDraft, setProtectDraft] = useState<string[]>([])
+  const [termPaste, setTermPaste] = useState('')
+  const [replacePaste, setReplacePaste] = useState('')
+  const [protectPaste, setProtectPaste] = useState('')
+  const [termImport, setTermImport] = useState<string | undefined>()
+  const [replaceImport, setReplaceImport] = useState<string | undefined>()
+  const [protectImport, setProtectImport] = useState<string | undefined>()
+  const [vocabularyBusy, setVocabularyBusy] = useState(false)
+  const [vocabularyFeedback, setVocabularyFeedback] = useState<string | undefined>()
+  const [vocabularyFeedbackError, setVocabularyFeedbackError] = useState(false)
+  const syncedVocabulary = useRef('')
+  const vocabularyDirty = useRef(false)
+
   useEffect(() => {
     if (!preferences) return
     setLlmBaseUrl(preferences.llm.endpoint.baseUrl)
@@ -119,6 +155,127 @@ export function SettingsPanel({
     setUndoWindowDraft(String(preferences.undoWindowMinutes))
     setUndoWindowError(undefined)
   }, [preferences?.undoWindowMinutes])
+
+  const vocabularySignature =
+    preferences === null
+      ? ''
+      : JSON.stringify([
+          preferences.vocabulary.terms,
+          preferences.vocabulary.replace,
+          preferences.vocabulary.protect
+        ])
+
+  useEffect(() => {
+    if (!preferences) return
+    if (vocabularySignature === syncedVocabulary.current) return
+    syncedVocabulary.current = vocabularySignature
+    // Unsaved typing wins over an unrelated background refresh.
+    if (vocabularyDirty.current) return
+    setTermDraft([...preferences.vocabulary.terms])
+    setReplaceDraft(preferences.vocabulary.replace.map((entry) => ({ ...entry })))
+    setProtectDraft([...preferences.vocabulary.protect])
+  }, [preferences, vocabularySignature])
+
+  const markVocabularyDirty = (): void => {
+    vocabularyDirty.current = true
+  }
+
+  const importVocabularyTerms = (): void => {
+    const result = importTermLines(termPaste)
+    setTermDraft(result.entries)
+    setTermPaste('')
+    setTermImport(describeImport(result))
+    markVocabularyDirty()
+  }
+
+  const importVocabularyReplacements = (): void => {
+    const result = importReplacementLines(replacePaste)
+    setReplaceDraft(result.entries)
+    setReplacePaste('')
+    setReplaceImport(describeImport(result))
+    markVocabularyDirty()
+  }
+
+  const importVocabularyProtect = (): void => {
+    const result = importTermLines(protectPaste)
+    setProtectDraft(result.entries)
+    setProtectPaste('')
+    setProtectImport(describeImport(result))
+    markVocabularyDirty()
+  }
+
+  const reloadVocabulary = (): void => {
+    vocabularyDirty.current = false
+    // Force the next view (even byte-identical) to replace the drafts.
+    syncedVocabulary.current = ''
+    setVocabularyFeedback(undefined)
+    setTermPaste('')
+    setReplacePaste('')
+    setProtectPaste('')
+    setTermImport(undefined)
+    setReplaceImport(undefined)
+    setProtectImport(undefined)
+    onReload()
+  }
+
+  const persistVocabulary = async (lists: VocabularySavePayload): Promise<boolean> => {
+    setVocabularyBusy(true)
+    setVocabularyFeedback(undefined)
+    try {
+      const result = await onVocabularySave(lists)
+      if (!result.ok) {
+        // The draft is deliberately preserved so the user can correct it.
+        setVocabularyFeedback(result.message ?? '保存词汇表失败。')
+        setVocabularyFeedbackError(true)
+        return false
+      }
+      vocabularyDirty.current = false
+      setVocabularyFeedbackError(false)
+      const vocabulary = result.view?.vocabulary
+      setVocabularyFeedback(
+        vocabulary
+          ? `已保存：术语 ${vocabulary.termCount} 条 / 替换 ${vocabulary.replaceCount} 条 / 保护 ${vocabulary.protectCount} 条。`
+          : '已保存。'
+      )
+      return true
+    } catch (error) {
+      setVocabularyFeedback(error instanceof Error ? error.message : String(error))
+      setVocabularyFeedbackError(true)
+      return false
+    } finally {
+      setVocabularyBusy(false)
+    }
+  }
+
+  const saveVocabulary = (): Promise<boolean> =>
+    persistVocabulary({
+      terms: termDraft,
+      replace: replaceDraft,
+      protect: protectDraft
+    })
+
+  /**
+   * Explicit starter load: merge missing entries into the draft, then use the
+   * same save path as a manual edit. When every starter entry is already
+   * present this returns without writing.
+   */
+  const loadStarterVocabulary = async (): Promise<void> => {
+    const starter = preferences?.vocabulary.starterTerms ?? []
+    if (starter.length === 0) return
+    const plan = planStarterLoad(termDraft, starter)
+    if (plan.complete) {
+      setVocabularyFeedbackError(false)
+      setVocabularyFeedback('起始词表已全部载入。')
+      return
+    }
+    setTermDraft(plan.terms)
+    markVocabularyDirty()
+    await persistVocabulary({
+      terms: plan.terms,
+      replace: replaceDraft,
+      protect: protectDraft
+    })
+  }
 
   const commitUndoWindow = (): void => {
     if (!preferences) return
@@ -133,6 +290,11 @@ export function SettingsPanel({
     setUndoWindowDraft(String(preferences.undoWindowMinutes))
     setUndoWindowError('撤销时间窗必须是 1 到 60 之间的整数分钟。')
   }
+
+  const starterComplete =
+    preferences !== null &&
+    planStarterLoad(termDraft, preferences.vocabulary.starterTerms).complete
+
   return (
     <section
       className="card settings"
@@ -266,6 +428,7 @@ export function SettingsPanel({
           )}
 
           {vocabularyOnly ? (
+          <>
           <div className="settings-row">
             <div className="settings-row-head">
               <span className="settings-label">词汇表</span>
@@ -275,7 +438,7 @@ export function SettingsPanel({
               <code className="settings-path" title={preferences.vocabulary.path}>
                 {preferences.vocabulary.path}
               </code>
-              <button type="button" className="hotkey-apply" onClick={onReload}>
+              <button type="button" className="hotkey-apply" onClick={reloadVocabulary}>
                 重新加载
               </button>
             </div>
@@ -290,6 +453,274 @@ export function SettingsPanel({
             </p>
           </div>
 
+          <div className="settings-row">
+            <div className="settings-row-head">
+              <span className="settings-label">术语</span>
+              <span className="settings-detail">{termDraft.length} 条</span>
+            </div>
+            <p className="settings-detail">
+              解码前作为提示传给识别模型；最多 32 条生效，含英文逗号或控制字符的术语会被丢弃。
+            </p>
+            <div className="vocabulary-list">
+              {termDraft.length === 0 ? (
+                <p className="settings-detail">还没有术语。</p>
+              ) : (
+                termDraft.map((term, index) => (
+                  <div className="vocabulary-entry" key={`term-${index}`}>
+                    <input
+                      className="hotkey-input vocabulary-input"
+                      aria-label={`术语 ${index + 1}`}
+                      value={term}
+                      onChange={(event) => {
+                        const next = [...termDraft]
+                        next[index] = event.target.value
+                        setTermDraft(next)
+                        markVocabularyDirty()
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="hotkey-apply"
+                      onClick={() => {
+                        setTermDraft(termDraft.filter((_, position) => position !== index))
+                        markVocabularyDirty()
+                      }}
+                    >
+                      删除
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="settings-control">
+              <button
+                type="button"
+                className="hotkey-apply"
+                onClick={() => {
+                  setTermDraft([...termDraft, ''])
+                  markVocabularyDirty()
+                }}
+              >
+                添加术语
+              </button>
+            </div>
+            <textarea
+              className="hotkey-input vocabulary-paste"
+              aria-label="批量粘贴术语"
+              placeholder="一行一条；导入会替换当前术语列表"
+              value={termPaste}
+              onChange={(event) => setTermPaste(event.target.value)}
+            />
+            <div className="settings-control">
+              <button
+                type="button"
+                className="hotkey-apply"
+                disabled={termPaste.trim().length === 0}
+                onClick={importVocabularyTerms}
+              >
+                导入术语
+              </button>
+              {termImport ? <span className="settings-detail">{termImport}</span> : null}
+            </div>
+            <div className="settings-control">
+              <button
+                type="button"
+                className="hotkey-apply"
+                disabled={vocabularyBusy || starterComplete}
+                onClick={() => void loadStarterVocabulary()}
+              >
+                {starterComplete ? '已全部载入' : '载入起始词表（10 词）'}
+              </button>
+            </div>
+            <p className="settings-detail">
+              起始词表只在你点击后写入，已存在的词不会重复添加。
+            </p>
+            {!preferences.vocabulary.providerSupportsTerms && termDraft.length > 0 ? (
+              <p className="settings-detail">
+                当前 ASR 模型不支持解码期术语偏置，术语未生效。
+              </p>
+            ) : null}
+          </div>
+
+          <div className="settings-row">
+            <div className="settings-row-head">
+              <span className="settings-label">替换</span>
+              <span className="settings-detail">{replaceDraft.length} 条</span>
+            </div>
+            <p className="settings-detail">
+              转写完成后按原文精确改写；原文与替换词都不能为空。
+            </p>
+            <div className="vocabulary-list">
+              {replaceDraft.length === 0 ? (
+                <p className="settings-detail">还没有替换规则。</p>
+              ) : (
+                replaceDraft.map((entry, index) => (
+                  <div className="vocabulary-entry vocabulary-replace" key={`replace-${index}`}>
+                    <input
+                      className="hotkey-input vocabulary-input"
+                      aria-label={`替换原文 ${index + 1}`}
+                      placeholder="原文"
+                      value={entry.from}
+                      onChange={(event) => {
+                        const next = replaceDraft.map((item) => ({ ...item }))
+                        next[index].from = event.target.value
+                        setReplaceDraft(next)
+                        markVocabularyDirty()
+                      }}
+                    />
+                    <span className="settings-detail">→</span>
+                    <input
+                      className="hotkey-input vocabulary-input"
+                      aria-label={`替换词 ${index + 1}`}
+                      placeholder="替换词"
+                      value={entry.to}
+                      onChange={(event) => {
+                        const next = replaceDraft.map((item) => ({ ...item }))
+                        next[index].to = event.target.value
+                        setReplaceDraft(next)
+                        markVocabularyDirty()
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="hotkey-apply"
+                      onClick={() => {
+                        setReplaceDraft(replaceDraft.filter((_, position) => position !== index))
+                        markVocabularyDirty()
+                      }}
+                    >
+                      删除
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="settings-control">
+              <button
+                type="button"
+                className="hotkey-apply"
+                onClick={() => {
+                  setReplaceDraft([...replaceDraft, { from: '', to: '' }])
+                  markVocabularyDirty()
+                }}
+              >
+                添加替换
+              </button>
+            </div>
+            <textarea
+              className="hotkey-input vocabulary-paste"
+              aria-label="批量粘贴替换"
+              placeholder="一行一条，格式：原文 => 替换；导入会替换当前列表"
+              value={replacePaste}
+              onChange={(event) => setReplacePaste(event.target.value)}
+            />
+            <div className="settings-control">
+              <button
+                type="button"
+                className="hotkey-apply"
+                disabled={replacePaste.trim().length === 0}
+                onClick={importVocabularyReplacements}
+              >
+                导入替换
+              </button>
+              {replaceImport ? <span className="settings-detail">{replaceImport}</span> : null}
+            </div>
+          </div>
+
+          <div className="settings-row">
+            <div className="settings-row-head">
+              <span className="settings-label">保护词</span>
+              <span className="settings-detail">{protectDraft.length} 条</span>
+            </div>
+            <p className="settings-detail">这些词不会被替换或其它规则改写。</p>
+            <div className="vocabulary-list">
+              {protectDraft.length === 0 ? (
+                <p className="settings-detail">还没有保护词。</p>
+              ) : (
+                protectDraft.map((word, index) => (
+                  <div className="vocabulary-entry" key={`protect-${index}`}>
+                    <input
+                      className="hotkey-input vocabulary-input"
+                      aria-label={`保护词 ${index + 1}`}
+                      value={word}
+                      onChange={(event) => {
+                        const next = [...protectDraft]
+                        next[index] = event.target.value
+                        setProtectDraft(next)
+                        markVocabularyDirty()
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="hotkey-apply"
+                      onClick={() => {
+                        setProtectDraft(protectDraft.filter((_, position) => position !== index))
+                        markVocabularyDirty()
+                      }}
+                    >
+                      删除
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="settings-control">
+              <button
+                type="button"
+                className="hotkey-apply"
+                onClick={() => {
+                  setProtectDraft([...protectDraft, ''])
+                  markVocabularyDirty()
+                }}
+              >
+                添加保护词
+              </button>
+            </div>
+            <textarea
+              className="hotkey-input vocabulary-paste"
+              aria-label="批量粘贴保护词"
+              placeholder="一行一条；导入会替换当前保护词列表"
+              value={protectPaste}
+              onChange={(event) => setProtectPaste(event.target.value)}
+            />
+            <div className="settings-control">
+              <button
+                type="button"
+                className="hotkey-apply"
+                disabled={protectPaste.trim().length === 0}
+                onClick={importVocabularyProtect}
+              >
+                导入保护词
+              </button>
+              {protectImport ? <span className="settings-detail">{protectImport}</span> : null}
+            </div>
+          </div>
+
+          <div className="settings-row">
+            <div className="settings-row-head">
+              <span className="settings-label">保存</span>
+            </div>
+            <div className="settings-control">
+              <button
+                type="button"
+                className="hotkey-apply"
+                disabled={vocabularyBusy}
+                onClick={() => void saveVocabulary()}
+              >
+                {vocabularyBusy ? '保存中…' : '保存词汇表'}
+              </button>
+            </div>
+            <p
+              className={
+                vocabularyFeedbackError ? 'settings-detail error' : 'settings-detail'
+              }
+              role="status"
+              aria-live="polite"
+            >
+              {vocabularyFeedback ?? '保存后立即用于下一次听写；三类都为空时写入空列表。'}
+            </p>
+          </div>
+          </>
           ) : null}
           {vocabularyOnly ? null : (
           <>

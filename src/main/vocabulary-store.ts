@@ -1,4 +1,5 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import {
   parseVocabularyConfigDetailed,
@@ -11,9 +12,11 @@ export interface VocabularyStoreDeps {
   readFile: typeof readFile
   writeFile: typeof writeFile
   mkdir: typeof mkdir
+  rename: typeof rename
+  unlink: typeof unlink
 }
 
-const DEFAULT_DEPS: VocabularyStoreDeps = { readFile, writeFile, mkdir }
+const DEFAULT_DEPS: VocabularyStoreDeps = { readFile, writeFile, mkdir, rename, unlink }
 
 export const VOCABULARY_FILE = 'vocabulary.json'
 
@@ -103,8 +106,30 @@ export class VocabularyStore {
     return { options: detail.options, state: 'loaded', termList: detail.termList }
   }
 
+  /**
+   * Write atomically: a same-directory temporary file is renamed over the
+   * target, so a crash or a failed write leaves the previous file intact. The
+   * temporary file is always cleaned up; the original error is the one the
+   * caller sees.
+   */
   async save(options: PostprocessOptions): Promise<void> {
-    await this.deps.mkdir(path.dirname(this.file), { recursive: true })
-    await this.deps.writeFile(this.file, serializeVocabularyConfig(options), 'utf8')
+    const directory = path.dirname(this.file)
+    await this.deps.mkdir(directory, { recursive: true })
+    const temporary = path.join(
+      directory,
+      `${VOCABULARY_FILE}.${process.pid}.${randomUUID()}.tmp`
+    )
+    try {
+      await this.deps.writeFile(temporary, serializeVocabularyConfig(options), 'utf8')
+      await this.deps.rename(temporary, this.file)
+    } catch (error) {
+      try {
+        await this.deps.unlink(temporary)
+      } catch {
+        // The temporary file may never have been created; never mask the
+        // failure that actually stopped the save.
+      }
+      throw error
+    }
   }
 }

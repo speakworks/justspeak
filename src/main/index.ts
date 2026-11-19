@@ -118,6 +118,7 @@ import type {
   UndoResult,
   UndoStateView,
   UpdateStatusView,
+  VocabularySaveResult,
   VocabularySummary
 } from '../shared/ipc'
 import { MODEL_CATALOG } from './asr/catalog'
@@ -171,6 +172,8 @@ import { UpdateController } from './update'
 import { PcmBuffer } from './pcm-buffer'
 import { ThemeStore } from './theme-store'
 import { VocabularyStore, type VocabularyLoadResult } from './vocabulary-store'
+import { saveVocabularyPayload } from './vocabulary-save'
+import { STARTER_VOCABULARY_TERMS } from './vocabulary-starter'
 import { createLoginItemController, type LoginItemController } from './login-item'
 
 const DARK_BACKGROUND = '#1e1e1e'
@@ -865,6 +868,10 @@ function summarizeVocabulary(result: VocabularyLoadResult): VocabularySummary {
     termCount: result.termList.terms.length,
     replaceCount: result.options.vocabulary?.replace?.length ?? 0,
     protectCount: result.options.vocabulary?.protect?.length ?? 0,
+    terms: result.options.terms ?? [],
+    replace: result.options.vocabulary?.replace ?? [],
+    protect: result.options.vocabulary?.protect ?? [],
+    starterTerms: [...STARTER_VOCABULARY_TERMS],
     // Only the visible comma reason; the cap and invalid discards stay silent.
     droppedTermCount: result.termList.droppedByComma,
     providerSupportsTerms: resolveProviderSupportsTerms(
@@ -2165,6 +2172,25 @@ app.whenReady().then(async () => {
       // One push path for the renderer's single copy.
       mainWindow?.webContents.send('preferences:changed', view)
       return { ok, preferences: view, hotkey: hotkeyResult, message }
+    }
+  )
+
+  ipcMain.handle(
+    'vocabulary:save',
+    async (event, payload: unknown): Promise<VocabularySaveResult> => {
+      if (!isTrustedSender(event.sender.id, mainWindow?.webContents.id)) {
+        console.warn('[vocabulary] rejected untrusted save')
+        return { ok: false, message: '未授权的词汇表请求。' }
+      }
+      // The renderer is never trusted: normalise through the file parser, write
+      // atomically, then adopt only the read-back options. A failed save must
+      // leave the previous in-memory configuration and the old file untouched.
+      const outcome = await saveVocabularyPayload(vocabularyStore, payload)
+      if (!outcome.ok) return { ok: false, message: outcome.message }
+      postprocessOptions = outcome.options
+      const view = await readPreferencesView()
+      mainWindow?.webContents.send('preferences:changed', view)
+      return { ok: true, view }
     }
   )
 

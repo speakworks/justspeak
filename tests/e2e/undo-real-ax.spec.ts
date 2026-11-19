@@ -17,14 +17,15 @@
  *   - an Aqua GUI session (an SSH or tmux login lives in the launchd
  *     "Background" domain and cannot activate or drive other apps);
  *   - Accessibility for the process that runs the tests;
- *   - Automation consent for System Events on first use.
+ *   - Automation consent for System Events on first use;
+ *   - **TextEdit not running.** The spec opens its own documents in its own
+ *     TextEdit instance and closes only those files; if TextEdit is already
+ *     running, `open` would reuse it and closing could discard your unsaved
+ *     work, so the run refuses to start instead.
  *
  * When a prerequisite is missing the spec FAILS with the reason printed. It
  * never downgrades to a skip: see
  * `openspec/specs/real-machine-verification/spec.md`.
- *
- * Safety: only a temporary document in a fresh directory is touched, and
- * TextEdit is quit again in `finally` — but only if this spec started it.
  */
 import {
   _electron as electron,
@@ -33,22 +34,22 @@ import {
   type ElectronApplication,
   type Page
 } from '@playwright/test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   activateApp,
   assertRealMachineGrants,
-  closeTextEdit,
-  focusTextEditCaretAtEnd,
+  assertTextEditIdle,
+  closeTextEditDocuments,
+  focusTextEditDocument,
   frontmostApp,
   graphemeCount,
   openTextEditDocument,
-  quitTextEditIfRunning,
-  readTextEditDocument,
-  readTextEditDocumentNamed
+  quitTextEdit,
+  readTextEditDocument
 } from './real-machine'
 
 const ENABLED = process.env.JUSTSPEAK_REAL_AX === '1'
@@ -140,26 +141,38 @@ async function recordUtterance(
 }
 
 /**
- * The result panel is a singleton window: it is created once and reused. A
- * plain `waitForEvent('window')` therefore misses a panel that already exists,
- * so look at the live windows first.
+ * The result panel is a singleton window: it is created once and reused, so a
+ * plain `waitForEvent('window')` never resolves for a panel that already
+ * exists. Wait until a `panel=1` window is both present and visible — an
+ * existing but hidden panel must not satisfy this, or "the panel appeared"
+ * would stop being tested.
  */
 async function waitForPanel(
   app: ElectronApplication,
   timeout = 15_000
 ): Promise<Page> {
-  const existing = app.windows().find((win) => win.url().includes('panel=1'))
-  if (existing) return existing
-  return app.waitForEvent('window', {
-    predicate: (win) => win.url().includes('panel=1'),
-    timeout
-  })
+  await expect
+    .poll(
+      () =>
+        app.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows().some(
+            (window) =>
+              window.isVisible() && window.webContents.getURL().includes('panel=1')
+          )
+        ),
+      { timeout }
+    )
+    .toBe(true)
+  const panel = app.windows().find((window) => window.url().includes('panel=1'))
+  if (!panel) throw new Error('panel=1 window not found after it became visible')
+  return panel
 }
 
 test.describe.configure({ mode: 'serial' })
 
 test.beforeAll(() => {
   assertRealMachineGrants()
+  assertTextEditIdle()
 })
 
 test('undo removes exactly the recorded grapheme count from TextEdit', async () => {
@@ -173,17 +186,17 @@ test('undo removes exactly the recorded grapheme count from TextEdit', async () 
     const launched = await launchApp(userData)
     app = launched.app
     await hideAppWindows(app)
-    focusTextEditCaretAtEnd()
+    focusTextEditDocument(file)
 
-    const before = readTextEditDocument()
+    const before = readTextEditDocument(file)
     expect(before).toBe(ORIGINAL)
 
     await recordUtterance(launched.app, launched.page)
-    await expect.poll(() => readTextEditDocument(), { timeout: 15_000 }).toContain(
-      TRANSCRIPT
-    )
+    await expect
+      .poll(() => readTextEditDocument(file), { timeout: 15_000 })
+      .toContain(TRANSCRIPT)
 
-    const inserted = readTextEditDocument()
+    const inserted = readTextEditDocument(file)
     const insertedText = inserted.slice(before.length)
     expect(graphemeCount(insertedText)).toBeGreaterThan(0)
 
@@ -200,25 +213,26 @@ test('undo removes exactly the recorded grapheme count from TextEdit', async () 
     )
     expect(undo.ok).toBe(true)
 
-    await expect.poll(() => readTextEditDocument(), { timeout: 15_000 }).toBe(before)
+    await expect
+      .poll(() => readTextEditDocument(file), { timeout: 15_000 })
+      .toBe(before)
     expect(graphemeCount(inserted) - graphemeCount(before)).toBe(
       graphemeCount(insertedText)
     )
   } finally {
     if (app) await app.close().catch(() => {})
-    quitTextEditIfRunning()
+    closeTextEditDocuments([file])
+    quitTextEdit()
     rmSync(userData, { recursive: true, force: true })
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('a moved focus is refused and no other window loses text', async () => {
+test('a moved focus is refused and no document loses text', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'justspeak-real-ax-'))
   const userData = mkdtempSync(path.join(tmpdir(), 'justspeak-real-ax-userdata-'))
   const first = path.join(dir, 'first.txt')
   const second = path.join(dir, 'second.txt')
-  const FIRST_NAME = 'first.txt'
-  const SECOND_NAME = 'second.txt'
   writeFileSync(first, ORIGINAL)
   writeFileSync(second, '第二个文档 original')
   let app: ElectronApplication | undefined
@@ -227,21 +241,22 @@ test('a moved focus is refused and no other window loses text', async () => {
     const launched = await launchApp(userData)
     app = launched.app
     await hideAppWindows(app)
-    focusTextEditCaretAtEnd()
+    focusTextEditDocument(first)
 
     await recordUtterance(launched.app, launched.page)
     await expect
-      .poll(() => readTextEditDocumentNamed(FIRST_NAME), { timeout: 15_000 })
+      .poll(() => readTextEditDocument(first), { timeout: 15_000 })
       .toContain(TRANSCRIPT)
-    const firstAfterInsert = readTextEditDocumentNamed(FIRST_NAME)
+    const firstAfterInsert = readTextEditDocument(first)
 
     // A second document takes the focus, then the user moves to another app.
     // JustSpeak deliberately reactivates the recorded app before undoing
     // (`src/main/index.ts`, the `activateRunningApp` branch), so the refusal
-    // here must come from the focused-element identity, not from the app name.
+    // must come from the focused-element identity — hence the title assertion
+    // below, which excludes "the app could not even be brought forward".
     openTextEditDocument(second)
-    focusTextEditCaretAtEnd(SECOND_NAME)
-    const secondBefore = readTextEditDocumentNamed(SECOND_NAME)
+    focusTextEditDocument(second)
+    const secondBefore = readTextEditDocument(second)
     activateApp('Finder')
     expect(frontmostApp()).toBe('Finder')
 
@@ -252,15 +267,19 @@ test('a moved focus is refused and no other window loses text', async () => {
     expect(undo.ok).toBe(false)
 
     // Nothing was deleted anywhere: not the recorded document, not the other one.
-    expect(readTextEditDocumentNamed(FIRST_NAME)).toBe(firstAfterInsert)
-    expect(readTextEditDocumentNamed(SECOND_NAME)).toBe(secondBefore)
+    expect(readTextEditDocument(first)).toBe(firstAfterInsert)
+    expect(readTextEditDocument(second)).toBe(secondBefore)
 
     const panel = await panelPromise
     await panel.waitForLoadState('domcontentloaded')
+    await expect(panel.locator('.result-panel-title')).toHaveText(
+      /焦点已改变|已切换目标/
+    )
     await expect(panel.locator('.result-panel-text')).toHaveValue(firstAfterInsert)
   } finally {
     if (app) await app.close().catch(() => {})
-    closeTextEdit()
+    closeTextEditDocuments([first, second])
+    quitTextEdit()
     rmSync(userData, { recursive: true, force: true })
     rmSync(dir, { recursive: true, force: true })
   }
@@ -277,15 +296,18 @@ test('a quit target is refused, preserved, and never relaunched', async () => {
     const launched = await launchApp(userData)
     app = launched.app
     await hideAppWindows(app)
-    focusTextEditCaretAtEnd()
+    focusTextEditDocument(file)
 
     await recordUtterance(launched.app, launched.page)
-    await expect.poll(() => readTextEditDocument(1), { timeout: 15_000 }).toContain(
-      TRANSCRIPT
-    )
-    const inserted = readTextEditDocument(1)
+    await expect
+      .poll(() => readTextEditDocument(file), { timeout: 15_000 })
+      .toContain(TRANSCRIPT)
+    const inserted = readTextEditDocument(file)
 
-    closeTextEdit()
+    // Closing the document and quitting is what "the target app is gone" means
+    // for this check; the guard must not relaunch it.
+    closeTextEditDocuments([file])
+    quitTextEdit()
 
     const panelPromise = waitForPanel(launched.app)
     const undo = await launched.page.evaluate(() =>
@@ -297,12 +319,11 @@ test('a quit target is refused, preserved, and never relaunched', async () => {
     await panel.waitForLoadState('domcontentloaded')
     await expect(panel.locator('.result-panel-text')).toHaveValue(inserted)
 
-    // A closed target is never launched as a side effect of pressing undo.
     const relaunched = spawnSync('pgrep', ['-x', 'TextEdit'], { encoding: 'utf8' })
     expect(String(relaunched.stdout ?? '').trim()).toBe('')
   } finally {
     if (app) await app.close().catch(() => {})
-    quitTextEditIfRunning()
+    quitTextEdit()
     rmSync(userData, { recursive: true, force: true })
     rmSync(dir, { recursive: true, force: true })
   }

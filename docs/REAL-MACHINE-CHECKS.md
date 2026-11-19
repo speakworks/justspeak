@@ -54,7 +54,11 @@ JUSTSPEAK_REAL_AX=1 npx playwright test tests/e2e/undo-real-ax.spec.ts     # 期
 JUSTSPEAK_REAL_KEYS=1 npx playwright test tests/e2e/hotkey-real-keys.spec.ts # 期望 2 passed
 ```
 
-运行前请退出你自己的 JustSpeak 实例：快捷键检查会占用同一个全局组合。
+运行前请**退出 TextEdit**（保存好你自己的东西）并退出你自己的 JustSpeak 实例：
+- AX 检查会自己打开临时文档；若 TextEdit 已在运行，`open` 会复用它，收尾关闭文档就可能丢掉
+  你未保存的内容，所以 `assertTextEditIdle()` 会直接拒绝启动，而不是去碰你的窗口。
+- 快捷键检查会占用同一个全局组合。
+
 首次运行会弹一次「…想要控制 System Events」授权框，需要点允许。
 
 失败时把输出贴回本文件对应的行，把状态从 `blocked` 改成 `pass` 或 `fail`——
@@ -64,9 +68,11 @@ JUSTSPEAK_REAL_KEYS=1 npx playwright test tests/e2e/hotkey-real-keys.spec.ts # �
 
 - 不设变量：`npx playwright test tests/e2e/undo-real-ax.spec.ts tests/e2e/hotkey-real-keys.spec.ts`
   → **5 skipped**，一个窗口都不开。
-- 设了变量但环境不可用（本次即是）：→ **1 failed / 2 did not run**，报错原文
+- 设了变量、但只跑**单个文件**且环境不可用（本次即是）：`JUSTSPEAK_REAL_AX=1 npx playwright test tests/e2e/undo-real-ax.spec.ts`
+  → **1 failed / 2 did not run**，报错原文
   `This session runs in the launchd "Background" domain, which cannot activate or drive real windows.`
-  换言之，它不会把跑不了伪装成跳过。
+  换言之，它不会把跑不了伪装成跳过。（两个文件一起跑时会是 2 failed / 3 did not run，因为各自的
+  `beforeAll` 都会失败。）
 
 ### 与计划的一处偏差（须知）
 
@@ -116,8 +122,9 @@ TextEdit 文档后，撤销必须因焦点身份不符而拒绝，且两个文�
 4. **产品侧逻辑有确定性覆盖**：同一套判断在 `tests/injection-undo.test.ts`、
    `injection-undo-lock.test.ts`、`injection-delete.test.ts` 中都有单测，不依赖时序。
 
-**未定位到单一机制**：加诊断后连续 5 轮全量都没再复现，因此不能声称"抓到了那一次"。
-残余风险需要如实保留：不排除存在极低频的产品侧竞态，目前的证据只能支撑"测试假设脆弱"。
+- **未定位到单一机制**：加诊断后连续 5 轮全量都没再复现，因此不能声称"抓到了那一次"。
+  残余风险需要如实保留：不排除存在极低频的产品侧竞态，目前的证据只能支撑"测试假设脆弱"。
+  这条 flake **没有消除**，只做了下面一处结构性修复。
 
 ### 已做的测试侧修复
 

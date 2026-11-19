@@ -16,10 +16,9 @@
  *   - macOS with an unlocked screen and an Aqua GUI session;
  *   - Accessibility for the process that runs the tests;
  *   - Automation consent for System Events on first use;
- *   - no other JustSpeak instance running. This harness starts its own
- *     instance with its own user-data directory and refuses to send a
- *     destructive chord unless that instance is the frontmost process, but a
- *     second instance would still compete for the same global shortcut.
+ *   - no other JustSpeak instance running. The harness starts its own instance
+ *     with its own user-data directory and refuses to send a key unless that
+ *     instance is still frontmost at the moment the AppleScript runs.
  *
  * When a prerequisite is missing the spec FAILS with the reason printed. It
  * never downgrades to a skip: see
@@ -38,9 +37,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   assertRealMachineGrants,
-  frontmostApp,
-  frontmostPid,
-  keystroke
+  keystrokeToPid,
+  type RealKeyResult
 } from './real-machine'
 
 const ENABLED = process.env.JUSTSPEAK_REAL_KEYS === '1'
@@ -90,14 +88,27 @@ async function launchOwnInstance(): Promise<{
   }
 }
 
-/** Never send a chord while some other app — especially another JustSpeak — is in front. */
-async function assertOwnInstanceFrontmost(
-  app: ElectronApplication
+/**
+ * Wait until the test instance owns the keyboard, then send the chord. The
+ * frontmost check happens inside the same AppleScript as the keystroke, so a
+ * focus change cannot redirect it to another application.
+ */
+async function sendWhenFrontmost(
+  app: ElectronApplication,
+  text: string,
+  using: string[]
 ): Promise<void> {
   const pid = await app.evaluate(() => process.pid)
-  await expect
-    .poll(() => frontmostPid(), { timeout: 10_000 })
-    .toBe(pid)
+  const deadline = Date.now() + 10_000
+  let result: RealKeyResult = 'not-frontmost'
+  while (Date.now() < deadline) {
+    result = keystrokeToPid(pid, text, using)
+    if (result === 'ok') return
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  throw new Error(
+    'The test instance never became the frontmost process, so no key was sent. Make sure it is the active window and retry.'
+  )
 }
 
 async function liveHotkey(page: Page): Promise<string> {
@@ -133,23 +144,21 @@ test("Command+' is accepted by globalShortcut and starts a recording", async () 
     // key event: this is the part that could not be tested before.
     await recorder.click()
     await expect(page.getByText(/请按下快捷键/)).toBeVisible()
-    await assertOwnInstanceFrontmost(app)
-    keystroke("'", ['command'])
+    await sendWhenFrontmost(app, "'", ['command'])
     await expect.poll(() => liveHotkey(page), { timeout: 10_000 }).toBe(
       "Command+'"
     )
     await expect(page.getByText(/请按下快捷键/)).toHaveCount(0)
 
     // The same chord now arrives as a global shortcut while the app owns it.
-    await assertOwnInstanceFrontmost(app)
-    keystroke("'", ['command'])
+    await sendWhenFrontmost(app, "'", ['command'])
     await expect.poll(() => appState(page), { timeout: 10_000 }).toBe('recording')
 
-    // Leave the machine idle again.
+    // Leave the machine idle again and let the pipeline finish before closing.
     await page.evaluate(() =>
       (globalThis as unknown as JustSpeakPage).justspeak.toggleRecording()
     )
-    await expect.poll(() => appState(page), { timeout: 15_000 }).not.toBe('recording')
+    await expect.poll(() => appState(page), { timeout: 20_000 }).toBe('idle')
   } finally {
     await app.close().catch(() => {})
     rmSync(userData, { recursive: true, force: true })
@@ -169,8 +178,7 @@ test('Command+Q during capture is reserved, not obeyed', async () => {
     // `src/core/hotkey/capture.ts` lists Command+Q as reserved and the recorder
     // suppresses the native menu so the chord reaches it. If either half were
     // broken, this keystroke would quit the application.
-    await assertOwnInstanceFrontmost(app)
-    keystroke('q', ['command'])
+    await sendWhenFrontmost(app, 'q', ['command'])
 
     await expect(page.locator('#settings-hotkey-message')).toContainText(
       'macOS 占用',
@@ -181,7 +189,6 @@ test('Command+Q during capture is reserved, not obeyed', async () => {
     await page.waitForTimeout(1_500)
     expect(app.process().exitCode).toBeNull()
     await expect(page.locator('.shell')).toBeVisible()
-    expect(frontmostApp()).not.toBe('')
 
     // Leave capture cleanly so the instance can close on its own terms.
     await page.keyboard.press('Escape')

@@ -6,14 +6,21 @@
  * these specs — the shim-based suites prove the decision logic, these prove the
  * macOS side.
  *
- * Two rules the helpers enforce:
+ * Paths and document names are escaped and arrive as `osascript -e` arguments,
+ * so a name containing a quote cannot change the program. The scripts are still
+ * text with values spliced in; the escaping is what keeps that safe.
  *
- * 1. Scripts are passed as `osascript -e` arguments, never assembled by string
- *    interpolation of user or file data, so a path containing quotes cannot
- *    change the program.
- * 2. A missing prerequisite throws with the reason. It is never turned into a
+ * Safety rules the helpers enforce:
+ *
+ * 1. A missing prerequisite throws with the reason. It is never turned into a
  *    skip: a spec that cannot run must fail loudly (see
  *    `openspec/specs/real-machine-verification/spec.md`).
+ * 2. The specs own the only TextEdit instance they touch. `assertTextEditIdle`
+ *    refuses to start when TextEdit is already running, and closing targets the
+ *    documents this run opened by path — never `every document`.
+ * 3. Destructive keystrokes are checked and sent inside one AppleScript, the
+ *    same way `src/core/injection/delete.ts` does it, so a focus change between
+ *    "check" and "send" cannot redirect the key.
  */
 import { spawnSync } from 'node:child_process'
 
@@ -21,6 +28,10 @@ export interface AppleScriptResult {
   status: number
   stdout: string
   stderr: string
+}
+
+function escapeForAppleScript(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 }
 
 export function runAppleScript(script: string): AppleScriptResult {
@@ -89,10 +100,28 @@ export function assertRealMachineGrants(): void {
   }
 }
 
+/**
+ * The specs must never act on a TextEdit the user is using: `open` would reuse
+ * that instance, and closing documents at the end would discard unsaved work.
+ */
+export function assertTextEditIdle(): void {
+  const running = runAppleScript(
+    'tell application "System Events" to return exists (first process whose name is "TextEdit")'
+  )
+  if (running.status !== 0) {
+    throw new Error(`Could not inspect TextEdit: ${running.stderr}`)
+  }
+  if (running.stdout === 'true') {
+    throw new Error(
+      'TextEdit is already running. Quit it (saving anything you need) and re-run: these checks open and close their own documents and must not touch yours.'
+    )
+  }
+}
+
 /** Make `name` the frontmost process; returns true when it got there. */
 export function activateApp(name: string): boolean {
   const result = runAppleScript(
-    `tell application "System Events" to set frontmost of (first process whose name is "${name}") to true`
+    `tell application "System Events" to set frontmost of (first process whose name is "${escapeForAppleScript(name)}") to true`
   )
   return result.status === 0
 }
@@ -108,6 +137,9 @@ export function frontmostApp(): string {
  * PID of the frontmost process. Compare it with the test instance's own PID
  * before sending any destructive chord: a keystroke sent while the user's
  * instance (or any other app) is frontmost would hit that app instead.
+ *
+ * A standalone check is a hint, not a guarantee — use `keystrokeToPid`, which
+ * re-checks inside the same AppleScript that sends the key.
  */
 export function frontmostPid(): number {
   const result = runAppleScript(
@@ -117,60 +149,45 @@ export function frontmostPid(): number {
   return Number.isFinite(pid) ? pid : -1
 }
 
-/** Open a file in TextEdit and wait until the document window exists. */
+/** Open a file in TextEdit and wait until *that* document exists. */
 export function openTextEditDocument(file: string): void {
   const opened = spawnSync('open', ['-a', 'TextEdit', file], { encoding: 'utf8' })
   if (opened.status !== 0) {
     throw new Error(`open -a TextEdit failed: ${opened.stderr}`)
   }
-  const deadline = Date.now() + 10_000
+  const deadline = Date.now() + 15_000
   while (Date.now() < deadline) {
-    const count = runAppleScript(
-      'with timeout of 5 seconds\ntell application "TextEdit" to return count of documents\nend timeout'
+    const exists = runAppleScript(
+      `with timeout of 5 seconds\ntell application "TextEdit" to return exists (first document whose path is "${escapeForAppleScript(file)}")\nend timeout`
     )
-    if (count.status === 0 && Number(count.stdout) > 0) return
+    if (exists.status === 0 && exists.stdout === 'true') return
     spawnSync('sleep', ['0.2'])
   }
-  throw new Error('TextEdit did not open a document within 10s.')
+  throw new Error(`TextEdit did not open ${file} within 15s.`)
 }
 
-/** The text of the Nth (1-based) TextEdit document. */
-export function readTextEditDocument(index = 1): string {
+/** The text of the document backed by this file. */
+export function readTextEditDocument(file: string): string {
   return mustRunAppleScript(
-    `with timeout of 10 seconds\ntell application "TextEdit" to return text of document ${index}\nend timeout`
+    `with timeout of 10 seconds\ntell application "TextEdit" to return text of (first document whose path is "${escapeForAppleScript(file)}")\nend timeout`
   )
 }
 
 /**
- * The text of the document with this name. TextEdit's `document 1` follows
- * window order, which changes as documents are opened and focused, so a test
- * that adds a second document must address documents by name.
+ * Bring this document's window forward, put the caret in its text area and
+ * move to the very end. Undo assumes the caret sits after the inserted text,
+ * so the check has to establish that state explicitly.
  */
-export function readTextEditDocumentNamed(name: string): string {
-  const escaped = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-  return mustRunAppleScript(
-    `with timeout of 10 seconds\ntell application "TextEdit" to return text of document "${escaped}"\nend timeout`
-  )
-}
-
-/**
- * Put the keyboard focus into the first text area of a document and leave the
- * caret at the very end. Undo assumes the caret sits after the inserted text,
- * so the check has to establish that state explicitly. Pass a document name
- * when more than one document is open — `window 1` is whatever was focused
- * last.
- */
-export function focusTextEditCaretAtEnd(documentName?: string): void {
-  const target =
-    documentName === undefined
-      ? 'window 1'
-      : `window "${documentName.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+export function focusTextEditDocument(file: string): void {
   mustRunAppleScript(
-    `tell application "TextEdit" to activate
+    `tell application "TextEdit"
+  set index of (first document whose path is "${escapeForAppleScript(file)}") to 1
+  activate
+end tell
 tell application "System Events"
   tell process "TextEdit"
     set frontmost to true
-    set focused of text area 1 of scroll area 1 of ${target} to true
+    set focused of text area 1 of scroll area 1 of window 1 to true
   end tell
   -- Command+Down moves the caret to the end of the document.
   key code 125 using command down
@@ -178,20 +195,24 @@ end tell`
   )
 }
 
-/** Close every TextEdit document without saving, then quit the app. */
-export function closeTextEdit(): void {
-  runAppleScript(
-    'with timeout of 10 seconds\ntell application "TextEdit" to close every document saving no\nend timeout'
-  )
-  runAppleScript('with timeout of 10 seconds\ntell application "TextEdit" to quit\nend timeout')
+/** Close the documents this run opened — by path, never "every document". */
+export function closeTextEditDocuments(files: string[]): void {
+  for (const file of files) {
+    runAppleScript(
+      `with timeout of 10 seconds
+tell application "TextEdit"
+  if exists (first document whose path is "${escapeForAppleScript(file)}") then close (first document whose path is "${escapeForAppleScript(file)}") saving no
+end tell
+end timeout`
+    )
+  }
 }
 
-/** Close and quit TextEdit only if it is running; never touches other apps. */
-export function quitTextEditIfRunning(): void {
-  const running = runAppleScript(
-    'tell application "System Events" to return exists (first process whose name is "TextEdit")'
+/** Quit TextEdit. Only call this when the spec opened it itself. */
+export function quitTextEdit(): void {
+  runAppleScript(
+    'with timeout of 10 seconds\ntell application "TextEdit" to quit\nend timeout'
   )
-  if (running.stdout === 'true') closeTextEdit()
 }
 
 /** Grapheme clusters, the unit the undo delete counts. */
@@ -201,21 +222,29 @@ export function graphemeCount(text: string): number {
   ).length
 }
 
-/** Send a key chord through the real system keyboard path. */
-export function pressKey(code: number, using: string[] = []): void {
-  const modifiers =
-    using.length === 0 ? '' : ` using {${using.map((name) => `${name} down`).join(', ')}}`
-  mustRunAppleScript(
-    `tell application "System Events" to key code ${code}${modifiers}`
-  )
-}
+export type RealKeyResult = 'ok' | 'not-frontmost'
 
-/** Send a literal keystroke, e.g. `"'"` with Command held. */
-export function keystroke(text: string, using: string[] = []): void {
-  const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+/**
+ * Send a keystroke only if `pid` is still frontmost, checking inside the same
+ * AppleScript that presses the key. A separate check followed by a separate
+ * send leaves a window in which a focus change sends the key elsewhere.
+ */
+export function keystrokeToPid(
+  pid: number,
+  text: string,
+  using: string[] = []
+): RealKeyResult {
   const modifiers =
-    using.length === 0 ? '' : ` using {${using.map((name) => `${name} down`).join(', ')}}`
-  mustRunAppleScript(
-    `tell application "System Events" to keystroke "${escaped}"${modifiers}`
+    using.length === 0
+      ? ''
+      : ` using {${using.map((name) => `${name} down`).join(', ')}}`
+  const result = mustRunAppleScript(
+    `tell application "System Events"
+  set frontPid to unix id of first process whose frontmost is true
+  if frontPid is not ${Math.trunc(pid)} then return "not-frontmost"
+  keystroke "${escapeForAppleScript(text)}"${modifiers}
+  return "ok"
+end tell`
   )
+  return result === 'ok' ? 'ok' : 'not-frontmost'
 }

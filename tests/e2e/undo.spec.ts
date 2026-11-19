@@ -233,22 +233,32 @@ async function allWindowsHidden(app: ElectronApplication): Promise<boolean> {
 /**
  * The result panel is a singleton: `ensureWindow()` reuses the same
  * BrowserWindow, so a second show produces no `window` event. Waiting for the
- * event alone therefore hangs whenever the panel already exists, which is why
- * this checks the live windows first and then waits for a new one.
+ * event alone therefore hangs whenever the panel already exists.
  *
- * It cannot mask a missing panel: callers still assert on the panel's content
- * and visibility afterwards.
+ * Waiting for an *existing* window is not enough either — a hidden panel keeps
+ * its DOM, so a regression where the panel never becomes visible would still
+ * satisfy content assertions. This polls for a visible `panel=1` window, which
+ * preserves what the old code actually guaranteed.
  */
 async function waitForPanel(
   app: ElectronApplication,
   timeout: number
 ): Promise<Page> {
-  const existing = app.windows().find((window) => window.url().includes('panel=1'))
-  if (existing) return existing
-  return app.waitForEvent('window', {
-    predicate: (window) => window.url().includes('panel=1'),
-    timeout
-  })
+  await expect
+    .poll(
+      () =>
+        app.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows().some(
+            (window) =>
+              window.isVisible() && window.webContents.getURL().includes('panel=1')
+          )
+        ),
+      { timeout }
+    )
+    .toBe(true)
+  const panel = app.windows().find((window) => window.url().includes('panel=1'))
+  if (!panel) throw new Error('panel=1 window not found after it became visible')
+  return panel
 }
 
 function waitForCaptureStarted(app: ElectronApplication): Promise<void> {

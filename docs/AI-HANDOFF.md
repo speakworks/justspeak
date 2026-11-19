@@ -30,7 +30,7 @@ openspec list
 | `pnpm typecheck` | 通过 |
 | `pnpm test` | 900 passed / 4 skipped |
 | `pnpm build` | 通过 |
-| `pnpm exec playwright test` | 31 passed / 5 skipped（真机检查默认跳过，见 `docs/REAL-MACHINE-CHECKS.md`） |
+| `pnpm exec playwright test` | 31 passed / 5 skipped（真机检查默认跳过；E2E 偶发红未消除，见 `docs/REAL-MACHINE-CHECKS.md`） |
 | `openspec validate --specs --strict` | 18/18 |
 | `openspec list` | `No active changes found` |
 

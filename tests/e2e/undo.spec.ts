@@ -230,6 +230,27 @@ async function allWindowsHidden(app: ElectronApplication): Promise<boolean> {
   )
 }
 
+/**
+ * The result panel is a singleton: `ensureWindow()` reuses the same
+ * BrowserWindow, so a second show produces no `window` event. Waiting for the
+ * event alone therefore hangs whenever the panel already exists, which is why
+ * this checks the live windows first and then waits for a new one.
+ *
+ * It cannot mask a missing panel: callers still assert on the panel's content
+ * and visibility afterwards.
+ */
+async function waitForPanel(
+  app: ElectronApplication,
+  timeout: number
+): Promise<Page> {
+  const existing = app.windows().find((window) => window.url().includes('panel=1'))
+  if (existing) return existing
+  return app.waitForEvent('window', {
+    predicate: (window) => window.url().includes('panel=1'),
+    timeout
+  })
+}
+
 function waitForCaptureStarted(app: ElectronApplication): Promise<void> {
   return new Promise((resolve, reject) => {
     const stdout = app.process().stdout
@@ -274,7 +295,7 @@ async function stopRecording(
   options: { beforeStop?: () => void; expectPanel?: boolean } = {}
 ): Promise<Page | undefined> {
   const panelPromise = options.expectPanel
-    ? app.waitForEvent('window', { timeout: 15_000 })
+    ? waitForPanel(app, 15_000)
     : undefined
   options.beforeStop?.()
   await page.evaluate(() =>
@@ -422,7 +443,7 @@ test.describe('JustSpeak correction path', () => {
       // The app-level probe still matches; the atomic script sees a different
       // target and must abort without pressing a key.
       writeFileSync(harness.deleteModeFile, 'other')
-      const panelPromise = app.waitForEvent('window', { timeout: 15_000 })
+      const panelPromise = waitForPanel(app, 15_000)
       const result = await page.evaluate(() =>
         (globalThis as unknown as JustSpeakPage).justspeak.undoLastInjection()
       )
@@ -603,7 +624,7 @@ test.describe('JustSpeak correction path', () => {
       // lock and must paste directly instead of re-acquiring it.
       await startRecording(app, page)
       writeFileSync(harness.probeDelayCountFile, '1')
-      const panelPromise = app.waitForEvent('window', { timeout: 10_000 })
+      const panelPromise = waitForPanel(app, 10_000)
       await page.evaluate(() =>
         (globalThis as unknown as JustSpeakPage).justspeak.toggleRecording()
       )
@@ -675,7 +696,7 @@ test.describe('JustSpeak correction path', () => {
         .poll(() => calls(harness).includes('delete-start'), { timeout: 10_000 })
         .toBe(true)
 
-      const panelPromise = app.waitForEvent('window', { timeout: 10_000 })
+      const panelPromise = waitForPanel(app, 10_000)
       await page.evaluate(() =>
         (globalThis as unknown as JustSpeakPage).justspeak.toggleRecording()
       )
@@ -727,7 +748,7 @@ test.describe('JustSpeak correction path', () => {
         .toMatchObject({ available: true })
 
       writeFileSync(harness.deleteModeFile, 'partial')
-      const panelPromise = app.waitForEvent('window', { timeout: 15_000 })
+      const panelPromise = waitForPanel(app, 15_000)
       const first = await page.evaluate(() =>
         (globalThis as unknown as JustSpeakPage).justspeak.undoLastInjection()
       )
@@ -794,7 +815,7 @@ test.describe('JustSpeak correction path', () => {
       // Start the re-say run, then make the paste keystroke fail.
       await startRecording(app, page)
       writeFileSync(harness.pasteFailFile, 'fail')
-      const panelPromise = app.waitForEvent('window', { timeout: 15_000 })
+      const panelPromise = waitForPanel(app, 15_000)
       await page.evaluate(() =>
         (globalThis as unknown as JustSpeakPage).justspeak.toggleRecording()
       )

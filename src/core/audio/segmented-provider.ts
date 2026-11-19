@@ -9,7 +9,8 @@ import type {
   ProviderResult,
   ProviderWarning,
   TranscribeOptions,
-  TranscriptionResult
+  TranscriptionResult,
+  TranscriptSegmentMeta
 } from '../asr/types'
 import type { SegmenterOptions, SpeechSegment } from './segmenter'
 import { SEGMENTED_MAX_SESSION_SAMPLES, segmentPcm } from './segmenter'
@@ -172,6 +173,23 @@ export function splitOversizedSegments(
     }
   }
   return out
+}
+
+/**
+ * The successful utterances a segmented run returns to the user. A one-shot
+ * result and a single-segment run carry no metadata (`undefined`): there is no
+ * segmentation to disclose, and the panel must not invent a line for it.
+ * Sample ranges are 16 kHz, so milliseconds are an exact rounding of samples.
+ */
+export function segmentMetadata(
+  transcripts: readonly SegmentTranscript[]
+): TranscriptSegmentMeta[] | undefined {
+  if (transcripts.length < 2) return undefined
+  return transcripts.map((segment) => ({
+    index: segment.index,
+    startMs: Math.round((segment.startSample / 16000) * 1000),
+    durationMs: Math.round(((segment.endSample - segment.startSample) / 16000) * 1000)
+  }))
 }
 
 export async function transcribeSegments(
@@ -398,6 +416,7 @@ export class SegmentedAsrProvider implements AsrProvider {
     }
 
     const first = run.segments[0]
+    const segments = segmentMetadata(run.segments)
     return {
       ok: true,
       value: {
@@ -407,7 +426,8 @@ export class SegmentedAsrProvider implements AsrProvider {
         modelId: first?.modelId ?? this.id,
         runtimeId: first?.runtimeId ?? this.provider.id,
         warnings,
-        fallbackUsed: false
+        fallbackUsed: false,
+        ...(segments === undefined ? {} : { segments })
       }
     }
   }

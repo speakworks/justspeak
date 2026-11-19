@@ -15,6 +15,7 @@ import type {
   PreferencesPatch,
   PreferencesView,
   ResolvedTheme,
+  SegmentationPreference,
   SelectableAsrProviderId,
   ThemePreference,
   VocabularySavePayload,
@@ -352,6 +353,13 @@ export function App(): React.JSX.Element {
     [applyPreferencePatch]
   )
 
+  const changeSegmentation = useCallback(
+    (preference: SegmentationPreference): void => {
+      void applyPreferencePatch({ segmentation: preference })
+    },
+    [applyPreferencePatch]
+  )
+
   const saveLlmEndpoint = useCallback(
     (baseUrl: string, model: string): void => {
       // Only claim success after the write actually succeeded; the previous
@@ -625,6 +633,7 @@ export function App(): React.JSX.Element {
     onAutostart: changeAutostart,
     autostartBusy,
     onUndoWindow: changeUndoWindow,
+    onSegmentation: changeSegmentation,
     onReload: reloadPreferences,
     onVocabularySave: saveVocabulary,
     onLlmBackend: changeLlmBackend,

@@ -113,8 +113,36 @@ describe('session state machine', () => {
     ])
     expect(harness.transcripts).toHaveLength(1)
     expect(harness.transcripts[0]).toMatchObject({ text: '你好', fake: true, durationMs: 100 })
+    expect(harness.transcripts[0].segments).toBeUndefined()
     expect(harness.pastes).toEqual(['你好'])
     expect(harness.controller.state).toBe('idle')
+  })
+
+  it('carries provider segment metadata into the transcript event', async () => {
+    const segments = [
+      { index: 0, startMs: 0, durationMs: 400 },
+      { index: 1, startMs: 1000, durationMs: 400 }
+    ]
+    const harness = setup({
+      provider: fakeProvider({
+        ok: true,
+        value: {
+          text: '第一段 第二段',
+          language: 'zh',
+          latencyMs: 5,
+          modelId: 'fake',
+          runtimeId: 'fake',
+          warnings: [],
+          segments
+        }
+      })
+    })
+    harness.controller.toggle(true)
+    harness.advance(1000)
+    harness.controller.toggle(true)
+    await harness.controller.handleCaptureStopped(SUMMARY)
+
+    expect(harness.transcripts[0].segments).toEqual(segments)
   })
 
   it('applies the optional refine stage before delivery', async () => {

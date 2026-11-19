@@ -10,6 +10,7 @@
 import { DEFAULT_ACCELERATOR } from '../hotkey/accelerator'
 import { DEFAULT_UNDO_WINDOW_MINUTES } from '../injection/undo'
 import { THEME_LABEL } from '../theme/theme'
+import { SEGMENTATION_LABELS } from './segmentation'
 import {
   LOGIN_ITEM_REQUIRES_APPROVAL_REASON,
   LOGIN_ITEM_UNAVAILABLE_REASON
@@ -18,6 +19,7 @@ import type {
   LoginItemView,
   PreferencesView,
   ProviderSummary,
+  SegmentationView,
   ThemePreference,
   VocabularySummary
 } from '../../shared/ipc'
@@ -274,6 +276,7 @@ export interface SettingsRows {
   hotkey: SettingState
   autostart: SettingState
   undoWindow: SettingState
+  segmentation: SettingState
   vocabulary: SettingState
   provider: SettingState
   llm: SettingState
@@ -289,12 +292,48 @@ export function describeUndoWindow(minutes: number): SettingState {
   }
 }
 
+/**
+ * The 长句听写 row. It always names the *effective* mode, never a stored choice
+ * the running provider has not adopted. A valid env override is an explicit
+ * takeover; an invalid one is a visible, non-blocking fallback.
+ */
+export function describeSegmentation(view: SegmentationView): SettingState {
+  const label = SEGMENTATION_LABELS[view.effective]
+  if (view.source === 'env') {
+    return {
+      status: 'override',
+      statusLabel: '环境变量',
+      detail: `当前生效：${label}。环境变量移除后恢复保存的档位。`
+    }
+  }
+  if (view.envInvalid) {
+    return {
+      status: 'unavailable',
+      statusLabel: '已回退',
+      detail: view.message ?? `JUSTSPEAK_SEGMENTED 的值无效，已回退到「${label}」。`
+    }
+  }
+  if (view.restartRequired) {
+    return {
+      status: 'pending',
+      statusLabel: STATUS_LABEL.pending,
+      detail: `已保存，下次启动生效；当前生效：${label}。`
+    }
+  }
+  return {
+    status: view.preference === 'auto' ? 'default' : 'override',
+    statusLabel: view.preference === 'auto' ? STATUS_LABEL.default : STATUS_LABEL.override,
+    detail: `当前生效：${label}。`
+  }
+}
+
 export function buildSettingsRows(preferences: PreferencesView): SettingsRows {
   return {
     theme: describeTheme(preferences.theme),
     hotkey: describeHotkey(preferences.hotkey, preferences.hotkeyMessage),
     autostart: describeAutostart(preferences.loginItem),
     undoWindow: describeUndoWindow(preferences.undoWindowMinutes),
+    segmentation: describeSegmentation(preferences.segmentation),
     vocabulary: describeVocabulary(preferences.vocabulary),
     provider: describeProvider(preferences.provider),
     llm: describeLlm(preferences.llm)

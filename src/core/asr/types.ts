@@ -23,6 +23,17 @@ export interface ProviderWarning {
   message: string
 }
 
+/**
+ * One successful utterance inside a segmented result. Times are milliseconds
+ * from the start of the capture and are derived from the 16 kHz sample range.
+ */
+export interface TranscriptSegmentMeta {
+  /** Zero-based utterance index, preserving the segmenter's order. */
+  index: number
+  startMs: number
+  durationMs: number
+}
+
 export interface TranscriptionResult {
   text: string
   language?: string
@@ -32,6 +43,12 @@ export interface TranscriptionResult {
   warnings: ProviderWarning[]
   fallbackUsed?: boolean
   fallbackFrom?: string
+  /**
+   * Present only when a segmented path produced two or more successful
+   * segments. Providers that do not segment leave it absent; a segmented run
+   * never fabricates entries for failed segments.
+   */
+  segments?: TranscriptSegmentMeta[]
 }
 
 export type AsrErrorCode =

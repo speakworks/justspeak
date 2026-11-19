@@ -10,7 +10,8 @@ import {
   NO_SPEECH_CODE,
   SEGMENT_FAILURE_CODE,
   createTranscriptionProvider,
-  joinTranscripts
+  joinTranscripts,
+  segmentMetadata
 } from '../src/core/audio/segmented-provider'
 import { SessionController } from '../src/core/session/session-controller'
 import { FakeAsrProvider } from '../src/core/asr/fake-provider'
@@ -110,6 +111,7 @@ describe('segmented transcription', () => {
     expect(calls.map((input) => input.pcm[0])).toEqual([PEAK_A, PEAK_B, PEAK_C])
     expect(result.value.text).toBe('seg-0 seg-1 seg-2')
     expect(result.value.warnings).toEqual([])
+    expect(result.value.segments?.map((segment) => segment.index)).toEqual([0, 1, 2])
   })
 
   it('keeps successful segments when one segment fails and names its index', async () => {
@@ -140,6 +142,9 @@ describe('segmented transcription', () => {
     expect(result.value.warnings).toHaveLength(1)
     expect(result.value.warnings[0].code).toBe(SEGMENT_FAILURE_CODE)
     expect(result.value.warnings[0].message).toContain('第 2 段')
+    // Metadata covers only the successful utterances, in utterance order.
+    expect(result.value.segments?.map((segment) => segment.index)).toEqual([0, 2])
+    expect(result.value.segments).toHaveLength(2)
 
     expect(partialFailures).toHaveLength(1)
     const failure = partialFailures[0] as {
@@ -295,6 +300,112 @@ describe('segmented transcription', () => {
     expect(
       result.value.warnings.filter((warning) => warning.code === 'VOCABULARY_UNSUPPORTED')
     ).toHaveLength(1)
+  })
+})
+
+describe('segment metadata', () => {
+  function twoUtterances(): Int16Array {
+    return signalPcm([
+      { ms: 400, amplitude: SPEECH_A },
+      { ms: 600, amplitude: QUIET },
+      { ms: 400, amplitude: SPEECH_B },
+      { ms: 800, amplitude: QUIET }
+    ])
+  }
+
+  it('reports two segments in order with 16 kHz millisecond ranges', async () => {
+    const { provider } = harness((_input, call) => ok(`seg-${call}`))
+    const segmented = createTranscriptionProvider(provider, 'vad', { segmenter: SEGMENTER })
+
+    const result = await segmented.transcribe(
+      { pcm: twoUtterances(), sampleRate: 16000, channels: 1, durationMs: 2200 },
+      {}
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.segments).toEqual([
+      { index: 0, startMs: 0, durationMs: 400 },
+      { index: 1, startMs: 1000, durationMs: 400 }
+    ])
+  })
+
+  it('omits the field for a single-segment run', async () => {
+    const { provider } = harness(() => ok('one'))
+    const segmented = createTranscriptionProvider(provider, 'vad', { segmenter: SEGMENTER })
+    const pcm = signalPcm([
+      { ms: 400, amplitude: SPEECH_A },
+      { ms: 600, amplitude: QUIET }
+    ])
+
+    const result = await segmented.transcribe(
+      { pcm, sampleRate: 16000, channels: 1, durationMs: 1000 },
+      {}
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.segments).toBeUndefined()
+  })
+
+  it('omits the field when no speech is detected', async () => {
+    const { provider } = harness(() => ok('never'))
+    const segmented = createTranscriptionProvider(provider, 'vad', { segmenter: SEGMENTER })
+    const pcm = signalPcm([{ ms: 600, amplitude: QUIET }])
+
+    const result = await segmented.transcribe(
+      { pcm, sampleRate: 16000, channels: 1, durationMs: 600 },
+      {}
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.segments).toBeUndefined()
+  })
+
+  it('maps a zero-length sample range to a zero duration', () => {
+    expect(
+      segmentMetadata([
+        {
+          index: 0,
+          startSample: 0,
+          endSample: 0,
+          text: 'a',
+          modelId: 'm',
+          runtimeId: 'r',
+          warnings: []
+        },
+        {
+          index: 1,
+          startSample: 16000,
+          endSample: 16000,
+          text: 'b',
+          modelId: 'm',
+          runtimeId: 'r',
+          warnings: []
+        }
+      ])
+    ).toEqual([
+      { index: 0, startMs: 0, durationMs: 0 },
+      { index: 1, startMs: 1000, durationMs: 0 }
+    ])
+  })
+
+  it('returns undefined below two segments', () => {
+    expect(segmentMetadata([])).toBeUndefined()
+    expect(
+      segmentMetadata([
+        {
+          index: 0,
+          startSample: 0,
+          endSample: 1600,
+          text: 'a',
+          modelId: 'm',
+          runtimeId: 'r',
+          warnings: []
+        }
+      ])
+    ).toBeUndefined()
   })
 })
 

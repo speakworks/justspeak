@@ -47,7 +47,13 @@ const PREFERENCES: PreferencesView = {
   },
   loginItem: { available: true, openAtLogin: true, status: 'enabled' },
   updateAutoCheck: false,
-  undoWindowMinutes: 5
+  undoWindowMinutes: 5,
+  segmentation: {
+    preference: 'auto',
+    effective: 'auto',
+    source: 'preference',
+    restartRequired: false
+  }
 }
 
 describe('diagnostic redaction', () => {

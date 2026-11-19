@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { panelHint } from '../../core/panel/hint'
+import { formatSegmentLine } from '../../core/panel/segments'
 import type { ResultPanelPayload } from '../../shared/ipc'
 
 /**
@@ -83,6 +84,7 @@ export function ResultPanel(): React.JSX.Element {
   }
 
   const text = draft
+  const segmentLine = formatSegmentLine(payload?.segments)
   return (
     <div className="result-panel" role="dialog" aria-label="识别结果">
       <div className="result-panel-head">
@@ -99,6 +101,7 @@ export function ResultPanel(): React.JSX.Element {
         </button>
       </div>
       {payload?.notice ? <p className="result-panel-notice">{payload.notice}</p> : null}
+      {segmentLine ? <p className="result-panel-segments">{segmentLine}</p> : null}
       {feedback ? (
         <p className="result-panel-notice" role="status" aria-live="polite">
           {feedback}

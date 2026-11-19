@@ -10,11 +10,17 @@ import {
   type SettingState,
   type SettingsRows
 } from '../../core/preferences/view'
+import {
+  SEGMENTATION_DESCRIPTIONS,
+  SEGMENTATION_LABELS,
+  SEGMENTATION_PREFERENCES
+} from '../../core/preferences/segmentation'
 import { THEME_LABEL, THEME_PREFERENCES } from '../../core/theme/theme'
 import type {
   AsrProviderSelection,
   LlmBackend,
   PreferencesView,
+  SegmentationPreference,
   SelectableAsrProviderId,
   ThemePreference,
   VocabularySavePayload,
@@ -41,6 +47,8 @@ export interface SettingsPanelProps {
   autostartBusy: boolean
   /** Writes the 撤销时间窗 in whole minutes (1–60). */
   onUndoWindow: (minutes: number) => void
+  /** Writes the 长句听写 choice; main applies it immediately when idle. */
+  onSegmentation: (preference: SegmentationPreference) => void
   onReload: () => void
   /** Saves the three vocabulary lists; main normalises, writes, and reads back. */
   onVocabularySave: (payload: VocabularySavePayload) => Promise<VocabularySaveResult>
@@ -108,6 +116,7 @@ export function SettingsPanel({
   onAutostart,
   autostartBusy,
   onUndoWindow,
+  onSegmentation,
   onReload,
   onVocabularySave,
   onLlmBackend,
@@ -327,6 +336,16 @@ export function SettingsPanel({
       MAX_VOCABULARY_TERMS
     ).complete
 
+  const segmentation = preferences?.segmentation
+  // A valid env override owns the displayed gear: the radio must never show a
+  // stored choice the running provider did not adopt.
+  const segmentationLocked = segmentation?.source === 'env'
+  const selectedSegmentation = segmentation
+    ? segmentationLocked
+      ? segmentation.effective
+      : segmentation.preference
+    : undefined
+
   return (
     <section
       className="card settings"
@@ -455,6 +474,48 @@ export function SettingsPanel({
                 {undoWindowError}
               </p>
             ) : null}
+          </div>
+
+          <div className="settings-row">
+            <div className="settings-row-head">
+              <span className="settings-label">长句听写</span>
+              <StatusChip state={rows.segmentation} />
+            </div>
+            <div
+              className="segmentation-options"
+              role="radiogroup"
+              aria-label="长句听写"
+            >
+              {SEGMENTATION_PREFERENCES.map((value) => (
+                <label
+                  key={value}
+                  className={
+                    value === selectedSegmentation
+                      ? 'segmentation-option selected'
+                      : 'segmentation-option'
+                  }
+                >
+                  <input
+                    type="radio"
+                    name="segmentation"
+                    value={value}
+                    checked={value === selectedSegmentation}
+                    disabled={segmentationLocked}
+                    onChange={() => onSegmentation(value)}
+                  />
+                  <span className="segmentation-label">{SEGMENTATION_LABELS[value]}</span>
+                  <span className="segmentation-desc">
+                    {SEGMENTATION_DESCRIPTIONS[value]}
+                  </span>
+                </label>
+              ))}
+            </div>
+            {segmentation?.message ? (
+              <p className="settings-detail" role="status" aria-live="polite">
+                {segmentation.message}
+              </p>
+            ) : null}
+            <p className="settings-detail">{rows.segmentation.detail}</p>
           </div>
           </>
           )}

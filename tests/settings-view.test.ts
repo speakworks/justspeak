@@ -15,6 +15,7 @@ import {
   PROVIDER_FAKE_REASON,
   describeTheme,
   describeUndoWindow,
+  describeSegmentation,
   describeStarterLoadOverflow,
   describeVocabulary
 } from '../src/core/preferences/view'
@@ -58,7 +59,13 @@ const PREFERENCES: PreferencesView = {
   },
   loginItem: { available: true, openAtLogin: true, status: 'enabled' },
   updateAutoCheck: false,
-  undoWindowMinutes: 5
+  undoWindowMinutes: 5,
+  segmentation: {
+    preference: 'auto',
+    effective: 'auto',
+    source: 'preference',
+    restartRequired: false
+  }
 }
 
 describe('llm state', () => {
@@ -348,6 +355,73 @@ describe('undo window state', () => {
   })
 })
 
+describe('segmentation state', () => {
+  it('labels auto as the default and names the effective mode', () => {
+    expect(
+      describeSegmentation({
+        preference: 'auto',
+        effective: 'auto',
+        source: 'preference',
+        restartRequired: false
+      })
+    ).toMatchObject({ status: 'default', statusLabel: '默认', detail: '当前生效：自动（超限才分段）。' })
+  })
+
+  it('labels a saved vad choice as an override', () => {
+    expect(
+      describeSegmentation({
+        preference: 'vad',
+        effective: 'vad',
+        source: 'preference',
+        restartRequired: false
+      })
+    ).toMatchObject({ status: 'override', statusLabel: '已修改' })
+  })
+
+  it('reports an env takeover as such and names the env mode as effective', () => {
+    const state = describeSegmentation({
+      preference: 'auto',
+      effective: 'vad',
+      source: 'env',
+      envValue: 'vad',
+      message: '当前由环境变量接管（JUSTSPEAK_SEGMENTED=vad）',
+      restartRequired: false
+    })
+    expect(state.status).toBe('override')
+    expect(state.statusLabel).toBe('环境变量')
+    expect(state.detail).toContain('按静音分段')
+  })
+
+  it('surfaces the exact fallback sentence when the env value is invalid', () => {
+    const message =
+      'JUSTSPEAK_SEGMENTED 的值无效（loud），已回退到设置中的「整段不分」。'
+    expect(
+      describeSegmentation({
+        preference: 'single',
+        effective: 'single',
+        source: 'preference',
+        envValue: 'loud',
+        envInvalid: true,
+        message,
+        restartRequired: false
+      })
+    ).toMatchObject({ status: 'unavailable', statusLabel: '已回退', detail: message })
+  })
+
+  it('says a deferred save applies next launch and names what is running now', () => {
+    const state = describeSegmentation({
+      preference: 'vad',
+      effective: 'auto',
+      source: 'preference',
+      restartRequired: true
+    })
+    expect(state.status).toBe('pending')
+    expect(state.statusLabel).toBe('未生效')
+    expect(state.detail).toContain('下次启动生效')
+    expect(state.detail).toContain('自动（超限才分段）')
+  })
+})
+
 describe('settings rows', () => {
   it('composes every row from the one preferences view', () => {
     const rows = buildSettingsRows({
@@ -361,6 +435,7 @@ describe('settings rows', () => {
       'hotkey',
       'autostart',
       'undoWindow',
+      'segmentation',
       'vocabulary',
       'provider',
       'llm'
@@ -369,6 +444,7 @@ describe('settings rows', () => {
     expect(rows.hotkey.status).toBe('unavailable')
     expect(rows.autostart.status).toBe('default')
     expect(rows.undoWindow.status).toBe('default')
+    expect(rows.segmentation.status).toBe('default')
     expect(rows.vocabulary.status).toBe('default')
     expect(rows.provider.status).toBe('unavailable')
     expect(rows.llm.status).toBe('default')

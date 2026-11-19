@@ -213,7 +213,9 @@ export class SessionController {
         durationMs: summary.durationMs,
         // A backwards clock must not produce a negative latency: the history
         // reader rejects negative numbers and would drop the whole row.
-        latencyMs: Math.max(0, (this.deps.now ?? Date.now)() - startedAt)
+        latencyMs: Math.max(0, (this.deps.now ?? Date.now)() - startedAt),
+        // Forwarded from the provider; absent for the one-shot path.
+        ...(result.value.segments === undefined ? {} : { segments: result.value.segments })
       }
       this.deps.sendTranscript(event)
 

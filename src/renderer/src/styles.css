@@ -704,6 +704,48 @@ textarea {
   color: var(--accent-ink);
 }
 
+.segmentation-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.segmentation-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.segmentation-option:hover {
+  border-color: var(--accent-line);
+}
+
+.segmentation-option.selected {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.segmentation-option input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.segmentation-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.segmentation-desc {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
 .hotkey-apply:disabled {
   opacity: 0.55;
   cursor: default;
@@ -1109,6 +1151,14 @@ html[data-panel='1'] #root {
   color: var(--muted);
   font-size: 11.5px;
   line-height: 1.5;
+}
+
+.result-panel-segments {
+  flex: none;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .result-panel-foot {

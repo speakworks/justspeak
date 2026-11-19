@@ -10,6 +10,10 @@
 import { parseAccelerator } from '../hotkey/accelerator'
 import { DEFAULT_UNDO_WINDOW_MINUTES, isValidUndoWindowMinutes } from '../injection/undo'
 import { isThemePreference } from '../theme/theme'
+import {
+  isSegmentationPreference,
+  type SegmentationPreference
+} from './segmentation'
 import type { LlmBackend, ThemePreference } from '../../shared/ipc'
 
 /** Everything this module knows how to read from `preferences.json`. */
@@ -30,6 +34,8 @@ export interface StoredPreferences {
   launchAtLogin: boolean | undefined
   /** How long an insertion stays undoable; 5 minutes unless changed. */
   undoWindowMinutes: number
+  /** 长句听写 mode; `auto` unless the user chose otherwise. */
+  segmentation: SegmentationPreference
 }
 
 /** The validated subset a write may apply. */
@@ -43,6 +49,7 @@ export interface PreferenceUpdate {
   updateLastCheckAtMs?: number
   launchAtLogin?: boolean
   undoWindowMinutes?: number
+  segmentation?: SegmentationPreference
 }
 
 export function parseLlmBackend(value: unknown): LlmBackend {
@@ -84,7 +91,8 @@ const WRITABLE_KEYS = new Set([
   'updateAutoCheck',
   'updateLastCheckAtMs',
   'launchAtLogin',
-  'undoWindowMinutes'
+  'undoWindowMinutes',
+  'segmentation'
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -204,6 +212,17 @@ export function mergePreferences(existing: unknown, patch: unknown): MergeResult
       rejected.push({
         key: 'undoWindowMinutes',
         reason: '撤销时间窗必须是 1 到 60 之间的整数分钟。'
+      })
+    }
+  }
+
+  if ('segmentation' in patch) {
+    if (isSegmentationPreference(patch.segmentation)) {
+      accepted.segmentation = patch.segmentation
+    } else {
+      rejected.push({
+        key: 'segmentation',
+        reason: '长句听写档位无效，只接受 auto、vad 或 single。'
       })
     }
   }

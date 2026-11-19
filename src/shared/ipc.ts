@@ -1,4 +1,8 @@
-import type { AsrCapabilities } from '../core/asr/types'
+import type { AsrCapabilities, TranscriptSegmentMeta } from '../core/asr/types'
+import type { SegmentationPreference } from '../core/preferences/segmentation'
+
+export type { SegmentationPreference } from '../core/preferences/segmentation'
+export type { TranscriptSegmentMeta } from '../core/asr/types'
 
 export type AppState = 'idle' | 'recording' | 'transcribing' | 'pasting' | 'error'
 
@@ -72,6 +76,27 @@ export interface HotkeyCaptureEndResult {
 
 /** `system` follows macOS appearance; `light` / `dark` pin it. */
 export type ThemePreference = 'system' | 'light' | 'dark'
+
+/**
+ * The 长句听写 row. These are raw values, not copy: the pure presentation rules
+ * regenerate the sentence from the *current* preference, so a deferred save
+ * cannot leave a stale mode name behind. `effective` is the mode the live
+ * provider was built with; `source` says whether a valid
+ * `JUSTSPEAK_SEGMENTED` overrode the stored preference.
+ */
+export interface SegmentationView {
+  preference: SegmentationPreference
+  effective: SegmentationPreference
+  source: 'env' | 'preference'
+  /** Raw env value when JUSTSPEAK_SEGMENTED was set and non-empty. */
+  envValue?: string
+  /** True when the env value was rejected and the preference was used. */
+  envInvalid?: boolean
+  /** False until a provider is live, so no mode may be claimed as effective. */
+  providerReady: boolean
+  /** The saved preference has not reached the running provider yet. */
+  restartRequired: boolean
+}
 
 /** What the renderer should paint after resolving `system` against the OS. */
 export type ResolvedTheme = 'light' | 'dark'
@@ -254,6 +279,8 @@ export interface PreferencesView {
   updateAutoCheck: boolean
   /** How long an insertion stays undoable, in minutes (`5` default). */
   undoWindowMinutes: number
+  /** The 长句听写 mode and whether an env value or restart is in play. */
+  segmentation: SegmentationView
 }
 
 /** `systemPreferences.getMediaAccessStatus` on macOS. */
@@ -281,6 +308,8 @@ export interface PreferencesPatch {
   launchAtLogin?: boolean
   /** How long an insertion stays undoable, in whole minutes (1–60). */
   undoWindowMinutes?: number
+  /** The 长句听写 choice; valid values are auto, vad, and single. */
+  segmentation?: SegmentationPreference
 }
 
 export interface PreferencesSetResult {
@@ -308,6 +337,8 @@ export interface TranscriptEvent {
   latencyMs: number
   /** Post-processing rule ids that changed the raw ASR text, in order. */
   applied?: string[]
+  /** Successful utterance metadata; absent unless a segmented run produced 2+. */
+  segments?: TranscriptSegmentMeta[]
 }
 
 /** What happened to a finished transcript after it was recognised. */
@@ -355,6 +386,8 @@ export interface ResultPanelPayload {
   title?: string
   /** Optional one-line explanation above the text. */
   notice?: string
+  /** Successful utterance metadata; the panel shows one line when present. */
+  segments?: TranscriptSegmentMeta[]
 }
 
 /** The undo slot as the history pane may see it (OpenSpec `injection-undo`). */

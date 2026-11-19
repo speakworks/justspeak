@@ -114,6 +114,7 @@ import type {
   SelectableAsrProviderId,
   ThemePreference,
   TranscriptEvent,
+  TranscriptSegmentMeta,
   ReinsertResult,
   UndoResult,
   UndoStateView,
@@ -134,8 +135,12 @@ import { buildProvider } from './asr/providers'
 import { downloadFailureHint, runtimeMissingHint } from './asr/download-hint'
 import {
   parseSegmentationConfig,
-  type SegmentationMode
+  resolveSegmentationMode,
+  shouldRebuildForSegmentation,
+  type SegmentationMode,
+  type SegmentationResolution
 } from './asr/segmentation-mode'
+import type { SegmentationPreference } from '../core/preferences/segmentation'
 import { createFocusTargetProbe } from './focus-probe'
 import { ElectronGlobalShortcutSource } from './hotkey-source'
 import { collectCrashDumps } from './diagnostics/crash-dumps'
@@ -164,7 +169,8 @@ import {
   scheduleResultPanelHide,
   setResultPanelTarget,
   showResultPanel,
-  suspendResultPanelEscape
+  suspendResultPanelEscape,
+  type ResultPanelShowOptions
 } from './result-panel'
 import { isTrustedSender } from './ipc-sender'
 import { createTray, destroyTray, refreshTray } from './tray'
@@ -205,6 +211,12 @@ let sessionMode: AsrMode = DEFAULT_ASR_MODE
 let activeProvider: AsrProvider | null = null
 let providerError: string | undefined
 let initializing = false
+/**
+ * True once a provider build has completed with a usable session. Until then
+ * the saved 长句听写 preference must not be reported as "applies next launch":
+ * the first build simply has not run yet.
+ */
+let providerInitialized = false
 let pcmBuffer = new PcmBuffer()
 let activeModelInfo: ModelInfo | undefined
 let themePreference: ThemePreference = 'system'
@@ -281,8 +293,17 @@ let postprocessOptions: PostprocessOptions = {}
 let providerPreference: ProviderPreferenceStore
 /** Raw persisted value; validation happens in `resolveAsrMode`. */
 let preferredProvider: string | undefined
-let segmentationMode: SegmentationMode = 'single'
+/** The stored 长句听写 choice; the env override is resolved separately. */
+let segmentationPreference: SegmentationPreference = 'auto'
+let segmentationMode: SegmentationMode = 'auto'
 let segmenterOptions: SegmenterOptions | undefined
+/** How the last successful provider build resolved the env/preference pair. */
+let segmentationResolution: SegmentationResolution = {
+  effective: 'auto',
+  source: 'preference'
+}
+/** The in-flight transcript's segment metadata, shown on the copy panel. */
+let pendingTranscriptSegments: TranscriptSegmentMeta[] | undefined
 /**
  * A partial segmented transcript is returned as provider success (the frozen
  * provider contract cannot carry text and an error together). Main attaches
@@ -323,6 +344,23 @@ const undoLock = new UndoLock()
 const lockedPaste = createLockedPaste(undoLock, pasteText)
 
 /**
+ * The copy panel for a fresh transcript. Every fallback path uses this so the
+ * run's segment metadata can never be dropped just because a paste was
+ * refused.
+ */
+function showTranscriptPanel(
+  text: string,
+  options: ResultPanelShowOptions = {}
+): void {
+  showResultPanel(text, effectiveTheme(), {
+    ...options,
+    ...(pendingTranscriptSegments === undefined
+      ? {}
+      : { segments: pendingTranscriptSegments })
+  })
+}
+
+/**
  * The delivery-port paste. A lock-busy refusal must not hide the text: write
  * it to the clipboard and show the result panel before re-throwing, so the
  * session's error path is honest and the words remain visible and copyable.
@@ -333,7 +371,7 @@ async function pasteWithVisibility(text: string): Promise<void> {
   } catch (error) {
     if (isPasteLockBusyError(error)) {
       clipboard.writeText(text)
-      showResultPanel(text, effectiveTheme(), {
+      showTranscriptPanel(text, {
         title: '撤销正在进行，未插入',
         notice: PASTE_LOCK_BUSY_NOTICE
       })
@@ -413,6 +451,9 @@ let transcriptEmittedForOverlay = false
 
 function sendTranscript(event: TranscriptEvent): void {
   if (event.text.trim() !== '') transcriptEmittedForOverlay = true
+  // The copy panel is shown from the delivery ports, which only receive text;
+  // retain this run's metadata so the panel can disclose its segments.
+  pendingTranscriptSegments = event.segments
   mainWindow?.webContents.send('transcript', event)
 }
 
@@ -482,7 +523,7 @@ function deliveryPorts(): DeliveryPorts {
     probeTarget: probeFocusTarget,
     insert: (out) => mainWindow?.webContents.send('transcript:insert', out),
     paste: pasteWithVisibility,
-    showPanel: (out) => showResultPanel(out, effectiveTheme())
+    showPanel: (out) => showTranscriptPanel(out)
   }
 }
 
@@ -941,7 +982,25 @@ async function readPreferencesView(loginItemNotice?: string): Promise<Preference
     // The OS owns this value; `read` never throws.
     loginItem: loginItemView,
     updateAutoCheck: stored.updateAutoCheck,
-    undoWindowMinutes: stored.undoWindowMinutes
+    undoWindowMinutes: stored.undoWindowMinutes,
+    segmentation: {
+      preference: stored.segmentation,
+      effective: segmentationMode,
+      source: segmentationResolution.source,
+      ...(segmentationResolution.envValue === undefined
+        ? {}
+        : { envValue: segmentationResolution.envValue }),
+      ...(segmentationResolution.envInvalid ? { envInvalid: true } : {}),
+      // A mode can only be named as effective while a provider is live.
+      providerReady: activeProvider !== null && providerError === undefined && !initializing,
+      // A busy pipeline defers the rebuild; the saved choice then applies on
+      // the next provider build (a provider switch, retry, or launch). Before
+      // the first build has finished there is nothing to compare against.
+      restartRequired:
+        providerInitialized &&
+        segmentationResolution.source === 'preference' &&
+        stored.segmentation !== segmentationMode
+    }
   }
 }
 
@@ -1216,6 +1275,7 @@ async function disposeActiveProvider(): Promise<void> {
 async function initializeProvider(): Promise<void> {
   if (initializing) return
   initializing = true
+  providerInitialized = false
   providerError = undefined
   activeModelInfo = undefined
   pendingSegmentFailure = undefined
@@ -1234,10 +1294,10 @@ async function initializeProvider(): Promise<void> {
   }
 
 
-  // Experimental segmentation knobs fail closed: an invalid value must not
-  // silently fall back to the single-shot path, or the user would believe
-  // segmentation ran when it did not.
-  const segmentation = parseSegmentationConfig(process.env)
+  // Experimental segmentation knobs fail closed on a bad *knob*, but an
+  // invalid JUSTSPEAK_SEGMENTED value now falls back to the saved preference
+  // (with a visible notice) instead of making ASR unusable.
+  const segmentation = parseSegmentationConfig(process.env, segmentationPreference)
   if (!segmentation.ok) {
     await disposeActiveProvider()
     session = makeSession(new UnavailableAsrProvider(), false)
@@ -1247,6 +1307,7 @@ async function initializeProvider(): Promise<void> {
   }
   segmentationMode = segmentation.config.mode
   segmenterOptions = segmentation.config.segmenter
+  segmentationResolution = segmentation.resolution
 
   const appRoot = app.getAppPath()
   const built = buildProvider({
@@ -1279,6 +1340,7 @@ async function initializeProvider(): Promise<void> {
     activeProvider = built.provider
     session = makeSession(built.provider, true)
     initializing = false
+    providerInitialized = true
     sendState('idle', 'FAKE ASR（测试模式）')
     return
   }
@@ -1369,6 +1431,7 @@ async function initializeProvider(): Promise<void> {
     activeModelInfo = modelInfoFor(model, provider)
     session = makeSession(provider, false)
     initializing = false
+    providerInitialized = true
     sendState('idle', `模型就绪：${model.name} · ${model.license}`)
   } catch (error) {
     session = makeSession(new UnavailableAsrProvider(), false)
@@ -1450,6 +1513,7 @@ function toggleRecording(): void {
       ? lastInjection
       : undefined
     pendingSegmentFailure = undefined
+    pendingTranscriptSegments = undefined
     historyAudio = undefined
     hideResultPanel()
     pcmBuffer.begin()
@@ -1874,6 +1938,7 @@ app.whenReady().then(async () => {
   const preferences = await themeStore.loadPreferences()
   themePreference = preferences.theme
   undoWindowMinutes = preferences.undoWindowMinutes
+  segmentationPreference = preferences.segmentation
   loginItem = createLoginItemController()
   try {
     const seeded = await seedAutostartOnFirstRun(preferences.launchAtLogin, {
@@ -2119,6 +2184,7 @@ app.whenReady().then(async () => {
           llmBaseUrl?: string
           llmModel?: string
           undoWindowMinutes?: number
+          segmentation?: SegmentationPreference
         } = {}
         if (plan.update.theme !== undefined) update.theme = plan.update.theme
         if (hotkeyResult?.ok) update.hotkey = hotkeyResult.accelerator
@@ -2127,6 +2193,9 @@ app.whenReady().then(async () => {
         if (plan.update.llmModel !== undefined) update.llmModel = plan.update.llmModel
         if (plan.update.undoWindowMinutes !== undefined) {
           update.undoWindowMinutes = plan.update.undoWindowMinutes
+        }
+        if (plan.update.segmentation !== undefined) {
+          update.segmentation = plan.update.segmentation
         }
         if (Object.keys(update).length > 0) {
           try {
@@ -2160,11 +2229,33 @@ app.whenReady().then(async () => {
                 refreshApplicationMenu()
                 refreshTray()
               }
+              if (update.segmentation !== undefined) {
+                // Keep the in-memory preference current even when the rebuild
+                // below has to be deferred; the next build reads it.
+                segmentationPreference = update.segmentation
+              }
             }
           } catch (error) {
             ok = false
             message = `保存设置失败：${error instanceof Error ? error.message : String(error)}`
           }
+        }
+      }
+
+      // Apply the 长句听写 choice through the existing provider-build path when
+      // it is safe. A busy pipeline or an env takeover defers it; the view then
+      // reports `restartRequired` and the panel says it applies next launch.
+      if (ok && plan.update.segmentation !== undefined) {
+        const resolved = resolveSegmentationMode(process.env, plan.update.segmentation)
+        if (
+          shouldRebuildForSegmentation({
+            resolved,
+            currentMode: segmentationMode,
+            busy: pipelineBusy(),
+            initializing
+          })
+        ) {
+          await runProviderInitialization()
         }
       }
 

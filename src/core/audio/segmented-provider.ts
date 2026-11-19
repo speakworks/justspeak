@@ -9,10 +9,12 @@ import type {
   ProviderResult,
   ProviderWarning,
   TranscribeOptions,
-  TranscriptionResult
+  TranscriptionResult,
+  TranscriptSegmentMeta
 } from '../asr/types'
 import type { SegmenterOptions, SpeechSegment } from './segmenter'
 import { SEGMENTED_MAX_SESSION_SAMPLES, segmentPcm } from './segmenter'
+import { PCM_SAMPLE_RATE } from '../asr/wav'
 
 export const SEGMENT_FAILURE_CODE = 'SEGMENT_FAILED'
 export const NO_SPEECH_CODE = 'NO_SPEECH'
@@ -29,8 +31,10 @@ const SEGMENT_RETRYABLE_CODES: ReadonlySet<AsrErrorCode> = new Set<AsrErrorCode>
 ])
 
 export interface SegmentTranscript {
-  /** Zero-based utterance index; user-facing messages add one. */
+  /** Zero-based provider-call index; failure messages add one. */
   index: number
+  /** Zero-based original VAD utterance index, preserved across splitting. */
+  utteranceIndex: number
   startSample: number
   endSample: number
   text: string
@@ -138,6 +142,16 @@ async function transcribeOneSegment(
  * the caller can decide whether to surface the partial text.
  */
 /**
+ * One provider call's chunk. A continuous utterance above the provider's
+ * per-call ceiling is cut into consecutive chunks, so `utteranceIndex` is the
+ * only link back to the original VAD utterance.
+ */
+export interface ProviderChunk extends SpeechSegment {
+  /** Zero-based original VAD utterance index, preserved across splitting. */
+  utteranceIndex: number
+}
+
+/**
  * Split segments the provider cannot accept in one call.
  *
  * The segmenter closes regions on silence, so a single continuous utterance
@@ -148,13 +162,15 @@ async function transcribeOneSegment(
 export function splitOversizedSegments(
   segments: SpeechSegment[],
   maxSamples: number
-): SpeechSegment[] {
-  if (maxSamples <= 0) return segments
-  const out: SpeechSegment[] = []
+): ProviderChunk[] {
+  if (maxSamples <= 0) {
+    return segments.map((segment) => ({ ...segment, utteranceIndex: segment.index }))
+  }
+  const out: ProviderChunk[] = []
   for (const segment of segments) {
     const length = segment.endSample - segment.startSample
     if (length <= maxSamples) {
-      out.push({ ...segment, index: out.length })
+      out.push({ ...segment, index: out.length, utteranceIndex: segment.index })
       continue
     }
     for (let start = segment.startSample; start < segment.endSample; start += maxSamples) {
@@ -165,6 +181,7 @@ export function splitOversizedSegments(
       out.push({
         ...segment,
         index: out.length,
+        utteranceIndex: segment.index,
         startSample: start,
         endSample: end,
         pcm: segment.pcm.slice(offset, offset + (end - start))
@@ -174,9 +191,42 @@ export function splitOversizedSegments(
   return out
 }
 
+/**
+ * The successful utterances a segmented run returns to the user, aggregated by
+ * the segmenter's original VAD utterance — not by the provider's internal
+ * chunks. A single continuous utterance split for a 30-second provider is one
+ * entry whose duration is the sum of its successful chunks; failed chunks add
+ * no duration. A one-shot result and a run that made fewer than two successful
+ * provider calls carry no metadata (`undefined`): there was no segmentation to
+ * disclose, and the panel must not invent a line for it.
+ */
+export function segmentMetadata(
+  transcripts: readonly SegmentTranscript[]
+): TranscriptSegmentMeta[] | undefined {
+  if (transcripts.length < 2) return undefined
+  const byUtterance = new Map<number, { startSample: number; samples: number }>()
+  for (const chunk of transcripts) {
+    const length = chunk.endSample - chunk.startSample
+    const existing = byUtterance.get(chunk.utteranceIndex)
+    if (existing) {
+      existing.samples += length
+    } else {
+      // Chunks arrive in order, so the first one is the utterance's start.
+      byUtterance.set(chunk.utteranceIndex, { startSample: chunk.startSample, samples: length })
+    }
+  }
+  return [...byUtterance.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([index, aggregate]) => ({
+      index,
+      startMs: Math.round((aggregate.startSample / PCM_SAMPLE_RATE) * 1000),
+      durationMs: Math.round((aggregate.samples / PCM_SAMPLE_RATE) * 1000)
+    }))
+}
+
 export async function transcribeSegments(
   provider: AsrProvider,
-  segments: SpeechSegment[],
+  segments: readonly ProviderChunk[],
   options: TranscribeOptions = {}
 ): Promise<SegmentedRunResult> {
   const transcripts: SegmentTranscript[] = []
@@ -187,6 +237,7 @@ export async function transcribeSegments(
     if (result.ok) {
       transcripts.push({
         index: segment.index,
+        utteranceIndex: segment.utteranceIndex,
         startSample: segment.startSample,
         endSample: segment.endSample,
         text: result.value.text,
@@ -398,6 +449,7 @@ export class SegmentedAsrProvider implements AsrProvider {
     }
 
     const first = run.segments[0]
+    const segments = segmentMetadata(run.segments)
     return {
       ok: true,
       value: {
@@ -407,7 +459,8 @@ export class SegmentedAsrProvider implements AsrProvider {
         modelId: first?.modelId ?? this.id,
         runtimeId: first?.runtimeId ?? this.provider.id,
         warnings,
-        fallbackUsed: false
+        fallbackUsed: false,
+        ...(segments === undefined ? {} : { segments })
       }
     }
   }

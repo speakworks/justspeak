@@ -11,6 +11,7 @@ import {
   type MergeResult,
   type StoredPreferences
 } from '../core/preferences/merge'
+import { parseSegmentationPreference } from '../core/preferences/segmentation'
 import { parseThemePreference } from '../core/theme/theme'
 import type { ThemePreference } from '../shared/ipc'
 
@@ -68,7 +69,8 @@ export class ThemeStore {
       // built-in autostart default exactly once.
       launchAtLogin:
         typeof record.launchAtLogin === 'boolean' ? record.launchAtLogin : undefined,
-      undoWindowMinutes: parseUndoWindowMinutes(record.undoWindowMinutes)
+      undoWindowMinutes: parseUndoWindowMinutes(record.undoWindowMinutes),
+      segmentation: parseSegmentationPreference(record.segmentation)
     }
   }
 

@@ -10,7 +10,8 @@ import {
   NO_SPEECH_CODE,
   SEGMENT_FAILURE_CODE,
   createTranscriptionProvider,
-  joinTranscripts
+  joinTranscripts,
+  segmentMetadata
 } from '../src/core/audio/segmented-provider'
 import { SessionController } from '../src/core/session/session-controller'
 import { FakeAsrProvider } from '../src/core/asr/fake-provider'
@@ -110,6 +111,7 @@ describe('segmented transcription', () => {
     expect(calls.map((input) => input.pcm[0])).toEqual([PEAK_A, PEAK_B, PEAK_C])
     expect(result.value.text).toBe('seg-0 seg-1 seg-2')
     expect(result.value.warnings).toEqual([])
+    expect(result.value.segments?.map((segment) => segment.index)).toEqual([0, 1, 2])
   })
 
   it('keeps successful segments when one segment fails and names its index', async () => {
@@ -140,6 +142,9 @@ describe('segmented transcription', () => {
     expect(result.value.warnings).toHaveLength(1)
     expect(result.value.warnings[0].code).toBe(SEGMENT_FAILURE_CODE)
     expect(result.value.warnings[0].message).toContain('第 2 段')
+    // Metadata covers only the successful utterances, in utterance order.
+    expect(result.value.segments?.map((segment) => segment.index)).toEqual([0, 2])
+    expect(result.value.segments).toHaveLength(2)
 
     expect(partialFailures).toHaveLength(1)
     const failure = partialFailures[0] as {
@@ -298,6 +303,143 @@ describe('segmented transcription', () => {
   })
 })
 
+describe('segment metadata', () => {
+  function twoUtterances(): Int16Array {
+    return signalPcm([
+      { ms: 400, amplitude: SPEECH_A },
+      { ms: 600, amplitude: QUIET },
+      { ms: 400, amplitude: SPEECH_B },
+      { ms: 800, amplitude: QUIET }
+    ])
+  }
+
+  it('reports two segments in order with 16 kHz millisecond ranges', async () => {
+    const { provider } = harness((_input, call) => ok(`seg-${call}`))
+    const segmented = createTranscriptionProvider(provider, 'vad', { segmenter: SEGMENTER })
+
+    const result = await segmented.transcribe(
+      { pcm: twoUtterances(), sampleRate: 16000, channels: 1, durationMs: 2200 },
+      {}
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.segments).toEqual([
+      { index: 0, startMs: 0, durationMs: 400 },
+      { index: 1, startMs: 1000, durationMs: 400 }
+    ])
+  })
+
+  it('omits the field for a single-segment run', async () => {
+    const { provider } = harness(() => ok('one'))
+    const segmented = createTranscriptionProvider(provider, 'vad', { segmenter: SEGMENTER })
+    const pcm = signalPcm([
+      { ms: 400, amplitude: SPEECH_A },
+      { ms: 600, amplitude: QUIET }
+    ])
+
+    const result = await segmented.transcribe(
+      { pcm, sampleRate: 16000, channels: 1, durationMs: 1000 },
+      {}
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.segments).toBeUndefined()
+  })
+
+  it('omits the field when no speech is detected', async () => {
+    const { provider } = harness(() => ok('never'))
+    const segmented = createTranscriptionProvider(provider, 'vad', { segmenter: SEGMENTER })
+    const pcm = signalPcm([{ ms: 600, amplitude: QUIET }])
+
+    const result = await segmented.transcribe(
+      { pcm, sampleRate: 16000, channels: 1, durationMs: 600 },
+      {}
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.segments).toBeUndefined()
+  })
+
+  it('maps a zero-length sample range to a zero duration', () => {
+    expect(
+      segmentMetadata([
+        {
+          index: 0,
+          utteranceIndex: 0,
+          startSample: 0,
+          endSample: 0,
+          text: 'a',
+          modelId: 'm',
+          runtimeId: 'r',
+          warnings: []
+        },
+        {
+          index: 1,
+          utteranceIndex: 1,
+          startSample: 16000,
+          endSample: 16000,
+          text: 'b',
+          modelId: 'm',
+          runtimeId: 'r',
+          warnings: []
+        }
+      ])
+    ).toEqual([
+      { index: 0, startMs: 0, durationMs: 0 },
+      { index: 1, startMs: 1000, durationMs: 0 }
+    ])
+  })
+
+  it('aggregates chunks of one utterance into a single entry', () => {
+    // A 40 s utterance cut into 30 s + 10 s provider calls is one utterance.
+    expect(
+      segmentMetadata([
+        {
+          index: 0,
+          utteranceIndex: 0,
+          startSample: 0,
+          endSample: 480_000,
+          text: 'a',
+          modelId: 'm',
+          runtimeId: 'r',
+          warnings: []
+        },
+        {
+          index: 1,
+          utteranceIndex: 0,
+          startSample: 480_000,
+          endSample: 640_000,
+          text: 'b',
+          modelId: 'm',
+          runtimeId: 'r',
+          warnings: []
+        }
+      ])
+    ).toEqual([{ index: 0, startMs: 0, durationMs: 40_000 }])
+  })
+
+  it('returns undefined below two segments', () => {
+    expect(segmentMetadata([])).toBeUndefined()
+    expect(
+      segmentMetadata([
+        {
+          index: 0,
+          utteranceIndex: 0,
+          startSample: 0,
+          endSample: 1600,
+          text: 'a',
+          modelId: 'm',
+          runtimeId: 'r',
+          warnings: []
+        }
+      ])
+    ).toBeUndefined()
+  })
+})
+
 describe('default single-shot path', () => {
   it('returns the inner provider untouched', () => {
     const { provider } = harness(() => ok('x'))
@@ -430,5 +572,112 @@ describe('auto segmentation mode', () => {
     for (const call of calls) {
       expect(call.pcm.length).toBeLessThanOrEqual(30_000 * 16)
     }
+  })
+
+  it('reports one continuous utterance split for the provider as one segment', async () => {
+    const { provider } = makeProvider(30_000)
+    const selected = createTranscriptionProvider(provider, 'auto')
+    const pcm = new Int16Array(640_000).fill(8000)
+
+    const result = await selected.transcribe(
+      { pcm, sampleRate: 16000, channels: 1, durationMs: 40_000 },
+      {}
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // "一句很长" must read as one segment, not two provider chunks.
+    expect(result.value.segments).toHaveLength(1)
+    expect(result.value.segments?.[0].index).toBe(0)
+    expect(result.value.segments?.[0].durationMs).toBeGreaterThanOrEqual(39_000)
+    expect(result.value.segments?.[0].durationMs).toBeLessThanOrEqual(41_000)
+  })
+
+  it('keeps two separately split utterances as two segments', async () => {
+    const { provider } = makeProvider(30_000)
+    const selected = createTranscriptionProvider(provider, 'auto')
+    const pcm = signalPcm([
+      { ms: 40_000, amplitude: SPEECH_B },
+      { ms: 1_000, amplitude: QUIET },
+      { ms: 40_000, amplitude: SPEECH_C }
+    ])
+
+    const result = await selected.transcribe(
+      { pcm, sampleRate: 16000, channels: 1, durationMs: 81_000 },
+      {}
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.segments?.map((segment) => segment.index)).toEqual([0, 1])
+    expect(result.value.segments).toHaveLength(2)
+  })
+
+  it('counts only successful chunks toward an utterance duration', async () => {
+    let call = 0
+    const provider = {
+      id: 'auto-test',
+      capabilities: {
+        languages: ['zh'],
+        streaming: false,
+        punctuation: true,
+        itn: true,
+        timestamps: false,
+        vad: false,
+        vocabularyBias: false,
+        maxAudioMs: 30_000,
+        quantizations: ['Q8_0']
+      },
+      async prepare() {},
+      async dispose() {},
+      async health() {
+        return { status: 'ready' as const }
+      },
+      async transcribe(_input: AudioInput) {
+        call += 1
+        // Fail the second chunk of the first utterance. Its 30-second first
+        // chunk still succeeds, so the aggregated segment must report ~30 s,
+        // not the utterance's full ~40 s.
+        if (call === 2) {
+          return {
+            ok: false as const,
+            error: {
+              code: 'INFERENCE_FAILED' as const,
+              message: 'chunk failed',
+              retryable: false as const
+            }
+          }
+        }
+        return {
+          ok: true as const,
+          value: {
+            text: '好的',
+            language: 'zh',
+            latencyMs: 1,
+            modelId: 'auto-test',
+            runtimeId: 'auto-test',
+            warnings: []
+          }
+        }
+      }
+    }
+    const selected = createTranscriptionProvider(provider, 'auto')
+    const pcm = signalPcm([
+      { ms: 40_000, amplitude: SPEECH_B },
+      { ms: 1_000, amplitude: QUIET },
+      { ms: 40_000, amplitude: SPEECH_C }
+    ])
+
+    const result = await selected.transcribe(
+      { pcm, sampleRate: 16000, channels: 1, durationMs: 81_000 },
+      {}
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const durations = result.value.segments?.map((segment) => segment.durationMs) ?? []
+    expect(durations).toHaveLength(2)
+    expect(durations[0]).toBeLessThan(35_000)
+    expect(durations[1]).toBeGreaterThan(39_000)
   })
 })

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_VAD_CONFIG } from '../src/core/audio/vad'
 import {
+  formatEnvFallbackMessage,
+  formatEnvTakeoverMessage,
   parseSegmentationConfig,
-  parseSegmentationMode
+  parseSegmentationMode,
+  resolveSegmentationMode,
+  shouldRebuildForSegmentation
 } from '../src/main/asr/segmentation-mode'
 
 describe('parseSegmentationMode', () => {
@@ -24,6 +28,130 @@ describe('parseSegmentationMode', () => {
     if (result.ok) return
     expect(result.message).toContain('JUSTSPEAK_SEGMENTED')
     expect(result.message).toContain('loud')
+  })
+})
+
+describe('segmentation resolution', () => {
+  it('lets a valid env value override the stored preference', () => {
+    expect(resolveSegmentationMode({ JUSTSPEAK_SEGMENTED: 'vad' }, 'single')).toEqual({
+      effective: 'vad',
+      source: 'env',
+      envValue: 'vad',
+      message: '当前由环境变量接管（JUSTSPEAK_SEGMENTED=vad）'
+    })
+  })
+
+  it('accepts the historical aliases in the env value', () => {
+    expect(resolveSegmentationMode({ JUSTSPEAK_SEGMENTED: 'on' }, 'single')).toMatchObject({
+      effective: 'vad',
+      source: 'env'
+    })
+    expect(resolveSegmentationMode({ JUSTSPEAK_SEGMENTED: 'off' }, 'vad')).toMatchObject({
+      effective: 'single',
+      source: 'env'
+    })
+  })
+
+  it('falls back to the preference with the exact notice on an invalid env value', () => {
+    expect(resolveSegmentationMode({ JUSTSPEAK_SEGMENTED: 'loud' }, 'vad')).toEqual({
+      effective: 'vad',
+      source: 'preference',
+      envValue: 'loud',
+      envInvalid: true,
+      message: 'JUSTSPEAK_SEGMENTED 的值无效（loud），已回退到设置中的「按静音分段」。'
+    })
+  })
+
+  it('uses the preference when env is unset or empty', () => {
+    expect(resolveSegmentationMode({}, 'single')).toEqual({
+      effective: 'single',
+      source: 'preference'
+    })
+    expect(resolveSegmentationMode({ JUSTSPEAK_SEGMENTED: '' }, 'vad')).toEqual({
+      effective: 'vad',
+      source: 'preference'
+    })
+  })
+
+  it('formats both notices with the mode label', () => {
+    expect(formatEnvTakeoverMessage('auto')).toBe(
+      '当前由环境变量接管（JUSTSPEAK_SEGMENTED=auto）'
+    )
+    expect(formatEnvFallbackMessage('loud', 'single')).toBe(
+      'JUSTSPEAK_SEGMENTED 的值无效（loud），已回退到设置中的「整段不分」。'
+    )
+  })
+
+  it('does not fail the session on an invalid env value; the preference still runs', () => {
+    const result = parseSegmentationConfig({ JUSTSPEAK_SEGMENTED: 'loud' }, 'single')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.config.mode).toBe('single')
+    expect(result.resolution.envInvalid).toBe(true)
+    expect(result.resolution.message).toContain('loud')
+  })
+})
+
+describe('segmentation rebuild decision', () => {
+  const preference = (effective: 'auto' | 'vad' | 'single') => ({
+    effective,
+    source: 'preference' as const
+  })
+  const env = (effective: 'auto' | 'vad' | 'single') => ({
+    effective,
+    source: 'env' as const
+  })
+
+  it('rebuilds immediately when idle with a different preference', () => {
+    expect(
+      shouldRebuildForSegmentation({
+        resolved: preference('vad'),
+        currentMode: 'auto',
+        busy: false,
+        initializing: false
+      })
+    ).toBe(true)
+  })
+
+  it('defers while recording, transcribing, or pasting', () => {
+    expect(
+      shouldRebuildForSegmentation({
+        resolved: preference('vad'),
+        currentMode: 'auto',
+        busy: true,
+        initializing: false
+      })
+    ).toBe(false)
+  })
+
+  it('defers while a provider build is already in flight', () => {
+    expect(
+      shouldRebuildForSegmentation({
+        resolved: preference('vad'),
+        currentMode: 'auto',
+        busy: false,
+        initializing: true
+      })
+    ).toBe(false)
+  })
+
+  it('never rebuilds on an env takeover or when the mode already matches', () => {
+    expect(
+      shouldRebuildForSegmentation({
+        resolved: env('vad'),
+        currentMode: 'auto',
+        busy: false,
+        initializing: false
+      })
+    ).toBe(false)
+    expect(
+      shouldRebuildForSegmentation({
+        resolved: preference('auto'),
+        currentMode: 'auto',
+        busy: false,
+        initializing: false
+      })
+    ).toBe(false)
   })
 })
 
@@ -50,7 +178,8 @@ describe('parseSegmentationConfig', () => {
       JUSTSPEAK_SEGMENTED: 'single',
       JUSTSPEAK_VAD_START_THRESHOLD: 'not-a-number'
     })
-    expect(result).toEqual({ ok: true, config: { mode: 'single', segmenter: {} } })
+    // The result now also names the resolution; the one-shot config is unchanged.
+    expect(result).toMatchObject({ ok: true, config: { mode: 'single', segmenter: {} } })
   })
 
   it('returns the resolved defaults in vad mode', () => {

@@ -227,6 +227,64 @@ describe('preferences store', () => {
       hotkey: DEFAULT_ACCELERATOR
     })
   })
+
+  it('defaults 长句听写 to auto and persists a valid choice', async () => {
+    const dir = makeDir()
+    const store = new ThemeStore(dir)
+    await expect(store.loadPreferences()).resolves.toMatchObject({ segmentation: 'auto' })
+    await store.update({ segmentation: 'vad' })
+    await expect(store.loadPreferences()).resolves.toMatchObject({ segmentation: 'vad' })
+    expect(JSON.parse(await readFile(preferencesFile(dir), 'utf8'))).toMatchObject({
+      segmentation: 'vad'
+    })
+  })
+
+  it('keeps the segmentation choice when another key is written, and vice versa', async () => {
+    const dir = makeDir()
+    const store = new ThemeStore(dir)
+    await store.update({ segmentation: 'single' })
+    await store.save('dark')
+    await expect(store.loadPreferences()).resolves.toMatchObject({
+      theme: 'dark',
+      segmentation: 'single'
+    })
+    await store.saveHotkey('Command+Shift+K')
+    await expect(store.loadPreferences()).resolves.toMatchObject({
+      theme: 'dark',
+      hotkey: 'Command+Shift+K',
+      segmentation: 'single'
+    })
+  })
+
+  it('falls back to auto when the stored segmentation value is unknown', async () => {
+    const dir = makeDir()
+    await writeFile(
+      preferencesFile(dir),
+      JSON.stringify({ theme: 'dark', segmentation: 'aggressive' }),
+      'utf8'
+    )
+    await expect(new ThemeStore(dir).loadPreferences()).resolves.toMatchObject({
+      theme: 'dark',
+      segmentation: 'auto'
+    })
+  })
+
+  it('does not write a preferences file just because one was missing', async () => {
+    const dir = makeDir()
+    await new ThemeStore(dir).loadPreferences()
+    await expect(readdir(dir)).resolves.toEqual([])
+  })
+
+  it('leaves a corrupt preferences file untouched when falling back', async () => {
+    const dir = makeDir()
+    const corrupt = '{ not json'
+    await writeFile(preferencesFile(dir), corrupt, 'utf8')
+    await expect(new ThemeStore(dir).loadPreferences()).resolves.toMatchObject({
+      segmentation: 'auto'
+    })
+    // Fallback is a read-time repair in memory, never a silent rewrite.
+    expect(await readFile(preferencesFile(dir), 'utf8')).toBe(corrupt)
+  })
 })
 
 describe('preference merge', () => {
@@ -298,6 +356,30 @@ describe('preference merge', () => {
     const fromArrayFile = mergePreferences(['theme'], { theme: 'light' })
     expect(fromArrayFile.ok).toBe(true)
     expect(fromArrayFile.record).toEqual({ theme: 'light' })
+  })
+
+  it('accepts each 长句听写 value and keeps other keys untouched', () => {
+    for (const segmentation of ['auto', 'vad', 'single'] as const) {
+      const result = mergePreferences(
+        { theme: 'dark', hotkey: 'Command+K' },
+        { segmentation }
+      )
+      expect(result.ok).toBe(true)
+      expect(result.accepted).toEqual({ segmentation })
+      expect(result.record).toEqual({ theme: 'dark', hotkey: 'Command+K', segmentation })
+    }
+  })
+
+  it('rejects an invalid 长句听写 value atomically', () => {
+    const result = mergePreferences(
+      { theme: 'dark', segmentation: 'vad' },
+      { theme: 'light', segmentation: 'aggressive' }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.rejected).toEqual([
+      { key: 'segmentation', reason: expect.stringContaining('长句听写档位无效') }
+    ])
+    expect(result.record).toEqual({ theme: 'dark', segmentation: 'vad' })
   })
 })
 

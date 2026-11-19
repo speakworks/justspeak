@@ -8,7 +8,8 @@ import type {
   ProviderResult,
   ProviderWarning,
   TranscribeOptions,
-  TranscriptionResult
+  TranscriptionResult,
+  TranscriptSegmentMeta
 } from './types'
 import { PCM_CHANNELS, PCM_SAMPLE_RATE } from './wav'
 
@@ -16,6 +17,12 @@ export interface AsrRunnerResult {
   text: string
   language?: string
   warnings?: ProviderWarning[]
+  /**
+   * A runner that segments internally can report its successful utterances;
+   * the adapter must forward them instead of dropping them during result
+   * assembly. Runners that do not segment leave it absent.
+   */
+  segments?: TranscriptSegmentMeta[]
 }
 
 /**
@@ -221,7 +228,10 @@ export class InferenceProvider implements AsrProvider {
           ...(runnerResult.value.warnings ?? []),
           ...(vocabularyWarning ? [vocabularyWarning] : [])
         ],
-        fallbackUsed: false
+        fallbackUsed: false,
+        ...(runnerResult.value.segments === undefined
+          ? {}
+          : { segments: runnerResult.value.segments })
       }
     }
   }

@@ -2,7 +2,11 @@ import { BrowserWindow, clipboard, globalShortcut, screen } from 'electron'
 import path from 'node:path'
 import type { FocusTarget } from '../core/focus/editability'
 import { resultPanelBounds } from '../core/overlay/position'
-import type { ResolvedTheme, ResultPanelPayload } from '../shared/ipc'
+import type {
+  ResolvedTheme,
+  ResultPanelPayload,
+  TranscriptSegmentMeta
+} from '../shared/ipc'
 
 /**
  * The correction panel shown when the frontmost element cannot accept a paste.
@@ -41,6 +45,8 @@ export interface ResultPanelShowOptions {
   notice?: string
   entryId?: string
   target?: FocusTarget
+  /** Successful utterance metadata; omitted for one-shot and reinsertion panels. */
+  segments?: TranscriptSegmentMeta[]
 }
 
 export function initResultPanel(next: ResultPanelHost): void {
@@ -149,7 +155,8 @@ export function showResultPanel(
     canEscape,
     revision: retainedRevision,
     ...(options.title === undefined ? {} : { title: options.title }),
-    ...(options.notice === undefined ? {} : { notice: options.notice })
+    ...(options.notice === undefined ? {} : { notice: options.notice }),
+    ...(options.segments === undefined ? {} : { segments: options.segments })
   }
   retainedEntryId = options.entryId
   retainedTarget = options.target

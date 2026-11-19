@@ -204,7 +204,7 @@ async function main(): Promise<void> {
     runId: `${day}-${commit}`,
     generatedAt: date.toISOString(),
     gitCommit: commit,
-    appVersion: '0.1.0-demo.0',
+    appVersion: '0.1.0-demo.1',
     provider: {
       id: provider.id,
       modelId: model.id,

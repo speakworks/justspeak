@@ -21,6 +21,7 @@ export const TEST_MODEL: AsrModelDescriptor = {
     itn: true,
     timestamps: false,
     vad: false,
+    vocabularyBias: false,
     maxAudioMs: 60_000,
     quantizations: ['Q8_0']
   }

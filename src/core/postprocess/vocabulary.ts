@@ -3,9 +3,13 @@ import {
   type PostprocessOptions,
   type PostprocessRule,
   type RuleSwitches,
+  type TermListParse,
   type Vocabulary,
   type VocabularyReplacement
 } from './types'
+
+/** The runtime prompt budget is enforced upstream; this is the app's own cap. */
+export const MAX_VOCABULARY_TERMS = 32
 
 export interface Span {
   start: number
@@ -167,18 +171,91 @@ function parseRules(value: unknown): RuleSwitches | undefined {
   return Object.keys(rules).length > 0 ? rules : undefined
 }
 
+const EMPTY_TERM_LIST: TermListParse = {
+  terms: [],
+  droppedByComma: 0,
+  droppedByCap: 0,
+  droppedByInvalid: 0,
+  droppedTermCount: 0
+}
+
+/** A term the runtime would reject: C0 controls (NUL breaks `spawn`) or `<|` / `|>`. */
+const INVALID_TERM = /[\u0000-\u001f]|<\||\|>/
+
 /**
- * Validate a `vocabulary.json` payload into options. Unknown keys, wrong
- * types, and out-of-range thresholds are dropped rather than thrown, because a
- * hand-edited preferences file must never stop dictation.
+ * Normalise the vocabulary file's top-level `terms` array. Entries are
+ * trimmed, empty entries are ignored, exact duplicates keep their first
+ * occurrence, and at most the first 32 accepted terms survive. A term
+ * containing U+002C is dropped and counted because `transcribe-cli`
+ * tokenises `--vocabulary` on that character. A term containing a C0 control
+ * character or a control-token delimiter is dropped silently: forwarding it
+ * would make every transcription fail, and a hand-edited preferences file
+ * must never stop dictation.
  */
-export function parseVocabularyConfig(raw: unknown): PostprocessOptions {
-  if (!isRecord(raw)) return {}
+export function parseTermList(value: unknown): TermListParse {
+  if (!Array.isArray(value)) return { ...EMPTY_TERM_LIST, terms: [] }
+
+  const terms: string[] = []
+  const seen = new Set<string>()
+  let droppedByComma = 0
+  let droppedByCap = 0
+  let droppedByInvalid = 0
+
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const term = item.trim()
+    if (!term) continue
+    if (term.includes(',')) {
+      droppedByComma += 1
+      continue
+    }
+    if (INVALID_TERM.test(term)) {
+      droppedByInvalid += 1
+      continue
+    }
+    if (seen.has(term)) continue
+    if (terms.length >= MAX_VOCABULARY_TERMS) {
+      droppedByCap += 1
+      continue
+    }
+    seen.add(term)
+    terms.push(term)
+  }
+
+  return {
+    terms,
+    droppedByComma,
+    droppedByCap,
+    droppedByInvalid,
+    droppedTermCount: droppedByComma
+  }
+}
+
+export interface ParsedVocabularyConfig {
+  options: PostprocessOptions
+  /** The accepted terms and discard counts, kept beside the options shape. */
+  termList: TermListParse
+}
+
+/**
+ * Validate a `vocabulary.json` payload into options plus the term-list parse
+ * result. Unknown keys, wrong types, and out-of-range thresholds are dropped
+ * rather than thrown, because a hand-edited preferences file must never stop
+ * dictation.
+ */
+export function parseVocabularyConfigDetailed(raw: unknown): ParsedVocabularyConfig {
+  if (!isRecord(raw)) return { options: {}, termList: { ...EMPTY_TERM_LIST, terms: [] } }
 
   const options: PostprocessOptions = {}
+  const termList = parseTermList(raw.terms)
+  // Terms are a file-level setting beside the rule vocabulary, never part of
+  // it, so they can never reach the rule pass.
+  options.terms = termList.terms
   const replace = parseReplacements(raw.replace)
   const protect = parseProtect(raw.protect)
-  if (replace.length > 0 || protect.length > 0) options.vocabulary = { replace, protect }
+  if (replace.length > 0 || protect.length > 0) {
+    options.vocabulary = { replace, protect }
+  }
 
   const rules = parseRules(raw.rules)
   if (rules) options.rules = rules
@@ -190,12 +267,18 @@ export function parseVocabularyConfig(raw: unknown): PostprocessOptions {
     options.repetitionThreshold = threshold
   }
 
-  return options
+  return { options, termList }
+}
+
+export function parseVocabularyConfig(raw: unknown): PostprocessOptions {
+  return parseVocabularyConfigDetailed(raw).options
 }
 
 export function serializeVocabularyConfig(options: PostprocessOptions): string {
   const vocabulary = options.vocabulary ?? {}
   const payload: Record<string, unknown> = {
+    // An old file without terms serializes as an empty array, never a throw.
+    terms: options.terms ?? [],
     replace: vocabulary.replace ?? [],
     protect: vocabulary.protect ?? []
   }

@@ -1,9 +1,10 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import {
-  parseVocabularyConfig,
+  parseVocabularyConfigDetailed,
   serializeVocabularyConfig,
-  type PostprocessOptions
+  type PostprocessOptions,
+  type TermListParse
 } from '../core/postprocess'
 
 export interface VocabularyStoreDeps {
@@ -21,8 +22,20 @@ export type VocabularyState = 'default' | 'loaded' | 'unreadable'
 export interface VocabularyLoadResult {
   options: PostprocessOptions
   state: VocabularyState
+  /** Accepted decode-time terms plus the parse-time discard counts. */
+  termList: TermListParse
   /** Human-readable reason when `state` is `unreadable`. */
   message?: string
+}
+
+function emptyTermList(): TermListParse {
+  return {
+    terms: [],
+    droppedByComma: 0,
+    droppedByCap: 0,
+    droppedByInvalid: 0,
+    droppedTermCount: 0
+  }
 }
 
 /**
@@ -52,11 +65,14 @@ export class VocabularyStore {
       raw = await this.deps.readFile(this.file, 'utf8')
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      if (code === 'ENOENT') return { options: {}, state: 'default' }
+      if (code === 'ENOENT') {
+        return { options: {}, state: 'default', termList: emptyTermList() }
+      }
       console.warn('[vocabulary] could not read vocabulary.json; using defaults', error)
       return {
         options: {},
         state: 'unreadable',
+        termList: emptyTermList(),
         message: `无法读取词汇表文件：${error instanceof Error ? error.message : String(error)}`
       }
     }
@@ -69,15 +85,22 @@ export class VocabularyStore {
       return {
         options: {},
         state: 'unreadable',
+        termList: emptyTermList(),
         message: `词汇表文件不是有效的 JSON：${error instanceof Error ? error.message : String(error)}`
       }
     }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       console.warn('[vocabulary] vocabulary.json is not an object; using defaults')
-      return { options: {}, state: 'unreadable', message: '词汇表文件必须是一个 JSON 对象。' }
+      return {
+        options: {},
+        state: 'unreadable',
+        termList: emptyTermList(),
+        message: '词汇表文件必须是一个 JSON 对象。'
+      }
     }
 
-    return { options: parseVocabularyConfig(parsed), state: 'loaded' }
+    const detail = parseVocabularyConfigDetailed(parsed)
+    return { options: detail.options, state: 'loaded', termList: detail.termList }
   }
 
   async save(options: PostprocessOptions): Promise<void> {

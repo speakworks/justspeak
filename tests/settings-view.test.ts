@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_ACCELERATOR } from '../src/core/hotkey/accelerator'
+import { QWEN3_CAPABILITIES } from '../src/core/asr/qwen3-provider'
+import { SENSEVOICE_CAPABILITIES } from '../src/core/asr/sensevoice-provider'
 import {
   buildSettingsRows,
   describeAutostart,
   describeHotkey,
   describeLlm,
   describeProvider,
+  resolveProviderSupportsTerms,
   summarizeProvider,
   PROVIDER_SETTINGS_HINT,
   PROVIDER_NOT_READY_REASON,
@@ -19,8 +22,11 @@ import type { PreferencesView, VocabularySummary } from '../src/shared/ipc'
 const VOCABULARY_DEFAULT: VocabularySummary = {
   path: '/tmp/userData/vocabulary.json',
   state: 'default',
+  termCount: 0,
   replaceCount: 0,
-  protectCount: 0
+  protectCount: 0,
+  droppedTermCount: 0,
+  providerSupportsTerms: true
 }
 
 const PREFERENCES: PreferencesView = {
@@ -221,16 +227,48 @@ describe('vocabulary state', () => {
     })
   })
 
-  it('labels a readable file as an override and counts its entries', () => {
+  it('labels a readable file as an override and counts terms, replacements, and protected terms', () => {
     const state = describeVocabulary({
       ...VOCABULARY_DEFAULT,
       state: 'loaded',
-      replaceCount: 3,
-      protectCount: 2
+      termCount: 3,
+      replaceCount: 2,
+      protectCount: 1
     })
     expect(state.status).toBe('override')
-    expect(state.detail).toContain('3 条替换')
-    expect(state.detail).toContain('2 个保护词')
+    expect(state.detail).toContain('术语 3 条')
+    expect(state.detail).toContain('替换 2 条')
+    expect(state.detail).toContain('保护 1 条')
+  })
+
+  it('explains comma-dropped terms by count without naming them', () => {
+    const state = describeVocabulary({
+      ...VOCABULARY_DEFAULT,
+      state: 'loaded',
+      termCount: 2,
+      droppedTermCount: 2
+    })
+    expect(state.detail).toContain('2 条术语因含英文逗号被忽略')
+  })
+
+  it('states that terms are not applied when the provider lacks the capability', () => {
+    const state = describeVocabulary({
+      ...VOCABULARY_DEFAULT,
+      state: 'loaded',
+      termCount: 2,
+      providerSupportsTerms: false
+    })
+    expect(state.detail).toContain('不支持')
+    expect(state.detail).toContain('术语未生效')
+  })
+
+  it('does not mention the unsupported state when no terms are configured', () => {
+    const state = describeVocabulary({
+      ...VOCABULARY_DEFAULT,
+      state: 'loaded',
+      providerSupportsTerms: false
+    })
+    expect(state.detail).not.toContain('术语未生效')
   })
 
   it('labels an unreadable file as unavailable with its reason', () => {
@@ -303,6 +341,17 @@ describe('settings rows', () => {
     expect(rows.vocabulary.status).toBe('default')
     expect(rows.provider.status).toBe('unavailable')
     expect(rows.llm.status).toBe('default')
+  })
+})
+
+describe('provider term capability', () => {
+  it('falls back to the selected provider capability when no provider is live', () => {
+    expect(resolveProviderSupportsTerms(undefined, QWEN3_CAPABILITIES)).toBe(true)
+    expect(resolveProviderSupportsTerms(undefined, SENSEVOICE_CAPABILITIES)).toBe(false)
+    // No live adapter and no selectable provider (fake, unavailable) is false.
+    expect(resolveProviderSupportsTerms(undefined, undefined)).toBe(false)
+    // A live adapter wins over the selected static capability.
+    expect(resolveProviderSupportsTerms(QWEN3_CAPABILITIES, SENSEVOICE_CAPABILITIES)).toBe(true)
   })
 })
 

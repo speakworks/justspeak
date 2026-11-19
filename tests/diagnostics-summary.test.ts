@@ -12,8 +12,11 @@ const PREFERENCES: PreferencesView = {
   vocabulary: {
     path: `${USER_DATA}/vocabulary.json`,
     state: 'loaded',
+    termCount: 4,
     replaceCount: 3,
-    protectCount: 2
+    protectCount: 2,
+    droppedTermCount: 1,
+    providerSupportsTerms: true
   },
   provider: {
     id: 'qwen3',
@@ -98,6 +101,16 @@ describe('diagnostics summary', () => {
       '本地运行时缺失：<userData>/resources/llm/llama-server'
     )
     expect(summary.preferences.provider.reason).toBe('模型位于 <home>/models')
+    expect(summary.preferences.vocabulary.termCount).toBe(4)
+    // Counts only: no term strings may enter the bundle summary. Assert the
+    // exact key set so a future `terms` field fails this test even though this
+    // fixture carries no term content to scan for.
+    expect(Object.keys(summary.preferences.vocabulary).sort()).toEqual([
+      'protectCount',
+      'replaceCount',
+      'state',
+      'termCount'
+    ])
     expect(summary.history.entries).toBe(12)
   })
 

@@ -282,6 +282,46 @@ describe('postprocess: personal vocabulary', () => {
     const vocabulary = { replace: [{ from: 'cat', to: 'dog' }], protect: ['cat'] }
     expect(clean('cat', { vocabulary, rules: { vocabulary: false } })).toBe('cat')
   })
+
+  it('never force-corrects a misheard term from the decode-time list', () => {
+    const plain = postprocess('K8s 已部署。', {})
+    const withTerms = postprocess('K8s 已部署。', {
+      terms: ['Kubernetes']
+    })
+    // Terms are hints for the decoder, not rule inputs: the text and the
+    // applied list are identical to a run with no terms.
+    expect(withTerms.text).toBe(plain.text)
+    expect(withTerms.text).toBe('K8s 已部署。')
+    expect(withTerms.applied).toEqual(plain.applied)
+  })
+
+  it('keeps terms out of the vocabulary handed to the rules', () => {
+    // Terms live on the options beside `vocabulary`; the rule input carries
+    // only replace/protect. Passing terms changes neither text nor applied.
+    const options = {
+      vocabulary: { replace: [{ from: '库贝内特斯', to: 'Kubernetes' }], protect: [] },
+      terms: ['Kubernetes', 'GPT-4o']
+    }
+    expect(options.vocabulary).not.toHaveProperty('terms')
+
+    const text = '库贝内特斯 已部署。'
+    const withTerms = postprocess(text, options)
+    const withoutTerms = postprocess(text, { vocabulary: options.vocabulary })
+    expect(withTerms).toEqual(withoutTerms)
+    expect(withTerms.text).toBe('Kubernetes 已部署。')
+    expect(withTerms.applied).toEqual(['vocabulary'])
+  })
+
+  it('lets an explicit replacement apply independently of a term', () => {
+    const result = postprocess('库贝内特斯', {
+      vocabulary: {
+        replace: [{ from: '库贝内特斯', to: 'Kubernetes' }]
+      },
+      terms: ['Kubernetes']
+    })
+    expect(result.text).toBe('Kubernetes')
+    expect(result.applied).toEqual(['vocabulary'])
+  })
 })
 
 describe('postprocess: rule isolation', () => {

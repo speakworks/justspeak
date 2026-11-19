@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
   AudioInput,
+  ProviderError,
   ProviderHealth,
   ProviderResult,
   TranscribeOptions
@@ -15,6 +16,9 @@ import { encodeWav } from '../../core/asr/wav'
 
 const MAX_CAPTURE_BYTES = 256 * 1024
 const DEFAULT_TIMEOUT_MS = 120_000
+
+export const VOCABULARY_UNSUPPORTED_CODE = 'VOCABULARY_UNSUPPORTED'
+export const VOCABULARY_TRUNCATED_CODE = 'VOCABULARY_TRUNCATED'
 
 export interface ChildStreamPort {
   on(event: 'data', listener: (chunk: Buffer | string) => void): void
@@ -94,6 +98,41 @@ function boundedDiagnostic(stderr: string, stdout: string): string {
     .join(' | ')
   if (!combined) return ''
   return combined.length > 300 ? `${combined.slice(0, 300)}…` : combined
+}
+
+/**
+ * Only a diagnostic that names the vocabulary option and says it was not
+ * recognised counts as "this CLI rejects the flag". Every other failure keeps
+ * the original taxonomy and is never retried.
+ *
+ * The rejection and `--vocabulary` must sit on the same line: after a parse
+ * failure the CLI prints its usage to stderr, and that usage always contains
+ * `--vocabulary TERMS`. A whole-output substring test would therefore turn an
+ * unrelated `unknown option '-q'` into a vocabulary retry.
+ */
+const UNKNOWN_VOCABULARY_OPTION =
+  /(?:unknown|unrecognized|unrecognised|invalid|not\s+recognized|not\s+recognised)[^\r\n]{0,40}--vocabulary/i
+
+export function isUnknownVocabularyOption(diagnostic: string): boolean {
+  return diagnostic.split(/\r?\n/).some((line) => UNKNOWN_VOCABULARY_OPTION.test(line))
+}
+
+/** Read the untruncated-stderr flag the close handler attached to a failure. */
+function rejectsVocabularyFlag(error: ProviderError): boolean {
+  const cause = error.cause
+  return (
+    typeof cause === 'object' &&
+    cause !== null &&
+    (cause as { unknownVocabularyOption?: unknown }).unknownVocabularyOption === true
+  )
+}
+
+/**
+ * transcribe.cpp logs a WARN line `dropped N of M vocabulary terms` when the
+ * runtime prompt budget cuts the tail (src/transcribe-prompting.cpp).
+ */
+export function hasVocabularyTruncationNotice(stderr: string): boolean {
+  return /dropped \d+ of \d+ vocabulary terms/i.test(stderr)
 }
 
 function mapFailure(
@@ -184,16 +223,57 @@ export class TranscribeCliRunner implements Qwen3Runner {
     }
 
     const wavPath = this.deps.makeTempPath()
-    const removeWav = (): void => {
-      void this.deps.unlink(wavPath).catch(() => {})
-    }
-
     try {
       await this.deps.writeFile(wavPath, encodeWav(input.pcm))
-    } catch (cause) {
-      removeWav()
-      throw cause
+
+      const terms = (options.vocabulary ?? []).filter((term) => term.length > 0)
+      const baseArgs = ['-q', '-m', this.modelPath, wavPath]
+      const first = await this.invoke(baseArgs, options, terms.length > 0, terms)
+
+      if (!first.ok && terms.length > 0 && rejectsVocabularyFlag(first.error)) {
+        // Defensive path: the pinned CLI supports the flag, so this must run
+        // at most once and must never mask an unrelated inference error.
+        if (options.signal?.aborted) {
+          return {
+            ok: false,
+            error: { code: 'CANCELLED', message: 'Transcription cancelled', retryable: false }
+          }
+        }
+        const retried = await this.invoke(baseArgs, options, false, terms)
+        if (retried.ok) {
+          return {
+            ok: true,
+            value: {
+              ...retried.value,
+              warnings: [
+                ...(retried.value.warnings ?? []),
+                {
+                  code: VOCABULARY_UNSUPPORTED_CODE,
+                  message: `${this.label} rejected --vocabulary; ${terms.length} term(s) were not applied.`
+                }
+              ]
+            }
+          }
+        }
+        return retried
+      }
+
+      return first
+    } finally {
+      void this.deps.unlink(wavPath).catch(() => {})
     }
+  }
+
+  /** One spawn. Temp-file lifecycle belongs to `run`, not here. */
+  private invoke(
+    baseArgs: string[],
+    options: TranscribeOptions,
+    withVocabulary: boolean,
+    terms: string[]
+  ): Promise<ProviderResult<Qwen3RunnerResult>> {
+    const args = withVocabulary
+      ? [...baseArgs, '--vocabulary', terms.join(',')]
+      : baseArgs
 
     return new Promise<ProviderResult<Qwen3RunnerResult>>((resolve) => {
       let stdout = ''
@@ -203,20 +283,13 @@ export class TranscribeCliRunner implements Qwen3Runner {
       let cancelled = false
       let timeout: ReturnType<typeof setTimeout> | undefined
 
-      let child: ChildProcessPort
-      try {
-        child = this.deps.spawn(this.cliPath, ['-q', '-m', this.modelPath, wavPath])
-      } catch (cause) {
-        removeWav()
-        throw cause
-      }
+      const child = this.deps.spawn(this.cliPath, args)
 
       const settle = (result: ProviderResult<Qwen3RunnerResult>): void => {
         if (settled) return
         settled = true
         if (timeout) clearTimeout(timeout)
         options.signal?.removeEventListener('abort', onAbort)
-        removeWav()
         resolve(result)
       }
 
@@ -262,7 +335,20 @@ export class TranscribeCliRunner implements Qwen3Runner {
           return
         }
         if (code !== 0) {
-          settle(mapFailure(stderr, stdout, code, this.label, this.cliPath, this.modelPath))
+          const failure = mapFailure(
+            stderr,
+            stdout,
+            code,
+            this.label,
+            this.cliPath,
+            this.modelPath
+          )
+          // Decide from the full, untruncated output: the UI summary keeps its
+          // 300-character bound, but a flag rejection can sit past that cut.
+          if (!failure.ok && isUnknownVocabularyOption(`${stderr}\n${stdout}`)) {
+            failure.error.cause = { unknownVocabularyOption: true }
+          }
+          settle(failure)
           return
         }
         const parsed = parseCliStdout(stdout)
@@ -270,7 +356,20 @@ export class TranscribeCliRunner implements Qwen3Runner {
           settle(parsed)
           return
         }
-        settle({ ok: true, value: { text: parsed.value.text, language: parsed.value.language } })
+        const warnings =
+          withVocabulary && hasVocabularyTruncationNotice(stderr)
+            ? [
+                {
+                  code: VOCABULARY_TRUNCATED_CODE,
+                  message:
+                    'The runtime dropped vocabulary terms that exceeded its prompt budget; earlier terms kept priority.'
+                }
+              ]
+            : []
+        settle({
+          ok: true,
+          value: { text: parsed.value.text, language: parsed.value.language, warnings }
+        })
       })
 
       timeout = setTimeout(() => {

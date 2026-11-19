@@ -125,10 +125,31 @@ export class InferenceProvider implements AsrProvider {
       )
     }
 
+    // Decode-time terms are capability-gated, never provider-id gated. An
+    // unsupported adapter drops them from the runner call and reports the
+    // degradation on the result, so dictation itself is never blocked.
+    const requestedTerms = (options.vocabulary ?? []).filter((term) => term.length > 0)
+    const vocabularyWarning: ProviderWarning | undefined =
+      requestedTerms.length > 0 && !this.capabilities.vocabularyBias
+        ? {
+            code: 'VOCABULARY_UNSUPPORTED',
+            message: `${this.id} does not support decode-time vocabulary; ${requestedTerms.length} term(s) were not applied.`
+          }
+        : undefined
+    const runnerOptions: TranscribeOptions =
+      this.capabilities.vocabularyBias && requestedTerms.length > 0
+        ? { ...options, vocabulary: requestedTerms }
+        : { ...options, vocabulary: undefined }
+
     // Provider-specific short-circuit after validation and before spawning the
     // runtime. The default adapter has no gate and always runs inference.
-    const gated = this.beforeInference(input, options, startedAt)
-    if (gated) return gated
+    const gated = this.beforeInference(input, runnerOptions, startedAt)
+    if (gated) {
+      if (gated.ok && vocabularyWarning) {
+        gated.value.warnings = [...gated.value.warnings, vocabularyWarning]
+      }
+      return gated
+    }
 
     const controller = new AbortController()
     const abortFromCaller = (): void => controller.abort()
@@ -163,7 +184,7 @@ export class InferenceProvider implements AsrProvider {
     let runnerResult: ProviderResult<AsrRunnerResult>
     try {
       runnerResult = await Promise.race([
-        this.runner.run(input, { ...options, signal: controller.signal }),
+        this.runner.run(input, { ...runnerOptions, signal: controller.signal }),
         timeoutResult,
         cancelledResult
       ])
@@ -196,7 +217,10 @@ export class InferenceProvider implements AsrProvider {
         latencyMs: this.now() - startedAt,
         modelId: this.model.id,
         runtimeId: this.model.runtime,
-        warnings: runnerResult.value.warnings ?? [],
+        warnings: [
+          ...(runnerResult.value.warnings ?? []),
+          ...(vocabularyWarning ? [vocabularyWarning] : [])
+        ],
         fallbackUsed: false
       }
     }

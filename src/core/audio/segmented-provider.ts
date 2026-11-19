@@ -379,9 +379,21 @@ export class SegmentedAsrProvider implements AsrProvider {
       }
     }
 
-    const warnings: ProviderWarning[] = run.segments.flatMap((segment) => segment.warnings)
+    // The same degradation can occur once per segment (for example a provider
+    // without vocabulary bias). Keep the first occurrence of each code so the
+    // user sees one notice per cause, not one per utterance.
+    const warnings: ProviderWarning[] = []
+    const seenCodes = new Set<string>()
+    const addWarning = (warning: ProviderWarning): void => {
+      if (seenCodes.has(warning.code)) return
+      seenCodes.add(warning.code)
+      warnings.push(warning)
+    }
+    for (const segment of run.segments) {
+      for (const warning of segment.warnings) addWarning(warning)
+    }
     if (run.error) {
-      warnings.push({ code: SEGMENT_FAILURE_CODE, message: run.error.message })
+      addWarning({ code: SEGMENT_FAILURE_CODE, message: run.error.message })
       this.onPartialFailure?.(run.error)
     }
 

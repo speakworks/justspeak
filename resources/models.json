@@ -25,6 +25,7 @@
         "itn": true,
         "timestamps": false,
         "vad": false,
+        "vocabularyBias": true,
         "maxAudioMs": 5220000,
         "quantizations": ["Q8_0"]
       }
@@ -53,6 +54,7 @@
         "itn": true,
         "timestamps": false,
         "vad": false,
+        "vocabularyBias": false,
         "maxAudioMs": 30000,
         "quantizations": ["Q8_0"]
       }

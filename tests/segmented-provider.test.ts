@@ -14,6 +14,7 @@ import {
 } from '../src/core/audio/segmented-provider'
 import { SessionController } from '../src/core/session/session-controller'
 import { FakeAsrProvider } from '../src/core/asr/fake-provider'
+import { SenseVoiceAsrProvider } from '../src/core/asr/sensevoice-provider'
 import { runProviderContract, TEST_MODEL } from './provider-contract'
 import type { RecordingSummary, TranscriptEvent } from '../src/shared/ipc'
 import { samplesFor, signalPcm } from './audio-signal'
@@ -75,6 +76,7 @@ function harness(
       itn: true,
       timestamps: false,
       vad: false,
+      vocabularyBias: false,
       maxAudioMs: 87 * 60 * 1000,
       quantizations: ['fake']
     },
@@ -261,6 +263,39 @@ describe('segmented transcription', () => {
     expect(segmented.capabilities.streaming).toBe(false)
     expect(segmented.capabilities.maxAudioMs).toBe(120_000)
   })
+
+  it('collapses the same warning code across segments to its first occurrence', async () => {
+    const sensevoice = new SenseVoiceAsrProvider({
+      model: TEST_MODEL,
+      runner: {
+        async run() {
+          return { ok: true as const, value: { text: '你好', language: 'zh' } }
+        },
+        async health() {
+          return { status: 'ready' as const, modelId: TEST_MODEL.id }
+        },
+        async dispose() {}
+      }
+    })
+    const segmented = createTranscriptionProvider(sensevoice, 'vad', { segmenter: SEGMENTER })
+    const pcm = signalPcm([
+      { ms: 400, amplitude: SPEECH_A },
+      { ms: 600, amplitude: QUIET },
+      { ms: 400, amplitude: SPEECH_B },
+      { ms: 800, amplitude: QUIET }
+    ])
+
+    const result = await segmented.transcribe(
+      { pcm, sampleRate: 16000, channels: 1, durationMs: 2200 },
+      { vocabulary: ['Kubernetes'] }
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(
+      result.value.warnings.filter((warning) => warning.code === 'VOCABULARY_UNSUPPORTED')
+    ).toHaveLength(1)
+  })
 })
 
 describe('default single-shot path', () => {
@@ -341,6 +376,7 @@ describe('auto segmentation mode', () => {
         itn: true,
         timestamps: false,
         vad: false,
+        vocabularyBias: false,
         maxAudioMs,
         quantizations: ['Q8_0']
       },

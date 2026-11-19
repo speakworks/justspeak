@@ -12,6 +12,8 @@ export interface AsrCapabilities {
   itn: boolean
   timestamps: boolean
   vad: boolean
+  /** True when the adapter forwards `--vocabulary` as a decode-time bias. */
+  vocabularyBias: boolean
   maxAudioMs: number
   quantizations: string[]
 }

@@ -120,6 +120,18 @@ export function describeHotkey(hotkey: string, message?: string): SettingState {
   }
 }
 
+/**
+ * Whether decode-time terms apply. The live provider's own capability wins;
+ * while no provider is live (startup, or after a provider error) fall back to
+ * the selected provider's static capability instead of reporting "unsupported".
+ */
+export function resolveProviderSupportsTerms(
+  live: { vocabularyBias: boolean } | undefined,
+  selected: { vocabularyBias: boolean } | undefined
+): boolean {
+  return (live ?? selected)?.vocabularyBias ?? false
+}
+
 export function describeVocabulary(vocabulary: VocabularySummary): SettingState {
   if (vocabulary.state === 'unreadable') {
     return {
@@ -135,10 +147,19 @@ export function describeVocabulary(vocabulary: VocabularySummary): SettingState 
       detail: '尚未创建词汇表文件，使用内置规则。'
     }
   }
+  const counts = `术语 ${vocabulary.termCount} 条 / 替换 ${vocabulary.replaceCount} 条 / 保护 ${vocabulary.protectCount} 条`
+  const notes: string[] = []
+  if (vocabulary.droppedTermCount > 0) {
+    // Count only; the discarded term strings are never shown.
+    notes.push(`${vocabulary.droppedTermCount} 条术语因含英文逗号被忽略。`)
+  }
+  if (vocabulary.termCount > 0 && !vocabulary.providerSupportsTerms) {
+    notes.push('当前 ASR 模型不支持解码期术语偏置，术语未生效。')
+  }
   return {
     status: 'override',
     statusLabel: STATUS_LABEL.override,
-    detail: `已加载 ${vocabulary.replaceCount} 条替换、${vocabulary.protectCount} 个保护词。`
+    detail: [`已加载 ${counts}。`, ...notes].join(' ')
   }
 }
 

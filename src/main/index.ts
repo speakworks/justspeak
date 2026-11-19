@@ -73,7 +73,7 @@ import {
   seedAutostartOnFirstRun,
   type AutostartWriteResult
 } from '../core/preferences/autostart'
-import { summarizeProvider } from '../core/preferences/view'
+import { resolveProviderSupportsTerms, summarizeProvider } from '../core/preferences/view'
 import { buildDiagnosticsSummary } from '../core/diagnostics/summary'
 import {
   deliverTranscriptDetailed,
@@ -348,6 +348,7 @@ class UnavailableAsrProvider implements AsrProvider {
     itn: false,
     timestamps: false,
     vad: false,
+    vocabularyBias: false,
     maxAudioMs: 0,
     quantizations: []
   }
@@ -850,11 +851,26 @@ function describeProvider(): ProviderSummary {
 }
 
 function summarizeVocabulary(result: VocabularyLoadResult): VocabularySummary {
+  // The live capability is authoritative; while no provider is live (startup,
+  // or after a provider error) fall back to the selected provider's static
+  // capability so the row does not claim "unsupported" for a model that does
+  // support terms. `fake` and an unknown mode resolve to false.
+  const selectedCapabilities =
+    sessionMode in PROVIDER_OPTIONS
+      ? PROVIDER_OPTIONS[sessionMode as SelectableAsrProviderId].capabilities
+      : undefined
   return {
     path: vocabularyStore.file,
     state: result.state,
+    termCount: result.termList.terms.length,
     replaceCount: result.options.vocabulary?.replace?.length ?? 0,
     protectCount: result.options.vocabulary?.protect?.length ?? 0,
+    // Only the visible comma reason; the cap and invalid discards stay silent.
+    droppedTermCount: result.termList.droppedByComma,
+    providerSupportsTerms: resolveProviderSupportsTerms(
+      activeProvider?.capabilities,
+      selectedCapabilities
+    ),
     ...(result.message === undefined ? {} : { message: result.message })
   }
 }
@@ -1128,6 +1144,8 @@ function makeSession(provider: AsrProvider, fake: boolean): SessionController {
     postprocess: (text) => postprocess(text, postprocessOptions),
     refine: (text) => llmManager?.corrector.refine(text) ?? Promise.resolve(undefined),
     getAudio,
+    // Read per utterance: the vocabulary file may be re-read between runs.
+    getVocabulary: () => postprocessOptions.terms ?? [],
     transcribeTimeoutMs: 120_000
   })
 }

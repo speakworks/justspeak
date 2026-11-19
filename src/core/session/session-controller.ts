@@ -1,4 +1,4 @@
-import type { AsrErrorCode, AsrProvider, AudioInput } from '../asr/types'
+import type { AsrErrorCode, AsrProvider, AudioInput, TranscribeOptions } from '../asr/types'
 import type { PostprocessResult } from '../postprocess'
 import type { DeliveryTarget } from '../shell/delivery'
 import type { AppState, RecordingSummary, TranscriptEvent } from '../../shared/ipc'
@@ -42,6 +42,12 @@ export interface SessionControllerDeps {
   /** Optional async stage after rules (LLM cleanup). Never blocks delivery on failure. */
   refine?: (text: string) => Promise<{ text: string; applied: string[] } | undefined>
   getAudio?: (summary: RecordingSummary) => AudioInput | null
+  /**
+   * Accepted decode-time terms, read per transcription because the vocabulary
+   * file can change between utterances. An empty list must leave the options
+   * shape untouched.
+   */
+  getVocabulary?: () => string[]
   now?: () => number
   startDebounceMs?: number
   transcribeTimeoutMs?: number
@@ -162,7 +168,9 @@ export class SessionController {
     let event: TranscriptEvent | undefined
 
     try {
-      const options = { timeoutMs: this.deps.transcribeTimeoutMs }
+      const options: TranscribeOptions = { timeoutMs: this.deps.transcribeTimeoutMs }
+      const terms = this.deps.getVocabulary?.() ?? []
+      if (terms.length > 0) options.vocabulary = [...terms]
       let result = await this.deps.provider.transcribe(audio, options)
       if (!result.ok && result.error.retryable && RETRYABLE_CODES.has(result.error.code)) {
         result = await this.deps.provider.transcribe(audio, options)

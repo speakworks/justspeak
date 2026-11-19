@@ -56,6 +56,7 @@ function isCapabilities(value: unknown): value is AsrCapabilities {
     typeof record.itn === 'boolean' &&
     typeof record.timestamps === 'boolean' &&
     typeof record.vad === 'boolean' &&
+    typeof record.vocabularyBias === 'boolean' &&
     isPositiveInteger(record.maxAudioMs) &&
     Array.isArray(record.quantizations)
   )

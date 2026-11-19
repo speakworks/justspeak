@@ -23,15 +23,15 @@ openspec validate --specs --strict
 openspec list
 ```
 
-预期结果（2026-11-06 的基线）：
+预期结果（2026-11-19 的基线）：
 
 | 检查 | 预期 |
 |---|---|
 | `pnpm typecheck` | 通过 |
-| `pnpm test` | 900 passed / 4 skipped |
+| `pnpm test` | 939 passed / 4 skipped |
 | `pnpm build` | 通过 |
 | `pnpm exec playwright test` | 31 passed / 5 skipped（真机检查默认跳过；E2E 偶发红未消除，见 `docs/REAL-MACHINE-CHECKS.md`） |
-| `openspec validate --specs --strict` | 18/18 |
+| `openspec validate --specs --strict` | 19/19 |
 | `openspec list` | `No active changes found` |
 
 要真正听写，还需要本机模型：
@@ -57,7 +57,7 @@ JustSpeak 是一个 macOS 优先的本地听写应用：按全局快捷键说话
 - **全局快捷键**：设置页点击后直接按组合键录制；录制期间临时注销听写键并忽略应用菜单快捷键，15 秒安全恢复。
 - **投递**：`insert`（本应用窗口）/ `paste`（剪贴板 + Cmd+V）/ 复制面板三选一。
 - **历史**：本地 `entries.jsonl` + WAV，可回放、复制、删除。
-- **词汇表**：本地替换/保护规则。
+- **词汇表**：本地 `vocabulary.json` 有两层能力——`terms` 是解码期术语偏置（Qwen3-ASR 生效；SenseVoice 无该能力位，术语不生效并带 `VOCABULARY_UNSUPPORTED` 警告），`replace`/`protect` 是转写后的替换/保护规则。术语永不参与后处理改写，误听不会被强行“纠正”。
 - **可选智能清理**：默认关闭；本地 Qwen2.5-1.5B sidecar 或 OpenAI 兼容端点；规则候选 + 封闭动作 + 护栏 + 800 ms 回退。
 - **诊断导出**：用户主动导出本地 zip，不自动上传；crash dump 可能含内存中的敏感信息，已披露。
 - **菜单栏常驻**（PR #36）：关窗即隐藏，热键/录音/听写链路继续；菜单栏图标提供显示/隐藏、开始/结束听写、设置、退出；退出全部是显式动作（`Cmd+Q`/Dock/菜单）。
@@ -103,7 +103,7 @@ PR 链接：`https://github.com/speakworks/justspeak/pull/<number>`。
 | `src/preload/index.ts` | 类型化 bridge | 只暴露 `JustSpeakApi`，不要加宽 |
 | `src/renderer/src` | React UI | `HotkeyRecorder.tsx`、`SettingsPanel.tsx`、`App.tsx` |
 | `src/shared/ipc.ts` | 主/渲染共享契约 | 新 IPC 同时改 preload 和类型 |
-| `openspec/specs` | 18 个权威行为 spec（含 `menubar-residency`、`injection-undo`、`real-machine-verification`） | 当前无 active change |
+| `openspec/specs` | 19 个权威行为 spec（含 `menubar-residency`、`injection-undo`、`real-machine-verification`、`asr-vocabulary-bias`） | 当前无 active change |
 | `tests/` | Vitest | `tests/e2e/` 是 Playwright，`pnpm test` 不跑它 |
 | `scripts/` | 评测、打包、模型下载 | `llm-eval.ts`、`verify-mac-app.ts` 等 |
 
@@ -212,6 +212,7 @@ pnpm verify:mac          # 检查打包后的 runtime/LLM/catalog
 6. ~~补一个测试~~ — 已由 PR #32 完成：`hotkeyChangeRefusal(state)` 落在 `src/core/hotkey`，状态表由单测覆盖，capture 与应用两条路径共用同一判断。
 7. ~~开机启动尚未实现~~ — 已由 `login-item-autostart` 完成：首次运行默认开启（写入系统后回读），设置页「开机自动启动」开关始终显示 `getLoginItemSettings().openAtLogin`，系统设置里手动关闭后应用内同步为 off；未签名/未放入 `/Applications` 的构建可能不生效，界面会如实显示不可用或失败原因。
 8. **托盘/翻译细节遗留**（review 复核标记的 Minor，均为后续小卡片）：工具提示打印的是原始 accelerator 字符串（如 `CommandOrControl+Shift+Space`）而非 `⌘⇧Space`；应用菜单没有 `role:'close'`，`Cmd+W` 不关窗；Windows 移植时托盘左击需恢复窗口（macOS 不适用）。
+9. **解码期术语偏置现状**（`asr-vocabulary-bias`）：`vocabulary.json` 的 `terms` 经 session 注入 `TranscribeOptions.vocabulary`，由 `src/main/asr/cli-runner.ts` 以单个 `--vocabulary` 参数传给 transcribe-cli；Qwen3-ASR 声明 `vocabularyBias: true` 所以生效，SenseVoice 与 fake 声明 `false`，术语被丢弃且结果带 `VOCABULARY_UNSUPPORTED`，转写文本不变。上限 32 条、含英文逗号的术语解析期丢弃并在设置回读里报数量；运行时因提示预算从尾部截断时，若 stderr 出现 `dropped N of M vocabulary terms` 则附 `VOCABULARY_TRUNCATED` 警告。术语不进后处理规则，不做拼音/同音/编辑距离改写。
 
 ### P2：未来硬化 / 产品规划
 

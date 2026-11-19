@@ -99,5 +99,7 @@ segment metadata through the transcript event to the copy panel.
   second lifecycle, but the rebuild is skipped while recording. The view marks
   that case `未生效` and names the mode still in use; nothing is silently
   promised.
-- **Panel noise.** A single-segment run deliberately carries no metadata, so
-  short dictation and one-shot results show no extra line.
+- **Panel noise.** Metadata appears only when at least two provider calls
+  succeeded. Short one-shot dictation therefore shows no extra line; a single
+  continuous utterance split for a provider limit is aggregated back into one
+  segment (`1 段 · 0:40`), which is the honest reading of "one long sentence".

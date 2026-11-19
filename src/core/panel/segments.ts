@@ -15,8 +15,9 @@ export function formatSegmentDuration(durationMs: number): string {
 
 /**
  * The panel's one-line segmentation summary, e.g. `3 段 · 0:12 / 0:18 / 0:09`.
- * Returns `undefined` when there is nothing to disclose, so the panel renders
- * no empty line for a one-shot or single-segment result.
+ * Returns `undefined` when there is nothing to disclose, so a one-shot result
+ * renders no empty line. A split continuous utterance still shows one
+ * aggregated entry (`1 段 · 0:40`), which is what the provider actually did.
  */
 export function formatSegmentLine(
   segments: readonly TranscriptSegmentMeta[] | undefined

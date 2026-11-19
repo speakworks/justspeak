@@ -78,7 +78,8 @@ segmenter's original VAD utterance, not by the provider's internal chunks: one
 entry per utterance, so a single continuous utterance split for a provider's
 per-call limit is one segment rather than several. Each element SHALL be
 `{ index, startMs, durationMs }`, where `index` is the segmenter's zero-based
-utterance index, `startMs` is that utterance's first chunk start relative to
+utterance index, `startMs` is the start of that utterance's first successful
+chunk relative to
 the capture, and `durationMs` is the sum of the utterance's successful chunk
 durations, both converted from the 16 kHz sample range and rounded to whole
 milliseconds. A failed chunk SHALL NOT contribute duration, and an utterance

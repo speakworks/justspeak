@@ -612,4 +612,72 @@ describe('auto segmentation mode', () => {
     expect(result.value.segments?.map((segment) => segment.index)).toEqual([0, 1])
     expect(result.value.segments).toHaveLength(2)
   })
+
+  it('counts only successful chunks toward an utterance duration', async () => {
+    let call = 0
+    const provider = {
+      id: 'auto-test',
+      capabilities: {
+        languages: ['zh'],
+        streaming: false,
+        punctuation: true,
+        itn: true,
+        timestamps: false,
+        vad: false,
+        vocabularyBias: false,
+        maxAudioMs: 30_000,
+        quantizations: ['Q8_0']
+      },
+      async prepare() {},
+      async dispose() {},
+      async health() {
+        return { status: 'ready' as const }
+      },
+      async transcribe(_input: AudioInput) {
+        call += 1
+        // Fail the second chunk of the first utterance. Its 30-second first
+        // chunk still succeeds, so the aggregated segment must report ~30 s,
+        // not the utterance's full ~40 s.
+        if (call === 2) {
+          return {
+            ok: false as const,
+            error: {
+              code: 'INFERENCE_FAILED' as const,
+              message: 'chunk failed',
+              retryable: false as const
+            }
+          }
+        }
+        return {
+          ok: true as const,
+          value: {
+            text: '好的',
+            language: 'zh',
+            latencyMs: 1,
+            modelId: 'auto-test',
+            runtimeId: 'auto-test',
+            warnings: []
+          }
+        }
+      }
+    }
+    const selected = createTranscriptionProvider(provider, 'auto')
+    const pcm = signalPcm([
+      { ms: 40_000, amplitude: SPEECH_B },
+      { ms: 1_000, amplitude: QUIET },
+      { ms: 40_000, amplitude: SPEECH_C }
+    ])
+
+    const result = await selected.transcribe(
+      { pcm, sampleRate: 16000, channels: 1, durationMs: 81_000 },
+      {}
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const durations = result.value.segments?.map((segment) => segment.durationMs) ?? []
+    expect(durations).toHaveLength(2)
+    expect(durations[0]).toBeLessThan(35_000)
+    expect(durations[1]).toBeGreaterThan(39_000)
+  })
 })

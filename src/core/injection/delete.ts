@@ -48,31 +48,41 @@ export interface CaretExpectation {
   caretAdvance: number
 }
 
-export type CaretRefusalReason = 'too-long' | 'caret-moved' | 'selection-active'
+export type CaretRefusalReason =
+  | 'too-long'
+  | 'caret-moved'
+  | 'selection-active'
+  | 'caret-unverified'
 
 export type CaretDecision =
   | {
       ok: true
       count: number
-      /** The verified caret location, or null on the conservative path. */
-      expectedCaret: number | null
-      conservative: boolean
-      /** Why the caret could not be verified; the caller logs this. */
-      note: string | null
+      /** The verified caret location. */
+      expectedCaret: number
     }
-  | { ok: false; reason: CaretRefusalReason; message: string }
+  | {
+      ok: false
+      reason: CaretRefusalReason
+      message: string
+      /** Why the caret could not be verified; the caller logs this. */
+      note?: string
+    }
 
 /**
  * Decide whether the caret still sits at the end of the text this app
  * inserted.
  *
  * Only a collapsed caret exactly at `P0 + advance` may delete the recorded
- * span. A moved caret or an active selection refuses: deleting anyway would
- * remove the user's own characters. When the insertion point or the current
- * selection is unreadable, the decision stays conservative — send at most the
- * recorded count, never more — and reports why so the caller can log it.
+ * span. The active-selection check runs first, before any unreadable-value
+ * branch: an insertion recorded without `P0` must still refuse to touch a
+ * selection the user has made, because one Backspace would delete all of it.
  *
- * The hard `MAX_UNDO_CHARS` cap applies first and is independent of the caret.
+ * A moved caret, an active selection, or an unreadable insertion point /
+ * current selection refuses and sends no Backspace. The refusal names which
+ * value was missing so the caller can log it.
+ *
+ * The hard `MAX_UNDO_CHARS` cap is checked before the caret.
  */
 export function evaluateUndoCaret(input: {
   expectation: CaretExpectation
@@ -89,31 +99,32 @@ export function evaluateUndoCaret(input: {
     }
   }
 
+  // Blocking order: a live selection is a refusal even when the insertion
+  // point was never recorded. Otherwise the conservative branches below would
+  // press Backspace into the selection and delete the user's own text.
+  if (input.current !== null && input.current.length !== 0) {
+    return {
+      ok: false,
+      reason: 'selection-active',
+      message: '当前有选区，未回退'
+    }
+  }
+
   if (insertionStart === null || selectionLengthBefore === null) {
     return {
-      ok: true,
-      count: insertedCount,
-      expectedCaret: null,
-      conservative: true,
-      note: '插入时未读到插入点，按保守策略回退'
+      ok: false,
+      reason: 'caret-unverified',
+      message: '无法确认插入位置，未回退',
+      note: '撤销被拒绝：插入时未读到插入点'
     }
   }
 
   if (input.current === null) {
     return {
-      ok: true,
-      count: insertedCount,
-      expectedCaret: null,
-      conservative: true,
-      note: '无法读取当前插入点，按保守策略回退'
-    }
-  }
-
-  if (input.current.length !== 0) {
-    return {
       ok: false,
-      reason: 'selection-active',
-      message: '当前有选区，未回退'
+      reason: 'caret-unverified',
+      message: '无法确认插入位置，未回退',
+      note: '撤销被拒绝：无法读取当前插入点'
     }
   }
 
@@ -126,16 +137,15 @@ export function evaluateUndoCaret(input: {
     return {
       ok: false,
       reason: 'caret-moved',
-      message: '插入点已改变，未回退'
+      message: '插入点已改变，未回退',
+      note: '撤销被拒绝：当前插入点与记录位置不一致'
     }
   }
 
   return {
     ok: true,
     count: insertedCount,
-    expectedCaret: expected,
-    conservative: false,
-    note: null
+    expectedCaret: expected
   }
 }
 
@@ -186,15 +196,28 @@ on run argv
         if expectedCaret is not "" then
           try
             set currentSelection to value of attribute "AXSelectedTextRange" of focusedElement
+          on error
+            return "MISMATCH|caret-unreadable"
+          end try
+          try
             set currentCaretLocation to (item 1 of currentSelection) as integer
             set currentCaretLength to (item 2 of currentSelection) as integer
           on error
-            return "MISMATCH|caret-unreadable"
+            try
+              set currentCaretLocation to (location of currentSelection) as integer
+              set currentCaretLength to (length of currentSelection) as integer
+            on error
+              return "MISMATCH|caret-unreadable"
+            end try
           end try
           if currentCaretLength is not 0 then return "MISMATCH|selection-active"
           if currentCaretLocation is not (expectedCaret as integer) then return "MISMATCH|caret-moved"
         end if
       end tell
+      -- Inside the loop the caret is expected to move back by one caret unit
+      -- per press. For a surrogate-pair grapheme macOS moves it by two, so the
+      -- check aborts as caret-moved-mid-delete after a partial deletion. That
+      -- is the safe direction: it refuses further keys instead of over-deleting.
       repeat with pressIndex from 1 to pressCount
         try
           set currentFrontProcess to first process whose frontmost is true
@@ -224,6 +247,24 @@ on run argv
               if currentIdent is missing value then set currentIdent to ""
             end if
             if currentIdent is not expectedIdentity then return "MISMATCH|identity-changed-mid-delete"
+            if expectedCaret is not "" then
+              set wantCaret to (expectedCaret as integer) - (pressIndex - 1)
+              try
+                set loopSelection to value of attribute "AXSelectedTextRange" of currentElement
+              on error
+                return "MISMATCH|caret-moved-mid-delete"
+              end try
+              try
+                set loopLocation to (item 1 of loopSelection) as integer
+              on error
+                try
+                  set loopLocation to (location of loopSelection) as integer
+                on error
+                  return "MISMATCH|caret-moved-mid-delete"
+                end try
+              end try
+              if loopLocation is not wantCaret then return "MISMATCH|caret-moved-mid-delete"
+            end if
           end tell
           key code 51
         on error
@@ -257,27 +298,39 @@ export function buildDeleteArgs(
     expected.role,
     expected.identity,
     String(presses),
-    // An empty value tells the script to skip the in-script caret check: that
-    // happens only on the conservative path, where the count is already the
-    // recorded maximum. Any other value pins the caret before the first key.
+    // A caller that has not verified a caret passes null, which tells the
+    // script to skip the in-script caret check. The undo guard now always
+    // verifies the caret (or refuses), so the empty value is only used by
+    // direct callers and tests.
     expectedCaret === null ? '' : String(expectedCaret)
   ]
 }
 
+/**
+ * The one fixed sentence for "the target changed before any key was pressed".
+ * Every pre-key target-change path uses it verbatim.
+ */
+export const TARGET_SWITCHED_MESSAGE = '目标已切走，未回退'
+
+/** The mid-delete variant: some keys may already have been pressed. */
+export const TARGET_SWITCHED_MID_DELETE_MESSAGE =
+  '删除过程中目标已切走，删除可能未完整完成'
+
 const MISMATCH_MESSAGE: Record<string, string> = {
-  'app-changed': '目标应用已改变',
-  'bundle-changed': '目标应用已改变',
-  'role-changed': '焦点已改变',
+  'app-changed': TARGET_SWITCHED_MESSAGE,
+  'bundle-changed': TARGET_SWITCHED_MESSAGE,
+  'role-changed': TARGET_SWITCHED_MESSAGE,
+  'identity-changed': TARGET_SWITCHED_MESSAGE,
+  'unverifiable-target': TARGET_SWITCHED_MESSAGE,
   'not-editable': '焦点不再可编辑',
-  'unverifiable-target': '无法确认原来的输入位置',
-  'identity-changed': '焦点已改变',
   'caret-moved': '插入点已改变，未回退',
   'selection-active': '当前有选区，未回退',
-  'caret-unreadable': '无法读取当前插入点，未回退',
-  'app-changed-mid-delete': '删除过程中目标应用已改变，删除可能未完整完成',
-  'bundle-changed-mid-delete': '删除过程中目标应用已改变，删除可能未完整完成',
-  'role-changed-mid-delete': '删除过程中焦点已改变，删除可能未完整完成',
-  'identity-changed-mid-delete': '删除过程中焦点已改变，删除可能未完整完成',
+  'caret-unreadable': '无法确认插入位置，未回退',
+  'app-changed-mid-delete': TARGET_SWITCHED_MID_DELETE_MESSAGE,
+  'bundle-changed-mid-delete': TARGET_SWITCHED_MID_DELETE_MESSAGE,
+  'role-changed-mid-delete': TARGET_SWITCHED_MID_DELETE_MESSAGE,
+  'identity-changed-mid-delete': TARGET_SWITCHED_MID_DELETE_MESSAGE,
+  'caret-moved-mid-delete': '删除过程中插入点已改变，删除可能未完整完成',
   'mid-delete-error': '删除过程中出错，删除可能未完整完成'
 }
 
@@ -294,8 +347,82 @@ const PRE_KEY_REFUSALS = new Set([
   'caret-unreadable'
 ])
 
+/** A pre-key refusal caused by the target app/focus no longer being ours. */
+const TARGET_SWITCH_REFUSALS = new Set([
+  'app-changed',
+  'bundle-changed',
+  'role-changed',
+  'identity-changed',
+  'unverifiable-target'
+])
+
+/** A mid-delete abort caused by the target app/focus changing under us. */
+const TARGET_SWITCH_MID_DELETE = new Set([
+  'app-changed-mid-delete',
+  'bundle-changed-mid-delete',
+  'role-changed-mid-delete',
+  'identity-changed-mid-delete'
+])
+
 export function isPreKeyRefusal(reason: string): boolean {
   return PRE_KEY_REFUSALS.has(reason)
+}
+
+export function isTargetSwitchRefusal(reason: string): boolean {
+  return TARGET_SWITCH_REFUSALS.has(reason)
+}
+
+export function isTargetSwitchMidDelete(reason: string): boolean {
+  return TARGET_SWITCH_MID_DELETE.has(reason)
+}
+
+/** The user-visible panel notice and returned message for a failed delete. */
+export interface DeletionFailureNotice {
+  /** True when keys may already have been pressed. */
+  partial: boolean
+  /** The exact panel notice. */
+  notice: string
+  /** The message returned to the session / IPC caller. */
+  message: string
+}
+
+/**
+ * One mapping for every deletion failure, so the target-switch sentence cannot
+ * drift between the undo path, the re-say path and the result panel. A target
+ * change before the first key is exactly 目标已切走，未回退; after a key it keeps
+ * the "possibly incomplete" meaning instead.
+ */
+export function describeDeletionFailure(outcome: {
+  reason: string
+  message: string
+}): DeletionFailureNotice {
+  const partial = !isPreKeyRefusal(outcome.reason)
+  if (partial) {
+    if (isTargetSwitchMidDelete(outcome.reason)) {
+      return {
+        partial: true,
+        notice: TARGET_SWITCHED_MID_DELETE_MESSAGE,
+        message: TARGET_SWITCHED_MID_DELETE_MESSAGE
+      }
+    }
+    return {
+      partial: true,
+      notice: `删除可能未完整完成：${outcome.message}。请手动检查目标应用；原文备份在这里。`,
+      message: `撤销可能未完整完成：${outcome.message}`
+    }
+  }
+  if (isTargetSwitchRefusal(outcome.reason)) {
+    return {
+      partial: false,
+      notice: TARGET_SWITCHED_MESSAGE,
+      message: TARGET_SWITCHED_MESSAGE
+    }
+  }
+  return {
+    partial: false,
+    notice: `${outcome.message}。未做自动删除；原文在这里，可复制。`,
+    message: `撤销未完成：${outcome.message}`
+  }
 }
 
 /** Map the script's one-line answer to a typed outcome. */

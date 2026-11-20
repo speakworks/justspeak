@@ -303,7 +303,7 @@ describe('the undo guard', () => {
     expect(decision).toMatchObject({ ok: false, reason: 'selection-active' })
   })
 
-  it('stays conservative, not silent, when the caret cannot be read', () => {
+  it('refuses instead of deleting when the caret cannot be read', () => {
     const decision = evaluateUndoGuard({
       record: record(),
       nowMs: 2_000,
@@ -312,10 +312,9 @@ describe('the undo guard', () => {
       target: { ...TARGET, selection: null }
     })
     expect(decision).toMatchObject({
-      ok: true,
-      count: 2,
-      conservative: true,
-      note: '无法读取当前插入点，按保守策略回退'
+      ok: false,
+      reason: 'caret-unverified',
+      message: '无法确认插入位置，未回退'
     })
   })
 
@@ -401,6 +400,14 @@ describe('re-say candidacy', () => {
     // An unknown grapheme count can never pass the guard either.
     expect(isReSayCandidate(record({ length: null }), 2_000, DEFAULT_UNDO_WINDOW_MS)).toBe(
       false
+    )
+    // A record above the fixed rollback cap is refused too, matching the
+    // undo-availability check.
+    expect(isReSayCandidate(record({ length: 501 }), 2_000, DEFAULT_UNDO_WINDOW_MS)).toBe(
+      false
+    )
+    expect(isReSayCandidate(record({ length: 500 }), 2_000, DEFAULT_UNDO_WINDOW_MS)).toBe(
+      true
     )
   })
 })

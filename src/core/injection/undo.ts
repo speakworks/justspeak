@@ -1,5 +1,9 @@
 import type { FocusTarget } from '../focus/editability'
-import { evaluateUndoCaret } from './delete'
+import { MAX_UNDO_CHARS, evaluateUndoCaret } from './delete'
+
+// The fixed target-switch sentence lives with the delete outcome mapping so
+// every path shares one string; re-exported here for the existing callers.
+export { TARGET_SWITCHED_MESSAGE } from './delete'
 
 /**
  * The correction path's pure rules.
@@ -52,7 +56,7 @@ export interface InjectionRecord {
   length: number | null
   /**
    * Caret location read before the paste. `null` when the probe could not read
-   * `AXSelectedTextRange`; the caret check then stays conservative.
+   * `AXSelectedTextRange`; the guard then refuses (caret-unverified).
    */
   insertionStart: number | null
   /**
@@ -75,26 +79,23 @@ export type UndoRefusalReason =
   | 'unverifiable-length'
   | 'caret-moved'
   | 'selection-active'
+  | 'caret-unverified'
   | 'too-long'
 
 export type UndoDecision =
   | {
       ok: true
       count: number
-      /** Verified caret location; null on the conservative path. */
-      expectedCaret?: number | null
-      conservative?: true
-      /** Conservative reason, for the caller's log. */
+      /** Verified caret location. */
+      expectedCaret: number
+    }
+  | {
+      ok: false
+      reason: UndoRefusalReason
+      message: string
+      /** Diagnostic detail, for the caller's log. */
       note?: string
     }
-  | { ok: false; reason: UndoRefusalReason; message: string }
-
-/**
- * The exact user-visible text when the target application switched away or
- * quit. It is deliberately identical for every entry point so the refusal
- * cannot be mistaken for a generic failure.
- */
-export const TARGET_SWITCHED_MESSAGE = '目标已切走，未回退'
 
 interface Segmenter {
   segment(input: string): Iterable<unknown>
@@ -191,10 +192,12 @@ export function isReSayCandidate(
   return (
     record !== undefined &&
     record.method === 'paste' &&
-    // An empty identity or an unknown grapheme count can never pass the guard,
-    // so offering re-say would only produce a guaranteed refusal.
+    // An empty identity, an unknown grapheme count, or a record above the hard
+    // rollback cap can never pass the guard, so offering re-say would only
+    // produce a guaranteed refusal.
     record.focusIdentity !== '' &&
     record.length !== null &&
+    record.length <= MAX_UNDO_CHARS &&
     undoWindowOpen(record, nowMs, windowMs)
   )
 }
@@ -347,7 +350,7 @@ export function evaluateUndoGuard(input: {
   }
   // The identity is the same field, but the user may still have typed or moved
   // the caret inside it. Only a collapsed caret at the end of our span may
-  // delete; anything else refuses (or stays conservative when unreadable).
+  // delete; a moved caret, an active selection, or an unreadable caret refuses.
   const caret = evaluateUndoCaret({
     expectation: {
       insertionStart: record.insertionStart,
@@ -358,15 +361,17 @@ export function evaluateUndoGuard(input: {
     current: target.selection
   })
   if (!caret.ok) {
-    return { ok: false, reason: caret.reason, message: caret.message }
+    return {
+      ok: false,
+      reason: caret.reason,
+      message: caret.message,
+      ...(caret.note === undefined ? {} : { note: caret.note })
+    }
   }
   return {
     ok: true,
     count: caret.count,
-    expectedCaret: caret.expectedCaret,
-    ...(caret.conservative
-      ? { conservative: true as const, ...(caret.note === null ? {} : { note: caret.note }) }
-      : {})
+    expectedCaret: caret.expectedCaret
   }
 }
 
@@ -389,6 +394,8 @@ export function undoRefusalTitle(reason: UndoRefusalReason): string {
       return '插入点已改变'
     case 'selection-active':
       return '当前有选区'
+    case 'caret-unverified':
+      return '无法确认插入位置'
     case 'too-long':
       return '超过回退上限'
     case 'no-record':

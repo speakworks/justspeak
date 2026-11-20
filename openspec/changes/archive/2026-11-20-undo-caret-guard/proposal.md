@@ -32,9 +32,10 @@ delete attempt.
   unconditional Backspace loop.
 - **A fixed 500-character cap.** `MAX_UNDO_CHARS = 500` is a hard constant, not
   a preference. A record longer than the cap is refused with a visible message.
-- **Unreadable values stay conservative.** When the selection range cannot be
-  read, the deletion keeps the existing behaviour (press at most `N`
-  Backspaces) and logs the reason. It never deletes more than `N`.
+- **Unreadable values refuse.** When the insertion-time caret or the current
+  selection cannot be read, no Backspace is sent: the action refuses with
+  `无法确认插入位置，未回退` and logs whether the insertion-time or current value
+  was missing. There is no "delete a few anyway" path.
 - **A switched or exited target is refused by name.** When the target process
   is gone or focus moved, no Backspace is sent and the result panel shows
   `目标已切走，未回退`.
@@ -64,7 +65,6 @@ delete attempt.
 - **A caret that legitimately moved but still points at our span.** The guard
   refuses rather than trying to prove ownership, per the frozen decision that
   only the inserted span may be removed.
-- **Conservative fallback can under-delete.** When the value is unreadable the
-  app presses `N` Backspaces from the current caret; if the user typed first,
-  the visible result may be wrong, but it never deletes more than `N` and the
-  reason is logged.
+- **Unreadable values refuse rather than guess.** When the value is unreadable
+  the app presses nothing; an under-delete is not offered as a fallback. The
+  user keeps the recorded text in the result panel and can repair manually.

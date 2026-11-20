@@ -21,8 +21,9 @@
       and the inserted grapheme count
 - [x] 3.2 `evaluateUndoCaret` approves only a collapsed caret at `P0 + A`;
       refuses a moved caret or an active selection
-- [x] 3.3 `MAX_UNDO_CHARS = 500` refuses longer records; unreadable values use
-      the conservative count with a logged reason
+- [x] 3.3 `MAX_UNDO_CHARS = 500` refuses longer records; an unreadable
+      insertion point or current caret refuses with `caret-unverified` and a
+      logged reason, and an active selection is checked first
 - [x] 3.4 `evaluateUndoGuard` threads the caret decision and the cap through
       the single guard
 

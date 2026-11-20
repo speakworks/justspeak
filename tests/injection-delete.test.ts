@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   DELETE_SCRIPT,
   MAX_UNDO_CHARS,
+  TARGET_SWITCHED_MESSAGE,
+  TARGET_SWITCHED_MID_DELETE_MESSAGE,
   buildDeleteArgs,
+  describeDeletionFailure,
   evaluateUndoCaret,
   isPreKeyRefusal,
+  isTargetSwitchMidDelete,
+  isTargetSwitchRefusal,
   parseDeleteResult
 } from '../src/core/injection/delete'
 
@@ -77,18 +82,27 @@ describe('atomic delete script arguments', () => {
     }
     expect(DELETE_SCRIPT.slice(firstPress)).toContain('key code 51')
   })
-  it('rechecks app, bundle, role and identity inside every key iteration', () => {
+  it('rechecks app, bundle, role, identity and caret inside every key iteration', () => {
     const loop = DELETE_SCRIPT.slice(DELETE_SCRIPT.indexOf('repeat with pressIndex'))
     for (const check of [
       'app-changed-mid-delete',
       'bundle-changed-mid-delete',
       'role-changed-mid-delete',
       'identity-changed-mid-delete',
+      'caret-moved-mid-delete',
       'mid-delete-error'
     ]) {
       expect(loop, check).toContain(check)
     }
     expect(loop).toContain('key code 51')
+  })
+
+  it('supports both AXSelectedTextRange shapes for the in-script caret', () => {
+    for (const shape of ['item 1 of currentSelection', 'location of currentSelection']) {
+      expect(DELETE_SCRIPT).toContain(shape)
+    }
+    expect(DELETE_SCRIPT).toContain('item 1 of loopSelection')
+    expect(DELETE_SCRIPT).toContain('location of loopSelection')
   })
 })
 
@@ -101,7 +115,7 @@ describe('atomic delete result', () => {
     expect(parseDeleteResult('MISMATCH|app-changed\n')).toMatchObject({
       ok: false,
       reason: 'app-changed',
-      message: '目标应用已改变'
+      message: '目标已切走，未回退'
     })
     expect(parseDeleteResult('MISMATCH|not-editable')).toMatchObject({
       ok: false,
@@ -115,6 +129,7 @@ describe('atomic delete result', () => {
       'role-changed-mid-delete',
       'identity-changed-mid-delete',
       'bundle-changed-mid-delete',
+      'caret-moved-mid-delete',
       'mid-delete-error'
     ]) {
       const outcome = parseDeleteResult(`MISMATCH|${reason}`)
@@ -142,8 +157,52 @@ describe('atomic delete result', () => {
     })
     expect(parseDeleteResult('MISMATCH|caret-unreadable')).toMatchObject({
       ok: false,
-      message: '无法读取当前插入点，未回退'
+      message: '无法确认插入位置，未回退'
     })
+  })
+
+  it('maps every pre-key target change to exactly 目标已切走，未回退', () => {
+    for (const reason of [
+      'app-changed',
+      'bundle-changed',
+      'role-changed',
+      'identity-changed',
+      'unverifiable-target'
+    ]) {
+      const outcome = parseDeleteResult(`MISMATCH|${reason}`)
+      expect(outcome.ok, reason).toBe(false)
+      if (outcome.ok) continue
+      expect(isTargetSwitchRefusal(reason), reason).toBe(true)
+      expect(outcome.message, reason).toBe(TARGET_SWITCHED_MESSAGE)
+      expect(describeDeletionFailure(outcome).notice, reason).toBe(
+        TARGET_SWITCHED_MESSAGE
+      )
+      expect(describeDeletionFailure(outcome).message, reason).toBe(
+        TARGET_SWITCHED_MESSAGE
+      )
+    }
+  })
+
+  it('keeps the mid-delete target-switch sentence and partial meaning', () => {
+    expect(TARGET_SWITCHED_MID_DELETE_MESSAGE).toBe(
+      '删除过程中目标已切走，删除可能未完整完成'
+    )
+    for (const reason of [
+      'app-changed-mid-delete',
+      'bundle-changed-mid-delete',
+      'role-changed-mid-delete',
+      'identity-changed-mid-delete'
+    ]) {
+      const outcome = parseDeleteResult(`MISMATCH|${reason}`)
+      expect(outcome.ok, reason).toBe(false)
+      if (outcome.ok) continue
+      expect(isTargetSwitchMidDelete(reason), reason).toBe(true)
+      expect(outcome.message, reason).toBe(TARGET_SWITCHED_MID_DELETE_MESSAGE)
+      const failure = describeDeletionFailure(outcome)
+      expect(failure.partial, reason).toBe(true)
+      expect(failure.notice, reason).toBe(TARGET_SWITCHED_MID_DELETE_MESSAGE)
+      expect(failure.message, reason).toBe(TARGET_SWITCHED_MID_DELETE_MESSAGE)
+    }
   })
 
   it('distinguishes pre-key aborts from a mid-delete abort', () => {
@@ -176,9 +235,7 @@ describe('the undo caret decision', () => {
     ).toEqual({
       ok: true,
       count: 4,
-      expectedCaret: 14,
-      conservative: false,
-      note: null
+      expectedCaret: 14
     })
   })
 
@@ -203,29 +260,44 @@ describe('the undo caret decision', () => {
     ).toMatchObject({ ok: false, reason: 'selection-active' })
   })
 
-  it('stays conservative and explains itself when the current caret is unreadable', () => {
+  it('refuses and sends no key when the current caret is unreadable', () => {
     expect(evaluateUndoCaret({ expectation: EXPECTATION, current: null })).toEqual({
-      ok: true,
-      count: 4,
-      expectedCaret: null,
-      conservative: true,
-      note: '无法读取当前插入点，按保守策略回退'
+      ok: false,
+      reason: 'caret-unverified',
+      message: '无法确认插入位置，未回退',
+      note: '撤销被拒绝：无法读取当前插入点'
     })
   })
 
-  it('stays conservative when the insertion point was never read', () => {
-    expect(
-      evaluateUndoCaret({
-        expectation: { ...EXPECTATION, insertionStart: null },
-        current: { location: 14, length: 0 }
-      })
-    ).toMatchObject({
-      ok: true,
-      count: 4,
-      expectedCaret: null,
-      conservative: true,
-      note: '插入时未读到插入点，按保守策略回退'
+  it('refuses and sends no key when the insertion point was never read', () => {
+    const decision = evaluateUndoCaret({
+      expectation: { ...EXPECTATION, insertionStart: null },
+      current: { location: 14, length: 0 }
     })
+    expect(decision).toEqual({
+      ok: false,
+      reason: 'caret-unverified',
+      message: '无法确认插入位置，未回退',
+      note: '撤销被拒绝：插入时未读到插入点'
+    })
+    // A refusal has no count, so no Backspace can be derived from it.
+    expect('count' in decision).toBe(false)
+  })
+
+  it('refuses an active selection before any unreadable-insertion shortcut', () => {
+    // Reproduction: insertionStart unknown + a 300-character selection. The
+    // old order returned a deletable decision and the first Backspace wiped the
+    // whole selection. Selection-active must win.
+    const decision = evaluateUndoCaret({
+      expectation: { ...EXPECTATION, insertionStart: null },
+      current: { location: 12, length: 300 }
+    })
+    expect(decision).toMatchObject({
+      ok: false,
+      reason: 'selection-active',
+      message: '当前有选区，未回退'
+    })
+    expect('count' in decision).toBe(false)
   })
 
   it('refuses any count above the fixed 500-character cap', () => {

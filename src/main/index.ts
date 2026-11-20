@@ -49,7 +49,13 @@ import {
   undoWindowOpen,
   type InjectionRecord
 } from '../core/injection/undo'
-import { MAX_UNDO_CHARS, isPreKeyRefusal } from '../core/injection/delete'
+import {
+  MAX_UNDO_CHARS,
+  describeDeletionFailure,
+  isPreKeyRefusal,
+  isTargetSwitchMidDelete,
+  isTargetSwitchRefusal
+} from '../core/injection/delete'
 import {
   PASTE_LOCK_BUSY_MESSAGE,
   PASTE_LOCK_BUSY_NOTICE,
@@ -626,12 +632,14 @@ async function performUndoLastInjection(): Promise<UndoResult> {
   }
 
   if (!decision.ok) {
-    // A switched or exited target gets one fixed user-visible wording; the
-    // guard's internal reason still names the panel title.
-    const notice =
-      decision.reason === 'app-changed' || decision.reason === 'focus-changed'
-        ? TARGET_SWITCHED_MESSAGE
-        : decision.message
+    // A guard-level target change gets the one fixed user-visible sentence.
+    // `unverifiable-target` also covers a probe that could not read the app.
+    const targetSwitched =
+      decision.reason === 'app-changed' ||
+      decision.reason === 'focus-changed' ||
+      decision.reason === 'unverifiable-target'
+    const notice = targetSwitched ? TARGET_SWITCHED_MESSAGE : decision.message
+    if (decision.note !== undefined) console.warn('[undo]', decision.note)
     if (record !== undefined) {
       showResultPanel(record.text, effectiveTheme(), {
         title: undoRefusalTitle(decision.reason),
@@ -641,12 +649,6 @@ async function performUndoLastInjection(): Promise<UndoResult> {
       })
     }
     return { ok: false, message: notice }
-  }
-
-  // The conservative path still deletes, but it could not prove the caret.
-  // Log why so an under-delete can be diagnosed from the diagnostics log.
-  if (decision.conservative === true && decision.note !== undefined) {
-    console.warn('[undo]', decision.note)
   }
 
   // The check and the acquisition are synchronous: a second caller that passed
@@ -677,7 +679,7 @@ async function performUndoLastInjection(): Promise<UndoResult> {
     const outcome = await deleteIfTargetMatches(
       deleteExpectation(consumed),
       decision.count,
-      decision.expectedCaret ?? null
+      decision.expectedCaret
     )
     if (!outcome.ok) {
       const preKey = isPreKeyRefusal(outcome.reason)
@@ -688,21 +690,14 @@ async function performUndoLastInjection(): Promise<UndoResult> {
         lastInjection = consumed
         notifyUndoChanged()
       }
-      const partial = !preKey
+      const failure = describeDeletionFailure(outcome)
       showResultPanel(consumed.text, effectiveTheme(), {
-        title: partial ? '撤销可能未完整完成' : '撤销未完成',
-        notice: partial
-          ? `删除可能未完整完成：${outcome.message}。请手动检查目标应用；原文备份在这里。`
-          : `${outcome.message}。未做自动删除；原文在这里，可复制。`,
+        title: failure.partial ? '撤销可能未完整完成' : '撤销未完成',
+        notice: failure.notice,
         ...(consumed.entryId === undefined ? {} : { entryId: consumed.entryId }),
         target: recordAsTarget(consumed)
       })
-      return {
-        ok: false,
-        message: partial
-          ? `撤销可能未完整完成：${outcome.message}`
-          : `撤销未完成：${outcome.message}`
-      }
+      return { ok: false, message: failure.message }
     }
     return { ok: true }
   } finally {
@@ -730,17 +725,16 @@ async function replaceTranscript(
   })
 
   if (!decision.ok) {
+    const targetSwitched =
+      decision.reason === 'app-changed' ||
+      decision.reason === 'focus-changed' ||
+      decision.reason === 'unverifiable-target'
+    if (decision.note !== undefined) console.warn('[re-say]', decision.note)
     return deliverReSayFallback(
       text,
       candidate,
-      `${undoRefusalTitle(decision.reason)}。`
+      targetSwitched ? `${TARGET_SWITCHED_MESSAGE}。` : `${undoRefusalTitle(decision.reason)}。`
     )
-  }
-
-  // Same conservative rule as B1: a caret we could not verify still deletes
-  // at most the recorded count, and the reason belongs in the log.
-  if (decision.conservative === true && decision.note !== undefined) {
-    console.warn('[re-say]', decision.note)
   }
 
   if (!undoLock.tryAcquire()) {
@@ -773,7 +767,7 @@ async function replaceTranscript(
     const deletion = await deleteIfTargetMatches(
       deleteExpectation(candidate),
       decision.count,
-      decision.expectedCaret ?? null
+      decision.expectedCaret
     )
     if (!deletion.ok) {
       const preKey = isPreKeyRefusal(deletion.reason)
@@ -783,17 +777,25 @@ async function replaceTranscript(
         lastInjection = candidate
         notifyUndoChanged()
       }
-      const partial = !preKey
-      showResultPanel(`${text}\n\n${candidate.text}`, effectiveTheme(), {
-        title: partial ? '旧文本删除未完成' : '旧文本未删除',
-        notice: partial
+      const failure = describeDeletionFailure(deletion)
+      const targetSwitched =
+        isTargetSwitchRefusal(deletion.reason) ||
+        isTargetSwitchMidDelete(deletion.reason)
+      const notice = targetSwitched
+        ? failure.notice
+        : failure.partial
           ? `删除可能未完整完成：${deletion.message}。未插入新文本；这里是新旧两段文本。`
           : `${deletion.message}。未插入新文本；这里是新旧两段文本。`
+      showResultPanel(`${text}\n\n${candidate.text}`, effectiveTheme(), {
+        title: failure.partial ? '旧文本删除未完成' : '旧文本未删除',
+        notice
       })
       throw new Error(
-        partial
-          ? `旧文本删除可能未完整完成：${deletion.message}`
-          : `旧文本未删除：${deletion.message}`
+        targetSwitched
+          ? failure.message
+          : failure.partial
+            ? `旧文本删除可能未完整完成：${deletion.message}`
+            : `旧文本未删除：${deletion.message}`
       )
     }
 

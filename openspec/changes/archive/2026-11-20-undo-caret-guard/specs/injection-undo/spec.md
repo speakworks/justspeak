@@ -52,13 +52,17 @@ Before any Backspace, the app SHALL re-read the target's current selection and
 SHALL send exactly `N` Backspaces only when the current selection length is 0
 and its location equals `P0 + A`, where `A` is the inserted text's advance in
 the target's caret units (UTF-16 code units on macOS, equal to `N` for text
-without surrogate pairs). A location that differs, a selection length greater
-than 0, or a target that cannot be re-read at decision time SHALL NOT send an
-unconditional loop: a moved caret or an active selection SHALL refuse with a
-visible message, and the recorded text SHALL remain available in the result
-panel. When `P0` or the current selection is unreadable, the app SHALL use the
-conservative path: send at most `N` Backspaces, never more, and log the reason
-it could not verify the caret.
+without surrogate pairs). The active-selection check SHALL run before any
+unreadable-value branch: when the current selection length is greater than 0
+the app SHALL refuse even if `P0` was never recorded.
+
+A location that differs, a selection length greater than 0, an unreadable
+current selection, or a missing `P0`/`S` SHALL send no Backspace at all and
+SHALL refuse with a visible message. There SHALL be no conservative
+"delete a few anyway" path. An unreadable caret SHALL be reported as
+`caret-unverified` with the message `无法确认插入位置，未回退`, and the app SHALL
+log whether the insertion-time value or the current value was missing. The
+recorded text SHALL remain available in the result panel.
 
 The rollback count SHALL be capped by the fixed constant
 `MAX_UNDO_CHARS = 500`. A record whose grapheme count exceeds the cap SHALL be
@@ -80,7 +84,7 @@ stored in or read from preferences, and SHALL NOT be configurable.
 
 #### Scenario: The user typed after the insertion
 
-- **WHEN** the current caret location is not `P0 + N` with a collapsed
+- **WHEN** the current caret location is not `P0 + A` with a collapsed
   selection
 - **THEN** no Backspace is sent
 - **AND** the user sees a refusal naming the changed insertion point
@@ -96,14 +100,23 @@ stored in or read from preferences, and SHALL NOT be configurable.
 
 - **WHEN** the target is still editable but its current selection cannot be
   read
-- **THEN** the app uses the conservative path and sends at most `N` Backspaces
-- **AND** it writes a log entry naming the unreadable selection as the reason
+- **THEN** no Backspace is sent
+- **AND** the refusal is `caret-unverified` with `无法确认插入位置，未回退`
+- **AND** a log entry names the unreadable current selection
 
 #### Scenario: The insertion point was unreadable at paste time
 
 - **WHEN** the record has `P0` equal to `null`
-- **THEN** the app uses the conservative path and sends at most `N` Backspaces
-- **AND** it writes a log entry naming the missing insertion point
+- **THEN** no Backspace is sent
+- **AND** the refusal is `caret-unverified` with `无法确认插入位置，未回退`
+- **AND** a log entry names the missing insertion point
+
+#### Scenario: A selection wins over an unreadable insertion point
+
+- **WHEN** the record has `P0` equal to `null` and the user has selected text
+  inside the field
+- **THEN** the refusal is `selection-active`, not `caret-unverified`
+- **AND** no Backspace is sent, so the selection cannot be wiped by one key
 
 #### Scenario: The record exceeds the fixed cap
 
@@ -122,28 +135,53 @@ stored in or read from preferences, and SHALL NOT be configurable.
 
 Before deleting, the app SHALL verify that the target process is still running
 and that the frontmost focused element is still the recorded target. When the
-process is gone, another app is frontmost, or the focused element changed, the
-app SHALL send no Backspace at all and SHALL show the user-visible text
-`目标已切走，未回退` in the result panel. A closed app SHALL NOT be launched to
-satisfy the check. There SHALL be no silent fallback that presses keys into the
-new target.
+process is gone, another app is frontmost, the focused element changed, or the
+probe cannot read the app at all, the app SHALL send no Backspace and SHALL
+show exactly `目标已切走，未回退` in the result panel. This sentence SHALL be
+identical for a probe-stage mismatch (`app-changed`, `focus-changed`,
+`unverifiable-target`) and for an atomic-script pre-key mismatch
+(`app-changed`, `bundle-changed`, `role-changed`, `identity-changed`). A closed
+app SHALL NOT be launched to satisfy the check. There SHALL be no silent
+fallback that presses keys into the new target. The re-say path SHALL use the
+same sentence when its target changed.
+
+When the change is detected inside the keystroke loop, at least one key may
+already have been pressed. That case SHALL keep the "possibly incomplete"
+meaning and SHALL use the exact text
+`删除过程中目标已切走，删除可能未完整完成` instead.
 
 #### Scenario: Another app became frontmost
 
 - **WHEN** the recorded app is no longer frontmost before undo starts
 - **THEN** no Backspace is sent
-- **AND** the result panel shows `目标已切走，未回退`
+- **AND** the result panel shows exactly `目标已切走，未回退`
 - **AND** the recorded text remains available for copying
 
 #### Scenario: The recorded app quit
 
 - **WHEN** the recorded app is no longer running
 - **THEN** no app is launched and no Backspace is sent
-- **AND** the result panel shows `目标已切走，未回退`
+- **AND** the result panel shows exactly `目标已切走，未回退`
 
 #### Scenario: Focus moved inside the same app
 
 - **WHEN** the same app is frontmost but the focused element no longer matches
   the record
 - **THEN** no Backspace is sent
-- **AND** the result panel shows `目标已切走，未回退`
+- **AND** the result panel shows exactly `目标已切走，未回退`
+
+#### Scenario: The atomic script refuses before the first key
+
+- **WHEN** the app, bundle, role or identity no longer matches inside the
+  delete script, before any key is pressed
+- **THEN** the script returns the corresponding pre-key mismatch
+- **AND** the result panel shows exactly `目标已切走，未回退`
+
+#### Scenario: The target changes after a key was pressed
+
+- **WHEN** the frontmost app, bundle, role, identity or caret changes inside the
+  key loop
+- **THEN** the script stops pressing keys
+- **AND** the result panel shows exactly `删除过程中目标已切走，删除可能未完整完成`
+  for a target change, or the matching caret sentence for a caret drift
+- **AND** the slot stays consumed and is not retried

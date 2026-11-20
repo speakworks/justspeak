@@ -214,10 +214,14 @@ on run argv
           if currentCaretLocation is not (expectedCaret as integer) then return "MISMATCH|caret-moved"
         end if
       end tell
-      -- Inside the loop the caret is expected to move back by one caret unit
-      -- per press. For a surrogate-pair grapheme macOS moves it by two, so the
-      -- check aborts as caret-moved-mid-delete after a partial deletion. That
-      -- is the safe direction: it refuses further keys instead of over-deleting.
+      -- The caret location is verified once, before the first key. Inside the
+      -- loop only the target identity and a collapsed selection are re-checked:
+      -- one Backspace removes one grapheme, whose UTF-16 width may be greater
+      -- than 1 (emoji, ZWJ sequences, flags), so a fixed "-1 per press" check
+      -- would abort a perfectly valid deletion. The residual race is a user
+      -- typing in the few-millisecond window between the pre-loop caret check
+      -- and the last key; the per-key identity and collapsed-selection checks
+      -- bound it but cannot eliminate it. Documented as a known limitation.
       repeat with pressIndex from 1 to pressCount
         try
           set currentFrontProcess to first process whose frontmost is true
@@ -248,22 +252,25 @@ on run argv
             end if
             if currentIdent is not expectedIdentity then return "MISMATCH|identity-changed-mid-delete"
             if expectedCaret is not "" then
-              set wantCaret to (expectedCaret as integer) - (pressIndex - 1)
+              -- Re-check only that the selection is still collapsed. The caret
+              -- location is intentionally not asserted here: a grapheme can
+              -- span several UTF-16 units. A non-zero length means the user
+              -- started selecting; one more key could delete that selection.
               try
                 set loopSelection to value of attribute "AXSelectedTextRange" of currentElement
               on error
                 return "MISMATCH|caret-moved-mid-delete"
               end try
               try
-                set loopLocation to (item 1 of loopSelection) as integer
+                set loopLength to (item 2 of loopSelection) as integer
               on error
                 try
-                  set loopLocation to (location of loopSelection) as integer
+                  set loopLength to (length of loopSelection) as integer
                 on error
                   return "MISMATCH|caret-moved-mid-delete"
                 end try
               end try
-              if loopLocation is not wantCaret then return "MISMATCH|caret-moved-mid-delete"
+              if loopLength is not 0 then return "MISMATCH|selection-active-mid-delete"
             end if
           end tell
           key code 51
@@ -331,6 +338,7 @@ const MISMATCH_MESSAGE: Record<string, string> = {
   'role-changed-mid-delete': TARGET_SWITCHED_MID_DELETE_MESSAGE,
   'identity-changed-mid-delete': TARGET_SWITCHED_MID_DELETE_MESSAGE,
   'caret-moved-mid-delete': '删除过程中插入点已改变，删除可能未完整完成',
+  'selection-active-mid-delete': '删除过程中出现选区，删除可能未完整完成',
   'mid-delete-error': '删除过程中出错，删除可能未完整完成'
 }
 
@@ -396,7 +404,14 @@ export function describeDeletionFailure(outcome: {
   reason: string
   message: string
 }): DeletionFailureNotice {
-  const partial = !isPreKeyRefusal(outcome.reason)
+  // `too-long` and `invalid-count` are decided in TypeScript before the
+  // script starts, so no key was pressed either. They must not claim a
+  // possibly incomplete deletion.
+  const pressedNothing =
+    isPreKeyRefusal(outcome.reason) ||
+    outcome.reason === 'too-long' ||
+    outcome.reason === 'invalid-count'
+  const partial = !pressedNothing
   if (partial) {
     if (isTargetSwitchMidDelete(outcome.reason)) {
       return {

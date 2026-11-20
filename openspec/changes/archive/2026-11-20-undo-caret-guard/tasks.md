@@ -32,8 +32,14 @@
 - [x] 4.1 `buildDeleteArgs` passes the expected caret; the atomic script
       re-reads the selection and aborts before any key on a mismatch
 - [x] 4.2 `deleteIfTargetMatches` refuses counts above `MAX_UNDO_CHARS`
-- [x] 4.3 Main logs the conservative reason and shows `目标已切走，未回退` when
+- [x] 4.3 Main logs the caret refusal reason and shows `目标已切走，未回退` when
       the target process or focus is gone
+- [x] 4.4 The key loop re-checks only target identity and a collapsed
+      selection; the caret location is verified once before the first key, with
+      the residual key-loop race documented
+- [x] 4.5 `too-long`/`invalid-count` never claim a partial deletion, re-say
+      target-switch notices are exactly `目标已切走，未回退`, and an empty
+      element identity gets `无法确认原来的目标，未回退`
 
 ## 5. Tests
 

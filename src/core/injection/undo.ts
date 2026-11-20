@@ -1,5 +1,5 @@
 import type { FocusTarget } from '../focus/editability'
-import { MAX_UNDO_CHARS, evaluateUndoCaret } from './delete'
+import { MAX_UNDO_CHARS, TARGET_SWITCHED_MESSAGE, evaluateUndoCaret } from './delete'
 
 // The fixed target-switch sentence lives with the delete outcome mapping so
 // every path shares one string; re-exported here for the existing callers.
@@ -76,6 +76,7 @@ export type UndoRefusalReason =
   | 'app-changed'
   | 'focus-changed'
   | 'unverifiable-target'
+  | 'unverifiable-identity'
   | 'unverifiable-length'
   | 'caret-moved'
   | 'selection-active'
@@ -218,6 +219,7 @@ export type IdentityRefusalReason =
   | 'app-changed'
   | 'focus-changed'
   | 'unverifiable-target'
+  | 'unverifiable-identity'
 
 export type IdentityDecision =
   | { ok: true }
@@ -261,10 +263,13 @@ export function compareTargetIdentity(
     return { ok: false, reason: 'focus-changed', message: '焦点已改变，未做自动删除。' }
   }
   if (expected.identity === '' || actual.identity === '') {
+    // The app, bundle and role all match: the target did not switch away, the
+    // element simply exposes neither AXIdentifier nor AXTitle. That is not a
+    // target change, so it gets its own wording instead of 目标已切走.
     return {
       ok: false,
-      reason: 'unverifiable-target',
-      message: '无法确认原来的输入位置，未做自动删除。'
+      reason: 'unverifiable-identity',
+      message: '无法确认原来的目标，未回退'
     }
   }
   if (expected.identity !== actual.identity) {
@@ -282,7 +287,27 @@ export function identityCopyMessage(reason: IdentityRefusalReason): string {
       return '焦点已改变'
     case 'unverifiable-target':
       return '无法确认原来的输入位置'
+    case 'unverifiable-identity':
+      return '无法确认原来的目标'
   }
+}
+
+/**
+ * The result-panel notice for a re-say guard refusal.
+ *
+ * A target switch must be exactly the fixed sentence; appending "new text
+ * inserted / old text here" would break that guarantee. The texts themselves
+ * are still in the panel body and title, so nothing is lost.
+ */
+export function reSayFallbackNotice(input: {
+  targetSwitched: boolean
+  reasonText: string
+  inserted: boolean
+}): string {
+  if (input.targetSwitched) return TARGET_SWITCHED_MESSAGE
+  return input.inserted
+    ? `${input.reasonText} 新文本已插入；上一条文本在这里，可复制。`
+    : `${input.reasonText} 新文本无法插入，两段文本都在这里。`
 }
 
 /**
@@ -388,6 +413,8 @@ export function undoRefusalTitle(reason: UndoRefusalReason): string {
       return '焦点已改变'
     case 'unverifiable-target':
       return '无法确认输入位置'
+    case 'unverifiable-identity':
+      return '无法确认原来的目标'
     case 'unverifiable-length':
       return '无法计算删除长度'
     case 'caret-moved':

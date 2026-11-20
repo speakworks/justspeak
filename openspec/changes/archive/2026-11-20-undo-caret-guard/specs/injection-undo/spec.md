@@ -145,10 +145,16 @@ app SHALL NOT be launched to satisfy the check. There SHALL be no silent
 fallback that presses keys into the new target. The re-say path SHALL use the
 same sentence when its target changed.
 
+When the app, bundle and role still match but the element identity is empty on
+either side, the target did not switch away. That refusal SHALL use
+`无法确认原来的目标，未回退` instead of the target-switch sentence.
+
 When the change is detected inside the keystroke loop, at least one key may
 already have been pressed. That case SHALL keep the "possibly incomplete"
 meaning and SHALL use the exact text
-`删除过程中目标已切走，删除可能未完整完成` instead.
+`删除过程中目标已切走，删除可能未完整完成` instead. A selection that becomes
+non-collapsed inside the loop SHALL abort with
+`删除过程中出现选区，删除可能未完整完成`.
 
 #### Scenario: Another app became frontmost
 
@@ -179,9 +185,32 @@ meaning and SHALL use the exact text
 
 #### Scenario: The target changes after a key was pressed
 
-- **WHEN** the frontmost app, bundle, role, identity or caret changes inside the
-  key loop
+- **WHEN** the frontmost app, bundle, role or identity changes inside the key
+  loop
 - **THEN** the script stops pressing keys
 - **AND** the result panel shows exactly `删除过程中目标已切走，删除可能未完整完成`
-  for a target change, or the matching caret sentence for a caret drift
 - **AND** the slot stays consumed and is not retried
+
+#### Scenario: A selection starts inside the key loop
+
+- **WHEN** the current selection length becomes greater than 0 inside the key
+  loop
+- **THEN** the script stops before the next key
+- **AND** the result panel keeps the "possibly incomplete" meaning with
+  `删除过程中出现选区，删除可能未完整完成`
+
+#### Scenario: The element identity is empty but the target matches
+
+- **WHEN** app, bundle and role match and only `AXIdentifier`/`AXTitle` is empty
+- **THEN** no Backspace is sent
+- **AND** the refusal is `无法确认原来的目标，未回退`, not `目标已切走，未回退`
+
+#### Known limitation: the caret is verified once, before the first key
+
+The caret location SHALL be verified before the first key, but SHALL NOT be
+asserted per key: one Backspace removes one grapheme, whose UTF-16 width may be
+greater than 1 (emoji, ZWJ sequences, flags), so a fixed step would abort a
+valid deletion. Inside the loop only the target identity and a collapsed
+selection are re-checked. A user typing inside the few-millisecond key loop is
+a documented residual race; the per-key identity and collapsed-selection checks
+bound it but do not eliminate it.

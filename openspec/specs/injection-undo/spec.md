@@ -128,7 +128,9 @@ still be made on a fresh probe after the app is frontmost.
 - **WHEN** either the record or the fresh probe has an empty element identity
   (the element exposes neither `AXIdentifier` nor `AXTitle`)
 - **THEN** no delete keystroke is sent
-- **AND** the refusal is labelled 无法确认输入位置
+- **AND** the refusal is labelled `无法确认原来的目标，未回退`, not `目标已切走，未回退`,
+  because the app, bundle and role still match and only the element identity is
+  missing
 - **AND** the recorded text is placed in the result panel for copying
 - **AND** the app does not fall back to matching on app and role alone
 
@@ -529,9 +531,26 @@ meaning and SHALL use the exact text
 
 #### Scenario: The target changes after a key was pressed
 
-- **WHEN** the frontmost app, bundle, role, identity or caret changes inside the
-  key loop
+- **WHEN** the frontmost app, bundle, role or identity changes inside the key
+  loop
 - **THEN** the script stops pressing keys
 - **AND** the result panel shows exactly `删除过程中目标已切走，删除可能未完整完成`
-  for a target change, or the matching caret sentence for a caret drift
 - **AND** the slot stays consumed and is not retried
+
+#### Scenario: A selection starts inside the key loop
+
+- **WHEN** the current selection length becomes greater than 0 inside the key
+  loop
+- **THEN** the script stops before the next key
+- **AND** the result panel keeps the "possibly incomplete" meaning with
+  `删除过程中出现选区，删除可能未完整完成`
+
+#### Known limitation: the caret is verified once, before the first key
+
+The caret location SHALL be verified before the first key, but SHALL NOT be
+asserted per key: one Backspace removes one grapheme, whose UTF-16 width may be
+greater than 1 (emoji, ZWJ sequences, flags), so a fixed step would abort a
+valid deletion. Inside the loop only the target identity and a collapsed
+selection are re-checked. A user typing inside the few-millisecond key loop is
+a documented residual race; the per-key identity and collapsed-selection checks
+bound it but do not eliminate it.

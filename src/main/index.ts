@@ -44,6 +44,7 @@ import {
   evaluateUndoGuard,
   identityCopyMessage,
   isReSayCandidate,
+  reSayFallbackNotice,
   undoRefusalTitle,
   undoWindowMs,
   undoWindowOpen,
@@ -568,22 +569,28 @@ async function deliverReSayFallback(
   text: string,
   candidate: InjectionRecord,
   reasonText: string,
-  ports: DeliveryPorts = deliveryPorts()
+  ports: DeliveryPorts = deliveryPorts(),
+  targetSwitched = false
 ): Promise<DeliveryTarget> {
   const outcome = await deliverTranscriptDetailed(text, ports)
   if (outcome.target === 'panel' && outcome.focus !== null) {
     setResultPanelTarget(outcome.focus)
   }
   lastDelivery = { target: outcome.target, focus: outcome.focus, atMs: Date.now() }
+  const notice = reSayFallbackNotice({
+    targetSwitched,
+    reasonText,
+    inserted: outcome.target !== 'panel'
+  })
   if (outcome.target === 'panel') {
     showResultPanel(`${text}\n\n${candidate.text}`, effectiveTheme(), {
       title: '旧文本未删除',
-      notice: `${reasonText} 新文本无法插入，两段文本都在这里。`
+      notice
     })
   } else {
     showResultPanel(candidate.text, effectiveTheme(), {
       title: '旧文本未删除',
-      notice: `${reasonText} 新文本已插入；上一条文本在这里，可复制。`,
+      notice,
       ...(candidate.entryId === undefined ? {} : { entryId: candidate.entryId }),
       target: recordAsTarget(candidate)
     })
@@ -733,7 +740,9 @@ async function replaceTranscript(
     return deliverReSayFallback(
       text,
       candidate,
-      targetSwitched ? `${TARGET_SWITCHED_MESSAGE}。` : `${undoRefusalTitle(decision.reason)}。`
+      targetSwitched ? `${TARGET_SWITCHED_MESSAGE}。` : `${undoRefusalTitle(decision.reason)}。`,
+      deliveryPorts(),
+      targetSwitched
     )
   }
 

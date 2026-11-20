@@ -82,7 +82,7 @@ describe('atomic delete script arguments', () => {
     }
     expect(DELETE_SCRIPT.slice(firstPress)).toContain('key code 51')
   })
-  it('rechecks app, bundle, role, identity and caret inside every key iteration', () => {
+  it('rechecks app, bundle, role, identity and a collapsed selection inside every key', () => {
     const loop = DELETE_SCRIPT.slice(DELETE_SCRIPT.indexOf('repeat with pressIndex'))
     for (const check of [
       'app-changed-mid-delete',
@@ -90,6 +90,7 @@ describe('atomic delete script arguments', () => {
       'role-changed-mid-delete',
       'identity-changed-mid-delete',
       'caret-moved-mid-delete',
+      'selection-active-mid-delete',
       'mid-delete-error'
     ]) {
       expect(loop, check).toContain(check)
@@ -97,12 +98,27 @@ describe('atomic delete script arguments', () => {
     expect(loop).toContain('key code 51')
   })
 
+  it('does not assume one UTF-16 unit per Backspace inside the loop', () => {
+    const loop = DELETE_SCRIPT.slice(DELETE_SCRIPT.indexOf('repeat with pressIndex'))
+    // Emoji/ZWJ/flags make one grapheme span several UTF-16 units, so a
+    // per-press position assertion would abort a valid deletion.
+    expect(loop).not.toContain('wantCaret')
+    expect(loop).not.toContain('loopLocation')
+    // The collapsed-selection check remains: a user starting a selection at
+    // the expected location must still abort before the next key.
+    expect(loop).toContain('loopLength is not 0')
+    expect(loop).toContain('selection-active-mid-delete')
+  })
+
   it('supports both AXSelectedTextRange shapes for the in-script caret', () => {
-    for (const shape of ['item 1 of currentSelection', 'location of currentSelection']) {
+    for (const shape of [
+      'item 1 of currentSelection',
+      'location of currentSelection',
+      'item 2 of loopSelection',
+      'length of loopSelection'
+    ]) {
       expect(DELETE_SCRIPT).toContain(shape)
     }
-    expect(DELETE_SCRIPT).toContain('item 1 of loopSelection')
-    expect(DELETE_SCRIPT).toContain('location of loopSelection')
   })
 })
 
@@ -130,6 +146,7 @@ describe('atomic delete result', () => {
       'identity-changed-mid-delete',
       'bundle-changed-mid-delete',
       'caret-moved-mid-delete',
+      'selection-active-mid-delete',
       'mid-delete-error'
     ]) {
       const outcome = parseDeleteResult(`MISMATCH|${reason}`)
@@ -144,6 +161,18 @@ describe('atomic delete result', () => {
     expect(parseDeleteResult('ERROR|boom')).toMatchObject({ ok: false, reason: 'error' })
     expect(parseDeleteResult('')).toMatchObject({ ok: false, reason: 'unknown' })
     expect(parseDeleteResult('garbage')).toMatchObject({ ok: false, reason: 'unknown' })
+  })
+
+  it('does not claim a partial deletion when no key could be pressed', () => {
+    for (const outcome of [
+      { reason: 'too-long', message: '需要回退 600 个字符，超过单次上限 500，未回退' },
+      { reason: 'invalid-count', message: '删除字符数无效，未做自动删除' }
+    ]) {
+      const failure = describeDeletionFailure(outcome)
+      expect(failure.partial, outcome.reason).toBe(false)
+      expect(failure.notice, outcome.reason).not.toContain('可能未完整完成')
+      expect(failure.message, outcome.reason).not.toContain('可能未完整完成')
+    }
   })
 
   it('maps the caret refusals to named user-facing text', () => {
@@ -202,6 +231,20 @@ describe('atomic delete result', () => {
       expect(failure.partial, reason).toBe(true)
       expect(failure.notice, reason).toBe(TARGET_SWITCHED_MID_DELETE_MESSAGE)
       expect(failure.message, reason).toBe(TARGET_SWITCHED_MID_DELETE_MESSAGE)
+    }
+  })
+
+  it('aborts a mid-delete selection without a target-switch sentence', () => {
+    const outcome = parseDeleteResult('MISMATCH|selection-active-mid-delete')
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: 'selection-active-mid-delete',
+      message: '删除过程中出现选区，删除可能未完整完成'
+    })
+    expect(isPreKeyRefusal('selection-active-mid-delete')).toBe(false)
+    expect(isTargetSwitchMidDelete('selection-active-mid-delete')).toBe(false)
+    if (!outcome.ok) {
+      expect(describeDeletionFailure(outcome).partial).toBe(true)
     }
   })
 
@@ -314,5 +357,22 @@ describe('the undo caret decision', () => {
         current: { location: 511, length: 0 }
       })
     ).toMatchObject({ ok: false, reason: 'too-long' })
+  })
+
+  it('accepts an emoji insertion whose caret advance exceeds its grapheme count', () => {
+    // "a😀" is 2 graphemes but 3 UTF-16 units. The pre-loop caret check must
+    // accept the recorded end and the deletion must press 2 Backspaces; the
+    // script no longer asserts a "-1 per press" position, so it cannot abort
+    // halfway through the emoji.
+    const decision = evaluateUndoCaret({
+      expectation: {
+        insertionStart: 0,
+        selectionLengthBefore: 0,
+        insertedCount: 2,
+        caretAdvance: 3
+      },
+      current: { location: 3, length: 0 }
+    })
+    expect(decision).toEqual({ ok: true, count: 2, expectedCaret: 3 })
   })
 })

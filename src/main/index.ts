@@ -790,11 +790,11 @@ async function replaceTranscript(
       const targetSwitched =
         isTargetSwitchRefusal(deletion.reason) ||
         isTargetSwitchMidDelete(deletion.reason)
+      // A partial-delete message already ends in "删除可能未完整完成"; only the
+      // follow-up context is appended here.
       const notice = targetSwitched
         ? failure.notice
-        : failure.partial
-          ? `删除可能未完整完成：${deletion.message}。未插入新文本；这里是新旧两段文本。`
-          : `${deletion.message}。未插入新文本；这里是新旧两段文本。`
+        : `${deletion.message}。未插入新文本；这里是新旧两段文本。`
       showResultPanel(`${text}\n\n${candidate.text}`, effectiveTheme(), {
         title: failure.partial ? '旧文本删除未完成' : '旧文本未删除',
         notice
@@ -803,7 +803,7 @@ async function replaceTranscript(
         targetSwitched
           ? failure.message
           : failure.partial
-            ? `旧文本删除可能未完整完成：${deletion.message}`
+            ? `旧文本${deletion.message}`
             : `旧文本未删除：${deletion.message}`
       )
     }

@@ -337,7 +337,9 @@ const MISMATCH_MESSAGE: Record<string, string> = {
   'bundle-changed-mid-delete': TARGET_SWITCHED_MID_DELETE_MESSAGE,
   'role-changed-mid-delete': TARGET_SWITCHED_MID_DELETE_MESSAGE,
   'identity-changed-mid-delete': TARGET_SWITCHED_MID_DELETE_MESSAGE,
-  'caret-moved-mid-delete': '删除过程中插入点已改变，删除可能未完整完成',
+  // The loop no longer asserts the caret location (a grapheme can span several
+  // UTF-16 units), so this reason now means the selection could not be read.
+  'caret-moved-mid-delete': '删除过程中无法读取插入点，删除可能未完整完成',
   'selection-active-mid-delete': '删除过程中出现选区，删除可能未完整完成',
   'mid-delete-error': '删除过程中出错，删除可能未完整完成'
 }
@@ -420,10 +422,13 @@ export function describeDeletionFailure(outcome: {
         message: TARGET_SWITCHED_MID_DELETE_MESSAGE
       }
     }
+    // Every mid-delete message already ends in "删除可能未完整完成", so the
+    // notice and the IPC message add the follow-up advice instead of repeating
+    // that phrase a second time.
     return {
       partial: true,
-      notice: `删除可能未完整完成：${outcome.message}。请手动检查目标应用；原文备份在这里。`,
-      message: `撤销可能未完整完成：${outcome.message}`
+      notice: `${outcome.message}。请手动检查目标应用；原文备份在这里。`,
+      message: outcome.message
     }
   }
   if (isTargetSwitchRefusal(outcome.reason)) {

@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
   buildDeleteArgs,
+  MAX_UNDO_CHARS,
   parseDeleteResult,
   type DeleteExpectation,
   type DeleteOutcome
@@ -127,16 +128,28 @@ export type DeleteExec = (
 export async function deleteIfTargetMatches(
   expected: DeleteExpectation,
   count: number,
+  expectedCaret: number | null = null,
   exec: DeleteExec = execFileAsync
 ): Promise<DeleteOutcome> {
   const presses = Math.floor(count)
   if (!Number.isFinite(presses) || presses <= 0) {
     return { ok: false, reason: 'invalid-count', message: '删除字符数无效，未做自动删除' }
   }
+  // Defence in depth: the core guard already refuses an over-cap record, but
+  // no caller may turn a mis-sized count into an unbounded Backspace loop.
+  if (presses > MAX_UNDO_CHARS) {
+    return {
+      ok: false,
+      reason: 'too-long',
+      message: `需要回退 ${presses} 个字符，超过单次上限 ${MAX_UNDO_CHARS}，未回退`
+    }
+  }
   try {
-    const { stdout } = await exec('osascript', buildDeleteArgs(expected, presses), {
-      timeout: 20_000
-    })
+    const { stdout } = await exec(
+      'osascript',
+      buildDeleteArgs(expected, presses, expectedCaret),
+      { timeout: 20_000 }
+    )
     return parseDeleteResult(String(stdout))
   } catch (error) {
     console.warn('[undo] delete script failed', error)

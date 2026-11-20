@@ -38,6 +38,7 @@ import { registerHotkeyWithFallback } from '../core/hotkey/registration'
 import type { HotkeySource } from '../core/hotkey/types'
 import {
   DEFAULT_UNDO_WINDOW_MINUTES,
+  TARGET_SWITCHED_MESSAGE,
   buildInjectionRecord,
   compareTargetIdentity,
   evaluateUndoGuard,
@@ -48,7 +49,7 @@ import {
   undoWindowOpen,
   type InjectionRecord
 } from '../core/injection/undo'
-import { isPreKeyRefusal } from '../core/injection/delete'
+import { MAX_UNDO_CHARS, isPreKeyRefusal } from '../core/injection/delete'
 import {
   PASTE_LOCK_BUSY_MESSAGE,
   PASTE_LOCK_BUSY_NOTICE,
@@ -505,9 +506,11 @@ function currentUndoState(): UndoStateView {
   const available =
     record.method === 'paste' &&
     // Without an identity or a known grapheme count the guard always refuses;
-    // do not advertise an action that cannot run.
+    // do not advertise an action that cannot run. The fixed cap is the same
+    // reason: an over-cap record can never be deleted automatically.
     record.focusIdentity !== '' &&
     record.length !== null &&
+    record.length <= MAX_UNDO_CHARS &&
     undoWindowOpen(record, Date.now(), windowMs)
   return {
     available,
@@ -534,7 +537,10 @@ function recordAsTarget(record: InjectionRecord): FocusTarget {
     appName: record.appName,
     bundleId: record.bundleId,
     role: record.focusRole,
-    identity: record.focusIdentity
+    identity: record.focusIdentity,
+    // This shape is only for the panel's identity comparison; the caret in the
+    // record belongs to insertion time, not to the current target.
+    selection: null
   }
 }
 
@@ -620,15 +626,27 @@ async function performUndoLastInjection(): Promise<UndoResult> {
   }
 
   if (!decision.ok) {
+    // A switched or exited target gets one fixed user-visible wording; the
+    // guard's internal reason still names the panel title.
+    const notice =
+      decision.reason === 'app-changed' || decision.reason === 'focus-changed'
+        ? TARGET_SWITCHED_MESSAGE
+        : decision.message
     if (record !== undefined) {
       showResultPanel(record.text, effectiveTheme(), {
         title: undoRefusalTitle(decision.reason),
-        notice: decision.message,
+        notice,
         ...(record.entryId === undefined ? {} : { entryId: record.entryId }),
         target: recordAsTarget(record)
       })
     }
-    return { ok: false, message: decision.message }
+    return { ok: false, message: notice }
+  }
+
+  // The conservative path still deletes, but it could not prove the caret.
+  // Log why so an under-delete can be diagnosed from the diagnostics log.
+  if (decision.conservative === true && decision.note !== undefined) {
+    console.warn('[undo]', decision.note)
   }
 
   // The check and the acquisition are synchronous: a second caller that passed
@@ -658,7 +676,8 @@ async function performUndoLastInjection(): Promise<UndoResult> {
 
     const outcome = await deleteIfTargetMatches(
       deleteExpectation(consumed),
-      decision.count
+      decision.count,
+      decision.expectedCaret ?? null
     )
     if (!outcome.ok) {
       const preKey = isPreKeyRefusal(outcome.reason)
@@ -718,6 +737,12 @@ async function replaceTranscript(
     )
   }
 
+  // Same conservative rule as B1: a caret we could not verify still deletes
+  // at most the recorded count, and the reason belongs in the log.
+  if (decision.conservative === true && decision.note !== undefined) {
+    console.warn('[re-say]', decision.note)
+  }
+
   if (!undoLock.tryAcquire()) {
     return deliverReSayFallback(
       text,
@@ -747,7 +772,8 @@ async function replaceTranscript(
 
     const deletion = await deleteIfTargetMatches(
       deleteExpectation(candidate),
-      decision.count
+      decision.count,
+      decision.expectedCaret ?? null
     )
     if (!deletion.ok) {
       const preKey = isPreKeyRefusal(deletion.reason)

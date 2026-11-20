@@ -29,16 +29,27 @@ describe('focus probe adapter', () => {
 })
 
 describe('extended focus target probe', () => {
-  it('returns the app and focused-element identity the undo guard needs', async () => {
+  it('returns the app, identity and real selection range the undo guard needs', async () => {
     const exec = vi.fn(async () => ({
-      stdout: 'Safari\ncom.apple.Safari\nAXTextArea\n1\nmain-editor\n'
+      stdout: 'Safari\ncom.apple.Safari\nAXTextArea\n1\n10\n0\nmain-editor\n'
     }))
     await expect(createFocusTargetProbe(exec)()).resolves.toEqual({
       kind: 'editable',
       appName: 'Safari',
       bundleId: 'com.apple.Safari',
       role: 'AXTextArea',
-      identity: 'main-editor'
+      identity: 'main-editor',
+      selection: { location: 10, length: 0 }
+    })
+  })
+
+  it('reports an unreadable selection instead of a fabricated zero', async () => {
+    const exec = vi.fn(async () => ({
+      stdout: 'Safari\ncom.apple.Safari\nAXTextArea\n1\nNONE\nNONE\nmain-editor\n'
+    }))
+    await expect(createFocusTargetProbe(exec)()).resolves.toMatchObject({
+      kind: 'editable',
+      selection: null
     })
   })
 
@@ -50,7 +61,8 @@ describe('extended focus target probe', () => {
       kind: 'unknown',
       appName: null,
       role: null,
-      identity: ''
+      identity: '',
+      selection: null
     })
   })
 })

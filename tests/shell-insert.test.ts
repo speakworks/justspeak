@@ -151,7 +151,8 @@ describe('delivering a transcript', () => {
       appName: 'Safari',
       bundleId: 'com.apple.Safari',
       role: 'AXTextArea',
-      identity: 'main-editor'
+      identity: 'main-editor',
+      selection: null
     }
     const outcome = await deliverTranscriptDetailed('你好', {
       appFocused: () => false,

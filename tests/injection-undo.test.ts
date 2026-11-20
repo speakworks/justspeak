@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { FocusTarget } from '../src/core/focus/editability'
 import {
   DEFAULT_UNDO_WINDOW_MS,
+  TARGET_SWITCHED_MESSAGE,
   buildInjectionRecord,
   compareTargetIdentity,
   evaluateUndoGuard,
@@ -21,7 +22,8 @@ const TARGET: FocusTarget = {
   appName: 'Safari',
   bundleId: 'com.apple.Safari',
   role: 'AXTextArea',
-  identity: 'main-editor'
+  identity: 'main-editor',
+  selection: { location: 12, length: 0 }
 }
 
 function record(overrides: Partial<InjectionRecord> = {}): InjectionRecord {
@@ -32,6 +34,8 @@ function record(overrides: Partial<InjectionRecord> = {}): InjectionRecord {
     focusIdentity: 'main-editor',
     text: '你好',
     length: 2,
+    insertionStart: 10,
+    selectionLengthBefore: 0,
     atMs: 1_000,
     method: 'paste',
     ...overrides
@@ -78,6 +82,8 @@ describe('building an injection record', () => {
       focusIdentity: 'main-editor',
       text: '你好',
       length: 2,
+      insertionStart: 12,
+      selectionLengthBefore: 0,
       atMs: 1_000,
       method: 'paste'
     })
@@ -130,7 +136,7 @@ describe('the undo guard', () => {
         appFocused: false,
         target: TARGET
       })
-    ).toEqual({ ok: true, count: 2 })
+    ).toEqual({ ok: true, count: 2, expectedCaret: 12 })
   })
 
   it('refuses when no record exists', () => {
@@ -269,6 +275,63 @@ describe('the undo guard', () => {
       target: TARGET
     })
     expect(decision).toMatchObject({ ok: false, reason: 'unverifiable-length' })
+  })
+
+  it('refuses when the caret moved after the insertion', () => {
+    const decision = evaluateUndoGuard({
+      record: record(),
+      nowMs: 2_000,
+      windowMs: DEFAULT_UNDO_WINDOW_MS,
+      appFocused: false,
+      target: { ...TARGET, selection: { location: 11, length: 0 } }
+    })
+    expect(decision).toMatchObject({
+      ok: false,
+      reason: 'caret-moved',
+      message: '插入点已改变，未回退'
+    })
+  })
+
+  it('refuses when the user has an active selection', () => {
+    const decision = evaluateUndoGuard({
+      record: record(),
+      nowMs: 2_000,
+      windowMs: DEFAULT_UNDO_WINDOW_MS,
+      appFocused: false,
+      target: { ...TARGET, selection: { location: 12, length: 2 } }
+    })
+    expect(decision).toMatchObject({ ok: false, reason: 'selection-active' })
+  })
+
+  it('stays conservative, not silent, when the caret cannot be read', () => {
+    const decision = evaluateUndoGuard({
+      record: record(),
+      nowMs: 2_000,
+      windowMs: DEFAULT_UNDO_WINDOW_MS,
+      appFocused: false,
+      target: { ...TARGET, selection: null }
+    })
+    expect(decision).toMatchObject({
+      ok: true,
+      count: 2,
+      conservative: true,
+      note: '无法读取当前插入点，按保守策略回退'
+    })
+  })
+
+  it('refuses a record above the fixed rollback cap', () => {
+    const decision = evaluateUndoGuard({
+      record: record({ length: 501 }),
+      nowMs: 2_000,
+      windowMs: DEFAULT_UNDO_WINDOW_MS,
+      appFocused: false,
+      target: TARGET
+    })
+    expect(decision).toMatchObject({ ok: false, reason: 'too-long' })
+  })
+
+  it('uses one fixed wording for a switched or exited target', () => {
+    expect(TARGET_SWITCHED_MESSAGE).toBe('目标已切走，未回退')
   })
 })
 

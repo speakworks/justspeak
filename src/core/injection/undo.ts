@@ -1,4 +1,5 @@
 import type { FocusTarget } from '../focus/editability'
+import { evaluateUndoCaret } from './delete'
 
 /**
  * The correction path's pure rules.
@@ -49,6 +50,17 @@ export interface InjectionRecord {
    * rather than guessing with code points.
    */
   length: number | null
+  /**
+   * Caret location read before the paste. `null` when the probe could not read
+   * `AXSelectedTextRange`; the caret check then stays conservative.
+   */
+  insertionStart: number | null
+  /**
+   * Selection length read before the paste. `null` when unreadable. A paste
+   * replaces any selection, so the caret lands at the insertion point plus the
+   * inserted advance; this value only proves the pre-paste range was read.
+   */
+  selectionLengthBefore: number | null
   atMs: number
   method: InjectionMethod
 }
@@ -61,10 +73,28 @@ export type UndoRefusalReason =
   | 'focus-changed'
   | 'unverifiable-target'
   | 'unverifiable-length'
+  | 'caret-moved'
+  | 'selection-active'
+  | 'too-long'
 
 export type UndoDecision =
-  | { ok: true; count: number }
+  | {
+      ok: true
+      count: number
+      /** Verified caret location; null on the conservative path. */
+      expectedCaret?: number | null
+      conservative?: true
+      /** Conservative reason, for the caller's log. */
+      note?: string
+    }
   | { ok: false; reason: UndoRefusalReason; message: string }
+
+/**
+ * The exact user-visible text when the target application switched away or
+ * quit. It is deliberately identical for every entry point so the refusal
+ * cannot be mistaken for a generic failure.
+ */
+export const TARGET_SWITCHED_MESSAGE = '目标已切走，未回退'
 
 interface Segmenter {
   segment(input: string): Iterable<unknown>
@@ -136,6 +166,8 @@ export function buildInjectionRecord(input: {
     focusIdentity: target.identity,
     text: input.text,
     length: graphemeLengthStrict(input.text),
+    insertionStart: target.selection?.location ?? null,
+    selectionLengthBefore: target.selection?.length ?? null,
     atMs: input.atMs,
     method: input.method
   }
@@ -313,7 +345,29 @@ export function evaluateUndoGuard(input: {
       message: '无法确认原来的输入位置，未做自动删除。'
     }
   }
-  return { ok: true, count: record.length }
+  // The identity is the same field, but the user may still have typed or moved
+  // the caret inside it. Only a collapsed caret at the end of our span may
+  // delete; anything else refuses (or stays conservative when unreadable).
+  const caret = evaluateUndoCaret({
+    expectation: {
+      insertionStart: record.insertionStart,
+      selectionLengthBefore: record.selectionLengthBefore,
+      insertedCount: record.length,
+      caretAdvance: record.text.length
+    },
+    current: target.selection
+  })
+  if (!caret.ok) {
+    return { ok: false, reason: caret.reason, message: caret.message }
+  }
+  return {
+    ok: true,
+    count: caret.count,
+    expectedCaret: caret.expectedCaret,
+    ...(caret.conservative
+      ? { conservative: true as const, ...(caret.note === null ? {} : { note: caret.note }) }
+      : {})
+  }
 }
 
 /** Panel title for a refusal, so the re-opened text explains itself. */
@@ -331,6 +385,12 @@ export function undoRefusalTitle(reason: UndoRefusalReason): string {
       return '无法确认输入位置'
     case 'unverifiable-length':
       return '无法计算删除长度'
+    case 'caret-moved':
+      return '插入点已改变'
+    case 'selection-active':
+      return '当前有选区'
+    case 'too-long':
+      return '超过回退上限'
     case 'no-record':
       return '没有可撤销的插入'
   }

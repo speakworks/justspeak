@@ -23,6 +23,122 @@ export type DeleteOutcome =
   | { ok: true }
   | { ok: false; reason: string; message: string }
 
+/**
+ * The hard ceiling for one guarded rollback. This is intentionally a constant,
+ * not a preference: a mis-sized record must never turn into an unbounded
+ * Backspace loop, and the value is not configurable by the user.
+ */
+export const MAX_UNDO_CHARS = 500
+
+/** The current AX selection, in the target's caret units. */
+export interface CaretReading {
+  location: number
+  length: number
+}
+
+/** What the insertion recorded about the span, before the paste happened. */
+export interface CaretExpectation {
+  /** `AXSelectedTextRange.location` read before the paste, or null. */
+  insertionStart: number | null
+  /** `AXSelectedTextRange.length` read before the paste, or null. */
+  selectionLengthBefore: number | null
+  /** Grapheme clusters inserted: the number of Backspaces to send. */
+  insertedCount: number
+  /** UTF-16 length of the inserted text: how far the caret advanced. */
+  caretAdvance: number
+}
+
+export type CaretRefusalReason = 'too-long' | 'caret-moved' | 'selection-active'
+
+export type CaretDecision =
+  | {
+      ok: true
+      count: number
+      /** The verified caret location, or null on the conservative path. */
+      expectedCaret: number | null
+      conservative: boolean
+      /** Why the caret could not be verified; the caller logs this. */
+      note: string | null
+    }
+  | { ok: false; reason: CaretRefusalReason; message: string }
+
+/**
+ * Decide whether the caret still sits at the end of the text this app
+ * inserted.
+ *
+ * Only a collapsed caret exactly at `P0 + advance` may delete the recorded
+ * span. A moved caret or an active selection refuses: deleting anyway would
+ * remove the user's own characters. When the insertion point or the current
+ * selection is unreadable, the decision stays conservative — send at most the
+ * recorded count, never more — and reports why so the caller can log it.
+ *
+ * The hard `MAX_UNDO_CHARS` cap applies first and is independent of the caret.
+ */
+export function evaluateUndoCaret(input: {
+  expectation: CaretExpectation
+  current: CaretReading | null
+}): CaretDecision {
+  const { insertionStart, selectionLengthBefore, insertedCount, caretAdvance } =
+    input.expectation
+
+  if (insertedCount > MAX_UNDO_CHARS) {
+    return {
+      ok: false,
+      reason: 'too-long',
+      message: `需要回退 ${insertedCount} 个字符，超过单次上限 ${MAX_UNDO_CHARS}，未回退`
+    }
+  }
+
+  if (insertionStart === null || selectionLengthBefore === null) {
+    return {
+      ok: true,
+      count: insertedCount,
+      expectedCaret: null,
+      conservative: true,
+      note: '插入时未读到插入点，按保守策略回退'
+    }
+  }
+
+  if (input.current === null) {
+    return {
+      ok: true,
+      count: insertedCount,
+      expectedCaret: null,
+      conservative: true,
+      note: '无法读取当前插入点，按保守策略回退'
+    }
+  }
+
+  if (input.current.length !== 0) {
+    return {
+      ok: false,
+      reason: 'selection-active',
+      message: '当前有选区，未回退'
+    }
+  }
+
+  // The caret advances by the text's UTF-16 length in the same units AX uses.
+  // A pre-existing selection is replaced, so the caret still lands at
+  // `insertionStart + caretAdvance`; `selectionLengthBefore` only proves the
+  // pre-paste range was readable.
+  const expected = insertionStart + caretAdvance
+  if (input.current.location !== expected) {
+    return {
+      ok: false,
+      reason: 'caret-moved',
+      message: '插入点已改变，未回退'
+    }
+  }
+
+  return {
+    ok: true,
+    count: insertedCount,
+    expectedCaret: expected,
+    conservative: false,
+    note: null
+  }
+}
+
 export const DELETE_SCRIPT = `
 on run argv
   set expectedApp to item 1 of argv
@@ -30,6 +146,7 @@ on run argv
   set expectedRole to item 3 of argv
   set expectedIdentity to item 4 of argv
   set pressCount to (item 5 of argv) as integer
+  set expectedCaret to item 6 of argv
   if expectedIdentity is "" then return "MISMATCH|unverifiable-target"
   tell application "System Events"
     try
@@ -66,6 +183,17 @@ on run argv
           if ident is missing value then set ident to ""
         end if
         if ident is not expectedIdentity then return "MISMATCH|identity-changed"
+        if expectedCaret is not "" then
+          try
+            set currentSelection to value of attribute "AXSelectedTextRange" of focusedElement
+            set currentCaretLocation to (item 1 of currentSelection) as integer
+            set currentCaretLength to (item 2 of currentSelection) as integer
+          on error
+            return "MISMATCH|caret-unreadable"
+          end try
+          if currentCaretLength is not 0 then return "MISMATCH|selection-active"
+          if currentCaretLocation is not (expectedCaret as integer) then return "MISMATCH|caret-moved"
+        end if
       end tell
       repeat with pressIndex from 1 to pressCount
         try
@@ -115,7 +243,11 @@ end run
  * interpolated into the script text, so an app name or identifier containing
  * quotes cannot change the program.
  */
-export function buildDeleteArgs(expected: DeleteExpectation, count: number): string[] {
+export function buildDeleteArgs(
+  expected: DeleteExpectation,
+  count: number,
+  expectedCaret: number | null = null
+): string[] {
   const presses = Math.floor(count)
   return [
     '-e',
@@ -124,7 +256,11 @@ export function buildDeleteArgs(expected: DeleteExpectation, count: number): str
     expected.bundleId ?? '',
     expected.role,
     expected.identity,
-    String(presses)
+    String(presses),
+    // An empty value tells the script to skip the in-script caret check: that
+    // happens only on the conservative path, where the count is already the
+    // recorded maximum. Any other value pins the caret before the first key.
+    expectedCaret === null ? '' : String(expectedCaret)
   ]
 }
 
@@ -135,6 +271,9 @@ const MISMATCH_MESSAGE: Record<string, string> = {
   'not-editable': '焦点不再可编辑',
   'unverifiable-target': '无法确认原来的输入位置',
   'identity-changed': '焦点已改变',
+  'caret-moved': '插入点已改变，未回退',
+  'selection-active': '当前有选区，未回退',
+  'caret-unreadable': '无法读取当前插入点，未回退',
   'app-changed-mid-delete': '删除过程中目标应用已改变，删除可能未完整完成',
   'bundle-changed-mid-delete': '删除过程中目标应用已改变，删除可能未完整完成',
   'role-changed-mid-delete': '删除过程中焦点已改变，删除可能未完整完成',
@@ -149,7 +288,10 @@ const PRE_KEY_REFUSALS = new Set([
   'role-changed',
   'not-editable',
   'unverifiable-target',
-  'identity-changed'
+  'identity-changed',
+  'caret-moved',
+  'selection-active',
+  'caret-unreadable'
 ])
 
 export function isPreKeyRefusal(reason: string): boolean {

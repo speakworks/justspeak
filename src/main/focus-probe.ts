@@ -15,11 +15,17 @@ const execFileAsync = promisify(execFile)
 const FOCUS_PROBE_TIMEOUT_MS = 10_000
 
 /**
- * Ask macOS Accessibility for the frontmost element's role and whether it has
- * a text selection range. System Events is already the injection path (paste),
- * so this adds no new permission; when the probe cannot answer, the caller
- * shows the copy panel instead of pasting. That fallback is intentional: a
- * wrong paste writes into a view that cannot be undone.
+ * Ask macOS Accessibility for the frontmost element's role, whether it has a
+ * text selection range, and — when it does — the real range `location` and
+ * `length`. System Events is already the injection path (paste), so this adds
+ * no new permission; when the probe cannot answer, the caller shows the copy
+ * panel instead of pasting. That fallback is intentional: a wrong paste writes
+ * into a view that cannot be undone.
+ *
+ * The selection value is emitted as `NONE` when it cannot be read or parsed.
+ * It is deliberately never written as `0`: location 0 is a valid caret
+ * position, and the undo guard must be able to tell "caret at the start" from
+ * "the value is unreadable".
  */
 const FOCUS_PROBE_SCRIPT = `
 tell application "System Events"
@@ -35,9 +41,23 @@ tell application "System Events"
       set focusedElement to value of attribute "AXFocusedUIElement"
       set focusedRole to role of focusedElement as text
       set hasRange to "0"
+      set selectionLocation to "NONE"
+      set selectionLength to "NONE"
       try
         set selectedRange to value of attribute "AXSelectedTextRange" of focusedElement
         set hasRange to "1"
+        try
+          set selectionLocation to (item 1 of selectedRange) as text
+          set selectionLength to (item 2 of selectedRange) as text
+        on error
+          try
+            set selectionLocation to (location of selectedRange) as text
+            set selectionLength to (length of selectedRange) as text
+          on error
+            set selectionLocation to "NONE"
+            set selectionLength to "NONE"
+          end try
+        end try
       end try
       set ident to ""
       try
@@ -50,7 +70,7 @@ tell application "System Events"
         end try
         if ident is missing value then set ident to ""
       end if
-      return frontName & linefeed & frontBundle & linefeed & focusedRole & linefeed & hasRange & linefeed & ident
+      return frontName & linefeed & frontBundle & linefeed & focusedRole & linefeed & hasRange & linefeed & selectionLocation & linefeed & selectionLength & linefeed & ident
     end tell
   on error
     return "UNKNOWN"
@@ -104,7 +124,8 @@ export function createFocusTargetProbe(
         appName: null,
         bundleId: null,
         role: null,
-        identity: ''
+        identity: '',
+        selection: null
       }
     }
   }

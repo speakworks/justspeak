@@ -49,7 +49,7 @@ JustSpeak 是一个 macOS 优先的本地听写应用：按全局快捷键说话
 - Electron 45 + React 19 + TypeScript + electron-vite 6 + Vitest + Playwright `_electron`
 - 产品逻辑在 `src/core`，Electron/Node 适配在 `src/main`，渲染进程是沙箱化的 React
 - 默认离线；云端 ASR/LLM 只能是显式 opt-in，不能静默回退
-- 当前版本 `0.1.0-demo.1`；v0.2 的 SpeakPilot 仍是规划
+- 当前版本 `0.1.0-demo.2`；v0.2 的 SpeakPilot 仍是规划
 
 ## 2. 当前已经能用的能力
 

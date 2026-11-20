@@ -38,17 +38,25 @@ import { registerHotkeyWithFallback } from '../core/hotkey/registration'
 import type { HotkeySource } from '../core/hotkey/types'
 import {
   DEFAULT_UNDO_WINDOW_MINUTES,
+  TARGET_SWITCHED_MESSAGE,
   buildInjectionRecord,
   compareTargetIdentity,
   evaluateUndoGuard,
   identityCopyMessage,
   isReSayCandidate,
+  reSayFallbackNotice,
   undoRefusalTitle,
   undoWindowMs,
   undoWindowOpen,
   type InjectionRecord
 } from '../core/injection/undo'
-import { isPreKeyRefusal } from '../core/injection/delete'
+import {
+  MAX_UNDO_CHARS,
+  describeDeletionFailure,
+  isPreKeyRefusal,
+  isTargetSwitchMidDelete,
+  isTargetSwitchRefusal
+} from '../core/injection/delete'
 import {
   PASTE_LOCK_BUSY_MESSAGE,
   PASTE_LOCK_BUSY_NOTICE,
@@ -505,9 +513,11 @@ function currentUndoState(): UndoStateView {
   const available =
     record.method === 'paste' &&
     // Without an identity or a known grapheme count the guard always refuses;
-    // do not advertise an action that cannot run.
+    // do not advertise an action that cannot run. The fixed cap is the same
+    // reason: an over-cap record can never be deleted automatically.
     record.focusIdentity !== '' &&
     record.length !== null &&
+    record.length <= MAX_UNDO_CHARS &&
     undoWindowOpen(record, Date.now(), windowMs)
   return {
     available,
@@ -534,7 +544,10 @@ function recordAsTarget(record: InjectionRecord): FocusTarget {
     appName: record.appName,
     bundleId: record.bundleId,
     role: record.focusRole,
-    identity: record.focusIdentity
+    identity: record.focusIdentity,
+    // This shape is only for the panel's identity comparison; the caret in the
+    // record belongs to insertion time, not to the current target.
+    selection: null
   }
 }
 
@@ -556,22 +569,28 @@ async function deliverReSayFallback(
   text: string,
   candidate: InjectionRecord,
   reasonText: string,
-  ports: DeliveryPorts = deliveryPorts()
+  ports: DeliveryPorts = deliveryPorts(),
+  targetSwitched = false
 ): Promise<DeliveryTarget> {
   const outcome = await deliverTranscriptDetailed(text, ports)
   if (outcome.target === 'panel' && outcome.focus !== null) {
     setResultPanelTarget(outcome.focus)
   }
   lastDelivery = { target: outcome.target, focus: outcome.focus, atMs: Date.now() }
+  const notice = reSayFallbackNotice({
+    targetSwitched,
+    reasonText,
+    inserted: outcome.target !== 'panel'
+  })
   if (outcome.target === 'panel') {
     showResultPanel(`${text}\n\n${candidate.text}`, effectiveTheme(), {
       title: '旧文本未删除',
-      notice: `${reasonText} 新文本无法插入，两段文本都在这里。`
+      notice
     })
   } else {
     showResultPanel(candidate.text, effectiveTheme(), {
       title: '旧文本未删除',
-      notice: `${reasonText} 新文本已插入；上一条文本在这里，可复制。`,
+      notice,
       ...(candidate.entryId === undefined ? {} : { entryId: candidate.entryId }),
       target: recordAsTarget(candidate)
     })
@@ -620,15 +639,23 @@ async function performUndoLastInjection(): Promise<UndoResult> {
   }
 
   if (!decision.ok) {
+    // A guard-level target change gets the one fixed user-visible sentence.
+    // `unverifiable-target` also covers a probe that could not read the app.
+    const targetSwitched =
+      decision.reason === 'app-changed' ||
+      decision.reason === 'focus-changed' ||
+      decision.reason === 'unverifiable-target'
+    const notice = targetSwitched ? TARGET_SWITCHED_MESSAGE : decision.message
+    if (decision.note !== undefined) console.warn('[undo]', decision.note)
     if (record !== undefined) {
       showResultPanel(record.text, effectiveTheme(), {
         title: undoRefusalTitle(decision.reason),
-        notice: decision.message,
+        notice,
         ...(record.entryId === undefined ? {} : { entryId: record.entryId }),
         target: recordAsTarget(record)
       })
     }
-    return { ok: false, message: decision.message }
+    return { ok: false, message: notice }
   }
 
   // The check and the acquisition are synchronous: a second caller that passed
@@ -658,7 +685,8 @@ async function performUndoLastInjection(): Promise<UndoResult> {
 
     const outcome = await deleteIfTargetMatches(
       deleteExpectation(consumed),
-      decision.count
+      decision.count,
+      decision.expectedCaret
     )
     if (!outcome.ok) {
       const preKey = isPreKeyRefusal(outcome.reason)
@@ -669,21 +697,14 @@ async function performUndoLastInjection(): Promise<UndoResult> {
         lastInjection = consumed
         notifyUndoChanged()
       }
-      const partial = !preKey
+      const failure = describeDeletionFailure(outcome)
       showResultPanel(consumed.text, effectiveTheme(), {
-        title: partial ? '撤销可能未完整完成' : '撤销未完成',
-        notice: partial
-          ? `删除可能未完整完成：${outcome.message}。请手动检查目标应用；原文备份在这里。`
-          : `${outcome.message}。未做自动删除；原文在这里，可复制。`,
+        title: failure.partial ? '撤销可能未完整完成' : '撤销未完成',
+        notice: failure.notice,
         ...(consumed.entryId === undefined ? {} : { entryId: consumed.entryId }),
         target: recordAsTarget(consumed)
       })
-      return {
-        ok: false,
-        message: partial
-          ? `撤销可能未完整完成：${outcome.message}`
-          : `撤销未完成：${outcome.message}`
-      }
+      return { ok: false, message: failure.message }
     }
     return { ok: true }
   } finally {
@@ -711,10 +732,17 @@ async function replaceTranscript(
   })
 
   if (!decision.ok) {
+    const targetSwitched =
+      decision.reason === 'app-changed' ||
+      decision.reason === 'focus-changed' ||
+      decision.reason === 'unverifiable-target'
+    if (decision.note !== undefined) console.warn('[re-say]', decision.note)
     return deliverReSayFallback(
       text,
       candidate,
-      `${undoRefusalTitle(decision.reason)}。`
+      targetSwitched ? `${TARGET_SWITCHED_MESSAGE}。` : `${undoRefusalTitle(decision.reason)}。`,
+      deliveryPorts(),
+      targetSwitched
     )
   }
 
@@ -747,7 +775,8 @@ async function replaceTranscript(
 
     const deletion = await deleteIfTargetMatches(
       deleteExpectation(candidate),
-      decision.count
+      decision.count,
+      decision.expectedCaret
     )
     if (!deletion.ok) {
       const preKey = isPreKeyRefusal(deletion.reason)
@@ -757,17 +786,25 @@ async function replaceTranscript(
         lastInjection = candidate
         notifyUndoChanged()
       }
-      const partial = !preKey
+      const failure = describeDeletionFailure(deletion)
+      const targetSwitched =
+        isTargetSwitchRefusal(deletion.reason) ||
+        isTargetSwitchMidDelete(deletion.reason)
+      // A partial-delete message already ends in "删除可能未完整完成"; only the
+      // follow-up context is appended here.
+      const notice = targetSwitched
+        ? failure.notice
+        : `${deletion.message}。未插入新文本；这里是新旧两段文本。`
       showResultPanel(`${text}\n\n${candidate.text}`, effectiveTheme(), {
-        title: partial ? '旧文本删除未完成' : '旧文本未删除',
-        notice: partial
-          ? `删除可能未完整完成：${deletion.message}。未插入新文本；这里是新旧两段文本。`
-          : `${deletion.message}。未插入新文本；这里是新旧两段文本。`
+        title: failure.partial ? '旧文本删除未完成' : '旧文本未删除',
+        notice
       })
       throw new Error(
-        partial
-          ? `旧文本删除可能未完整完成：${deletion.message}`
-          : `旧文本未删除：${deletion.message}`
+        targetSwitched
+          ? failure.message
+          : failure.partial
+            ? `旧文本${deletion.message}`
+            : `旧文本未删除：${deletion.message}`
       )
     }
 

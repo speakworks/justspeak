@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { FocusTarget } from '../src/core/focus/editability'
 import {
   DEFAULT_UNDO_WINDOW_MS,
+  TARGET_SWITCHED_MESSAGE,
   buildInjectionRecord,
   compareTargetIdentity,
   evaluateUndoGuard,
@@ -10,6 +11,7 @@ import {
   identityCopyMessage,
   isReSayCandidate,
   isValidUndoWindowMinutes,
+  reSayFallbackNotice,
   undoRefusalTitle,
   undoWindowMs,
   undoWindowOpen,
@@ -21,7 +23,8 @@ const TARGET: FocusTarget = {
   appName: 'Safari',
   bundleId: 'com.apple.Safari',
   role: 'AXTextArea',
-  identity: 'main-editor'
+  identity: 'main-editor',
+  selection: { location: 12, length: 0 }
 }
 
 function record(overrides: Partial<InjectionRecord> = {}): InjectionRecord {
@@ -32,6 +35,8 @@ function record(overrides: Partial<InjectionRecord> = {}): InjectionRecord {
     focusIdentity: 'main-editor',
     text: '你好',
     length: 2,
+    insertionStart: 10,
+    selectionLengthBefore: 0,
     atMs: 1_000,
     method: 'paste',
     ...overrides
@@ -78,6 +83,8 @@ describe('building an injection record', () => {
       focusIdentity: 'main-editor',
       text: '你好',
       length: 2,
+      insertionStart: 12,
+      selectionLengthBefore: 0,
       atMs: 1_000,
       method: 'paste'
     })
@@ -130,7 +137,7 @@ describe('the undo guard', () => {
         appFocused: false,
         target: TARGET
       })
-    ).toEqual({ ok: true, count: 2 })
+    ).toEqual({ ok: true, count: 2, expectedCaret: 12 })
   })
 
   it('refuses when no record exists', () => {
@@ -240,7 +247,8 @@ describe('the undo guard', () => {
       })
       expect(decision, `${recordIdentity || '∅'}/${targetIdentity || '∅'}`).toMatchObject({
         ok: false,
-        reason: 'unverifiable-target'
+        reason: 'unverifiable-identity',
+        message: '无法确认原来的目标，未回退'
       })
     }
   })
@@ -269,6 +277,62 @@ describe('the undo guard', () => {
       target: TARGET
     })
     expect(decision).toMatchObject({ ok: false, reason: 'unverifiable-length' })
+  })
+
+  it('refuses when the caret moved after the insertion', () => {
+    const decision = evaluateUndoGuard({
+      record: record(),
+      nowMs: 2_000,
+      windowMs: DEFAULT_UNDO_WINDOW_MS,
+      appFocused: false,
+      target: { ...TARGET, selection: { location: 11, length: 0 } }
+    })
+    expect(decision).toMatchObject({
+      ok: false,
+      reason: 'caret-moved',
+      message: '插入点已改变，未回退'
+    })
+  })
+
+  it('refuses when the user has an active selection', () => {
+    const decision = evaluateUndoGuard({
+      record: record(),
+      nowMs: 2_000,
+      windowMs: DEFAULT_UNDO_WINDOW_MS,
+      appFocused: false,
+      target: { ...TARGET, selection: { location: 12, length: 2 } }
+    })
+    expect(decision).toMatchObject({ ok: false, reason: 'selection-active' })
+  })
+
+  it('refuses instead of deleting when the caret cannot be read', () => {
+    const decision = evaluateUndoGuard({
+      record: record(),
+      nowMs: 2_000,
+      windowMs: DEFAULT_UNDO_WINDOW_MS,
+      appFocused: false,
+      target: { ...TARGET, selection: null }
+    })
+    expect(decision).toMatchObject({
+      ok: false,
+      reason: 'caret-unverified',
+      message: '无法确认插入位置，未回退'
+    })
+  })
+
+  it('refuses a record above the fixed rollback cap', () => {
+    const decision = evaluateUndoGuard({
+      record: record({ length: 501 }),
+      nowMs: 2_000,
+      windowMs: DEFAULT_UNDO_WINDOW_MS,
+      appFocused: false,
+      target: TARGET
+    })
+    expect(decision).toMatchObject({ ok: false, reason: 'too-long' })
+  })
+
+  it('uses one fixed wording for a switched or exited target', () => {
+    expect(TARGET_SWITCHED_MESSAGE).toBe('目标已切走，未回退')
   })
 })
 
@@ -304,11 +368,12 @@ describe('shared target identity', () => {
   it('refuses an empty or unknown identity', () => {
     expect(compareTargetIdentity({ ...EXPECTED, identity: '' }, EXPECTED)).toMatchObject({
       ok: false,
-      reason: 'unverifiable-target'
+      reason: 'unverifiable-identity',
+      message: '无法确认原来的目标，未回退'
     })
     expect(compareTargetIdentity(EXPECTED, { ...EXPECTED, identity: '' })).toMatchObject({
       ok: false,
-      reason: 'unverifiable-target'
+      reason: 'unverifiable-identity'
     })
     expect(compareTargetIdentity(EXPECTED, { ...EXPECTED, appName: null })).toMatchObject({
       ok: false,
@@ -320,6 +385,7 @@ describe('shared target identity', () => {
     expect(identityCopyMessage('app-changed')).not.toContain('删除')
     expect(identityCopyMessage('focus-changed')).not.toContain('删除')
     expect(identityCopyMessage('unverifiable-target')).not.toContain('删除')
+    expect(identityCopyMessage('unverifiable-identity')).not.toContain('删除')
   })
 })
 
@@ -338,6 +404,14 @@ describe('re-say candidacy', () => {
     // An unknown grapheme count can never pass the guard either.
     expect(isReSayCandidate(record({ length: null }), 2_000, DEFAULT_UNDO_WINDOW_MS)).toBe(
       false
+    )
+    // A record above the fixed rollback cap is refused too, matching the
+    // undo-availability check.
+    expect(isReSayCandidate(record({ length: 501 }), 2_000, DEFAULT_UNDO_WINDOW_MS)).toBe(
+      false
+    )
+    expect(isReSayCandidate(record({ length: 500 }), 2_000, DEFAULT_UNDO_WINDOW_MS)).toBe(
+      true
     )
   })
 })
@@ -358,6 +432,29 @@ describe('the undo window preference', () => {
   })
 })
 
+describe('re-say fallback notice', () => {
+  it('is exactly 目标已切走，未回退 for a switched target, inserted or not', () => {
+    for (const inserted of [true, false]) {
+      expect(
+        reSayFallbackNotice({
+          targetSwitched: true,
+          reasonText: '目标已切走，未回退。',
+          inserted
+        })
+      ).toBe(TARGET_SWITCHED_MESSAGE)
+    }
+  })
+
+  it('keeps the context for a non-target refusal', () => {
+    expect(
+      reSayFallbackNotice({ targetSwitched: false, reasonText: '插入点已改变。', inserted: true })
+    ).toBe('插入点已改变。 新文本已插入；上一条文本在这里，可复制。')
+    expect(
+      reSayFallbackNotice({ targetSwitched: false, reasonText: '插入点已改变。', inserted: false })
+    ).toBe('插入点已改变。 新文本无法插入，两段文本都在这里。')
+  })
+})
+
 describe('refusal titles', () => {
   it('names the reason instead of a generic failure', () => {
     expect(undoRefusalTitle('expired')).toContain('时间窗')
@@ -365,6 +462,7 @@ describe('refusal titles', () => {
     expect(undoRefusalTitle('focus-changed')).toContain('焦点')
     expect(undoRefusalTitle('nothing-inserted')).toContain('插入')
     expect(undoRefusalTitle('unverifiable-target')).toContain('输入位置')
+    expect(undoRefusalTitle('unverifiable-identity')).toContain('原来的目标')
     expect(undoRefusalTitle('unverifiable-length')).toContain('删除长度')
   })
 })

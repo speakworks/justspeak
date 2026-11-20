@@ -32,7 +32,21 @@ describe('focus probe parsing', () => {
 })
 
 describe('extended focus target parsing', () => {
-  it('reads the app, bundle, role and identity from the five-field probe', () => {
+  it('reads the selection range and identity from the seven-field probe', () => {
+    const target = parseFocusProbeTarget(
+      'Safari\ncom.apple.Safari\nAXTextArea\n1\n10\n2\nmain-editor\n'
+    )
+    expect(target).toEqual({
+      kind: 'editable',
+      appName: 'Safari',
+      bundleId: 'com.apple.Safari',
+      role: 'AXTextArea',
+      identity: 'main-editor',
+      selection: { location: 10, length: 2 }
+    })
+  })
+
+  it('keeps the legacy five-field answer but reports no selection', () => {
     const target = parseFocusProbeTarget(
       'Safari\ncom.apple.Safari\nAXTextArea\n1\nmain-editor\n'
     )
@@ -41,14 +55,27 @@ describe('extended focus target parsing', () => {
       appName: 'Safari',
       bundleId: 'com.apple.Safari',
       role: 'AXTextArea',
-      identity: 'main-editor'
+      identity: 'main-editor',
+      selection: null
     })
+  })
+
+  it('reports an unreadable selection as null, never as a fake zero', () => {
+    const target = parseFocusProbeTarget(
+      'Safari\ncom.apple.Safari\nAXTextArea\n1\nNONE\nNONE\nmain-editor\n'
+    )
+    expect(target).toMatchObject({ kind: 'editable', selection: null })
+    // A real caret at 0 still parses as a real value.
+    expect(
+      parseFocusProbeTarget('Safari\ncom.apple.Safari\nAXTextArea\n1\n0\n0\nmain-editor\n')
+        .selection
+    ).toEqual({ location: 0, length: 0 })
   })
 
   it('keeps a non-editable role non-editable', () => {
     expect(
       parseFocusProbeTarget('Finder\ncom.apple.finder\nAXGroup\n1\n\n')
-    ).toMatchObject({ kind: 'non-editable', appName: 'Finder', identity: '' })
+    ).toMatchObject({ kind: 'non-editable', appName: 'Finder', identity: '', selection: null })
   })
 
   it('accepts the legacy two-field answer without inventing an app identity', () => {
@@ -57,7 +84,8 @@ describe('extended focus target parsing', () => {
       appName: null,
       bundleId: null,
       role: 'AXTextArea',
-      identity: ''
+      identity: '',
+      selection: null
     })
   })
 
@@ -66,7 +94,8 @@ describe('extended focus target parsing', () => {
       expect(parseFocusProbeTarget(raw), raw).toMatchObject({
         kind: 'unknown',
         appName: null,
-        role: null
+        role: null,
+        selection: null
       })
     }
   })

@@ -1,7 +1,7 @@
 # JustSpeak 下一步产品规划
 
-- 日期：2026-11-18
-- 基线：`main` @ `23c6bdd`（工作树除既有未跟踪目录 `.explain-clearly/` 外干净）
+- 日期：2026-11-18（初版）；2026-11-21 刷新基线与数字
+- 基线：`main` @ `27ab53a`（PR #54 demo.3 合并后；工作树除既有未跟踪目录 `.explain-clearly/` 外干净）
 - 本文性质：只读盘点 + 候选方案。**不含实现代码**，也没有创建任何 OpenSpec 活跃 change。
 - 合规声明：本次未修改 `src/`、`.github/workflows/`、版本号；未打 tag、未触发 Release；
   未创建 `openspec/changes/<name>/`。下文出现的 change 名全部是草案，owner 拍板后才建目录。
@@ -10,33 +10,31 @@
 
 ## 0. 本次实测基线
 
-以下数字是 2026-11-18 在本机实跑得到的，不是引用旧文档：
+下表两列口径不同，不要混读：**2026-11-21 列取自 `main` CI（run `44808322516`，1m13s）**，
+不是本机复跑；2026-11-18 列是本机实跑。E2E 不进 CI，只保留 11-18 的本机结果。
 
-| 检查 | 结果 | 说明 |
+| 检查 | 2026-11-21（CI） | 2026-11-18（本机） |
 |---|---|---|
-| `pnpm test` | **900 passed / 4 skipped**（904） | 67 个文件通过、1 个文件跳过；耗时 10.07 s |
-| 跳过项 | 4 个，全部是 `tests/real-cli.smoke.test.ts` | 由 `JUSTSPEAK_REAL_ASR=1` 控制（`tests/real-cli.smoke.test.ts:16-17`、`:83`） |
-| `pnpm typecheck` | 通过（exit 0） | `package.json:14` |
-| `pnpm build` | 通过 | `package.json:12` |
-| `openspec validate --specs --strict` | **17/17 passed** | 实际输出 |
-| `openspec list` | `No active changes found` | 实际输出 |
-| `npx playwright test tests/e2e/undo.spec.ts` | **11/11 passed**，51.4 s | 隔离运行，假 `osascript` |
-| `npx playwright test` 第 1 次 | **30 passed / 1 failed**，1.7 m | 失败：`tests/e2e/undo.spec.ts:580`（`:606` 报 target closed，`:619` `undo.ok` 为 false） |
-| `npx playwright test` 第 2 次 | **31/31 passed**，1.6 m | 同一套件复跑 |
-| `pgrep` 检查 | 无遗留 Electron / Playwright 进程 | 测试窗口已随进程关闭 |
+| `pnpm test` | **1051 passed / 4 skipped**（1055 用例、70 文件） | 900 passed / 4 skipped（904，67 文件） |
+| 跳过项 | 4 个，全在 `tests/real-cli.smoke.test.ts` | 同左，由 `JUSTSPEAK_REAL_ASR=1` 控制 |
+| `openspec validate --specs --strict` | **20/20 passed** | 17/17 passed |
+| `pnpm typecheck` / `pnpm build` | 通过 | 通过（`package.json:12,14`） |
+| `openspec list` | `No active changes found` | 同左 |
+| `npx playwright test tests/e2e/undo.spec.ts` | 未跑（CI 不跑 E2E） | 11/11 passed，51.4 s |
+| `npx playwright test` 全量 | 未跑 | 第 1 次 30 passed / 1 failed，第 2 次 31/31 |
 
-**结论：**单元与契约层是绿的；Electron E2E 整体可用，但最新、最危险的撤销路径已经出现过一次
-全量运行失败。CI 不跑 E2E（`.github/workflows/ci.yml:10-12`），所以这条证据只在本地成立。
+**结论：**单元与契约层在 CI 上是绿的，且比 11-18 多了 151 个用例；倍增至 1055 用例、20 个 spec。
+Electron E2E 依然只在本机成立（CI 不跑），撤销路径的偶发红在 11-18 出现过一次。
 
 旧交接文档的数字已经落后于现实，引用时必须校正：
 
-| 项目 | `docs/AI-HANDOFF.md` 写的 | 本次实测 |
+| 项目 | `docs/AI-HANDOFF.md` 旧版写的 | 2026-11-21 实测 |
 |---|---|---|
-| `main` | `9fe4809`（`docs/AI-HANDOFF.md:4`） | `23c6bdd` |
-| `pnpm test` | 774 passed / 4 skipped（`docs/AI-HANDOFF.md:31`） | 900 passed / 4 skipped |
-| `openspec validate` | 14/14（`docs/AI-HANDOFF.md:34`） | 17/17 |
-| 权威 spec 数 | 15 个（`docs/AI-HANDOFF.md:101`） | 17 个目录（`openspec/specs/`） |
-| 最近交付表 | 最新到 PR #39（`docs/AI-HANDOFF.md:70-82`） | 已合并到 #46（`5e419cc`） |
+| `main` | `23c6bdd` | `27ab53a` |
+| `pnpm test` | 939 passed / 4 skipped | 1051 passed / 4 skipped |
+| `openspec validate` | 19/19 | 20/20 |
+| 权威 spec 数 | 20 个目录（`openspec/specs/`） | 20 个目录 |
+| 最近交付 | 最新到 PR #53（SpeakPilot 文档） | 已合并到 PR #54（demo.3 撤销光标守卫） |
 
 ---
 

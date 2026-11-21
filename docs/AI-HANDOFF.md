@@ -1,8 +1,9 @@
 # AI 交接说明
 
-- 交接日期：2026-11-19
-- 当前 `main`：`23c6bdd`（release 幂等创建已合并；上一轮是 #46 撤销/重说/面板重插）
-- 当前 active OpenSpec change：无（`os-level-verification` 已随 PR 归档）
+- 交接日期：2026-11-19（2026-11-21 刷新基线与版本状态）
+- 当前 `main`：`27ab53a`（PR #54 demo.3 撤销光标守卫已合并；再往前 #53 SpeakPilot 文档入库、#46 撤销/重说/面板重插）
+- 当前 active OpenSpec change：无（`os-level-verification`、`undo-caret-guard` 等均已随 PR 归档）
+- 版本状态：`package.json` 仍为 `0.1.0-demo.2`；demo.3 只合并进 `main`，**尚未发版**
 - 目的：让接手的 AI 在最少上下文下安全地继续工作，而不是重新摸索一遍
 
 > 先读 [AGENTS.md](../AGENTS.md)，再读这份。`AGENTS.md` 是工作流门控的第一来源；
@@ -23,15 +24,15 @@ openspec validate --specs --strict
 openspec list
 ```
 
-预期结果（2026-11-19 的基线）：
+预期结果（2026-11-21 基线，取自 `main` CI run `44808322516`）：
 
 | 检查 | 预期 |
 |---|---|
 | `pnpm typecheck` | 通过 |
-| `pnpm test` | 939 passed / 4 skipped |
+| `pnpm test` | 1051 passed / 4 skipped（1055 用例、70 个文件；跳过项全在 `tests/real-cli.smoke.test.ts`） |
 | `pnpm build` | 通过 |
 | `pnpm exec playwright test` | 31 passed / 5 skipped（真机检查默认跳过；E2E 偶发红未消除，见 `docs/REAL-MACHINE-CHECKS.md`） |
-| `openspec validate --specs --strict` | 19/19 |
+| `openspec validate --specs --strict` | 20/20 |
 | `openspec list` | `No active changes found` |
 
 要真正听写，还需要本机模型：
@@ -49,7 +50,7 @@ JustSpeak 是一个 macOS 优先的本地听写应用：按全局快捷键说话
 - Electron 45 + React 19 + TypeScript + electron-vite 6 + Vitest + Playwright `_electron`
 - 产品逻辑在 `src/core`，Electron/Node 适配在 `src/main`，渲染进程是沙箱化的 React
 - 默认离线；云端 ASR/LLM 只能是显式 opt-in，不能静默回退
-- 当前版本 `0.1.0-demo.2`；v0.2 的 SpeakPilot 仍是规划
+- 当前版本 `0.1.0-demo.2`（demo.3 的代码已在 `main`，尚未 bump、未发版）；v0.2 的 SpeakPilot 已有完整规划文档 `docs/SPEAKPILOT-CONVERSATION-PLAN.md`，实现未开工
 
 ## 2. 当前已经能用的能力
 

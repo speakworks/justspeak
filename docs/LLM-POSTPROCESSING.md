@@ -6,6 +6,15 @@
   (it mangled ellipses and reported speech); correction markers now pass through
   unchanged until an opt-in LLM stage exists. See
   [ASR-CORRECTION-RESEARCH.md](ASR-CORRECTION-RESEARCH.md).
+- Update 2026-11-21 (**implementation status changed, read before quoting the
+  "deferred" rows below**): the local LLM runtime now ships. `resources/llm/` bundles
+  `llama-server` plus the ggml/llama dylibs (Metal backend), and `src/main/llm/sidecar.ts`
+  starts it as a child process, pins a per-start API key, and calls the OpenAI-compatible
+  `${baseUrl}/v1/chat/completions`. The model itself is **not inside the installer**:
+  `resources/llm-models.json` lists Qwen2.5-1.5B-Instruct Q4_K_M (1,117,320,736 bytes,
+  Apache-2.0, sha256-pinned) and it is downloaded and verified on demand. So "local LLM
+  cleanup is deferred / no model is bundled" is no longer true of the runtime, and only
+  partly true of the model.
 - Date: 2026-10-26
 - Decision owner: FD2008
 - Depends on: [ADR-0001](ADR-0001-core-boundary.md),
@@ -441,8 +450,11 @@ benchmark. Keep the personal dictionary local.**
 
 - **Provider and model selection** among OpenAI, Anthropic, Gemini, and DeepSeek is
   pending the benchmark; this document does not freeze one.
-- **Local LLM cleanup** is a later phase. It reuses the same provider interface and
-  validator; it is not a v0.1 dependency, and no model is bundled.
+- **Local LLM cleanup** was a later phase in this card; as of 2026-11-21 the shared
+  runtime and sidecar exist and a model is downloaded on demand (see the update note at
+  the top). What is still deferred is **using** it as the default cleanup path: the
+  provider interface and validator are shared, and no cleanup behaviour has been
+  benchmarked on it.
 - **Selected-text-aware cleanup** is a later opt-in after the injection and privacy
   tests pass.
 - **Automatic dictionary learning** from user corrections is out of scope; it needs a
@@ -471,7 +483,8 @@ benchmark. Keep the personal dictionary local.**
 | Exact prompt text and guard thresholds | **Pending** | Tune on the benchmark; draft above |
 | Tone-by-app default on/off | **Pending** | Baseline neutral; benchmark tone suitability |
 | Selected-text support | **Pending** | Off by default; later opt-in |
-| Local LLM runtime and model | **Deferred** | After v0.1 benchmark; no bundled model |
+| Local LLM runtime and model | **Runtime shipped; model on demand** | `llama-server` + Metal libs bundled in `resources/llm/`; Qwen2.5-1.5B Q4_K_M (1.12 GB) downloaded and sha256-verified on demand, not inside the installer |
+| Local LLM cleanup as the default path | **Deferred** | Unbenchmarked; see the 2026-11-21 update note |
 | Cloud cleanup on by default | **Rejected** | Violates local-first and privacy stance |
 | Sending raw window/screen contents | **Rejected** | Contradicts v0.1 focus-context policy [E2-4] |
 | LLM as the only cleanup path | **Rejected** | No offline/privacy fallback; unbounded failure mode |

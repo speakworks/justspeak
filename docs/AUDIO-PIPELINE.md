@@ -2,6 +2,13 @@
 
 - Status: Accepted design baseline. Capture path is frozen; VAD model parameters, frame
   size, and chunk size remain provisional until the audio spike/benchmark.
+- Implementation status (2026-11-21): what actually ships is an **energy-based RMS VAD**,
+  not Silero. `src/core/audio/vad.ts` implements a normalized-RMS detector with
+  hysteresis (start 0.02, end 0.008), 320-sample (20 ms) frames at 16 kHz, 250 ms
+  minimum speech, 400 ms minimum silence, 200 ms padding, and explicitly states it is
+  "not a streaming endpointing signal". The Silero and WebRTC options below are still
+  **candidate designs**, kept for the future streaming work; read them as proposals, not
+  as what the app runs.
 - Date: 2026-10-26
 - Decision owner: FD2008
 - Depends on: [ADR-0001: Core boundary](ADR-0001-core-boundary.md),
@@ -216,6 +223,11 @@ native-module ABI constraints; ADR-0002 already rejected a native addon via FFI 
 crash and ABI reasons.
 
 ### VAD options
+
+> **Not what ships today.** The implemented detector is the energy RMS one in
+> `src/core/audio/vad.ts` (see the implementation-status note at the top of this
+> document). The options below are candidates for the streaming work, not the current
+> runtime behaviour — do not cite them as "the app uses Silero/WebRTC VAD".
 
 VAD answers two questions: when does speech start, and when has it ended. In v0.1 it is
 used for endpointing and for rejecting silent/short utterances, not for live captions.

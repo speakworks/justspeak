@@ -34,13 +34,15 @@ pnpm bench:latency:template            # 只生成 Phase 0 空白表
 - `bench/results/<YYYY-MM-DD>-<commit>-<route>.json`：无内容，只有时间戳、样本毫秒数与设备名（不存任何转写文本）
 - `bench/reports/<YYYY-MM-DD>-speakpilot-latency-<route>.md`：本次读数 + 与 §f.1 预算的对照 + §f.3 降级规则的机械判读
 - `bench/reports/phase0-latency-template.md`：20 段 × 3 路由 = 60 行空白表，等真人素材
+- `bench/results/phase0-collect-<date>-<commit>.json` 与 `bench/reports/<date>-phase0-latency.md`：采集脚本（`pnpm bench:latency:collect`）产出的整表与覆盖统计
 
 ## 素材到位后怎么用
 
-1. 采集 20 段双人对话（只本机处理，不外传），每条路由各跑一遍：`pnpm bench:latency --route wired`。
-2. 把每段的端点、ASR 终稿、LLM 首 token、TTS 首包填进 `phase0-latency-template.md`。
-3. M1（停说→出声）必须用真人听感校准后填，不能用三段相加冒充。
-4. 结果回填到 `SPEAKPILOT-CONVERSATION-PLAN.md` §f.1，并在 §g Phase 0 的验收行打勾——**只有到这一步，才允许谈进入 P1**。
+1. 素材放 `bench/fixtures/recordings/rec-01.wav … rec-20.wav`（命名、音频格式、20 段分流见 `docs/PHASE0-RECORDING-PROTOCOL.md`，该目录已 gitignore）。
+2. `pnpm bench:latency:collect --list` 先验命名与缺段，再按路由各跑一次：`pnpm bench:latency:collect --routes built-in` / `wired` / `bluetooth`。
+3. 脚本自动填 20 × 3 表、算端点、跑 §f.3 六条判定；`blocked` 的格子等前提修好再跑，不许手填估计值。
+4. M1（停说→出声）必须用真人听感校准后填，不能用四列 P50 相加冒充。
+5. 结果回填到 `SPEAKPILOT-CONVERSATION-PLAN.md` §f.1，并在 §g Phase 0 的验收行打勾——**只有到这一步，才允许谈进入 P1**。
 
 ## 边界
 

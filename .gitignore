@@ -59,3 +59,7 @@ resources/llm.tmp-*
 
 # Real LLM evaluation recordings and reports (never commit audio)
 bench/llm/
+
+# Phase 0 recordings (personal voice data; never commit wav files)
+bench/fixtures/recordings/*.wav
+bench/fixtures/recordings/*.m4a

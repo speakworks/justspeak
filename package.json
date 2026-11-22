@@ -17,6 +17,8 @@
     "e2e": "pnpm build && playwright test",
     "setup:asr": "node scripts/setup-asr.mjs",
     "bench:asr": "tsx scripts/bench-asr.ts",
+    "bench:latency": "tsx scripts/bench-speakpilot-latency.ts",
+    "bench:latency:template": "tsx scripts/bench-speakpilot-latency.ts --template-only",
     "notices": "node scripts/notices.mjs",
     "icons": "node scripts/build-icons.mjs",
     "package:runtime": "tsx scripts/package-runtime.ts",

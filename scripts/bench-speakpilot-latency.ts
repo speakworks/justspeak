@@ -18,12 +18,13 @@
  * this file is the gate in §g ("no measured table, no P1") which a fabricated
  * number would silently defeat.
  */
-import { spawn, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Qwen3AsrProvider } from '../src/core/asr/qwen3-provider'
+import type { ChatMessage } from '../src/core/conversation/ports'
 import {
   findModel,
   findRuntime,
@@ -33,11 +34,11 @@ import {
 import { TranscribeCliRunner } from '../src/main/asr/cli-runner'
 import { LlamaSidecar } from '../src/main/llm/sidecar'
 import { decodeWavFile } from './bench-real'
+import { measureFirstToken, measureNonStreaming } from './latency-harness/llm'
 import {
   type RouteInfo,
   type SegmentResult,
   blockedSegment,
-  classifyTtsProbe,
   buildReport,
   measuredSegment,
   renderMarkdown,
@@ -45,6 +46,7 @@ import {
   skippedSegment
 } from './latency-harness/report'
 import { summarize } from './latency-harness/stats'
+import { electronBinaryPath, probeTts } from './latency-harness/tts'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -165,98 +167,10 @@ async function runAsrSegment(): Promise<SegmentResult> {
   }
 }
 
-interface StreamMeasurement {
-  firstTokenMs: number
-  totalMs: number
-  tokens: number
-}
-
-const BENCH_PROMPT = [
+const BENCH_PROMPT: ChatMessage[] = [
   { role: 'system', content: '你是听写后处理助手，只做最小幅度的书面化改写。' },
   { role: 'user', content: '嗯就是那个我们明天上午十点开会记得带上笔记本' }
 ]
-
-async function streamFirstToken(
-  baseUrl: string,
-  apiKey: string,
-  maxTokens: number
-): Promise<StreamMeasurement | null> {
-  const started = performance.now()
-  const response = await fetch(`${baseUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'local',
-      temperature: 0,
-      max_tokens: maxTokens,
-      stream: true,
-      messages: BENCH_PROMPT
-    })
-  })
-  if (!response.ok) throw new Error(`HTTP ${response.status}`)
-  if (!response.body) throw new Error('no response body')
-  const contentType = response.headers.get('content-type') ?? ''
-  if (!contentType.includes('text/event-stream')) {
-    await response.text()
-    return null
-  }
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let firstTokenMs: number | null = null
-  let tokens = 0
-  try {
-    while (true) {
-      const chunk = await reader.read()
-      if (chunk.done) break
-      buffer += decoder.decode(chunk.value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() ?? ''
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed.startsWith('data:')) continue
-        const payload = trimmed.slice(5).trim()
-        if (payload === '[DONE]') continue
-        try {
-          const parsed = JSON.parse(payload) as {
-            choices?: Array<{ delta?: { content?: unknown } }>
-          }
-          const content = parsed.choices?.[0]?.delta?.content
-          if (typeof content === 'string' && content.length > 0) {
-            tokens += 1
-            if (firstTokenMs === null) firstTokenMs = performance.now() - started
-          }
-        } catch {
-          // keep-alive comments and partial frames are not errors
-        }
-      }
-    }
-  } finally {
-    reader.cancel().catch(() => undefined)
-  }
-  if (firstTokenMs === null) return null
-  const totalMs = performance.now() - started
-  console.log(`[latency] llm stream: first ${Math.round(firstTokenMs)} ms · ${tokens} token(s) · total ${Math.round(totalMs)} ms`)
-  return { firstTokenMs, totalMs, tokens }
-}
-
-async function streamNonStreaming(baseUrl: string, apiKey: string): Promise<number> {
-  const started = performance.now()
-  const response = await fetch(`${baseUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'local',
-      temperature: 0,
-      max_tokens: 32,
-      stream: false,
-      messages: BENCH_PROMPT
-    })
-  })
-  if (!response.ok) throw new Error(`HTTP ${response.status}`)
-  await response.json()
-  return performance.now() - started
-}
 
 async function runLlmSegment(): Promise<SegmentResult> {
   if (!SEGMENTS.includes('llm')) return skippedSegment('未在本轮请求中（--segments 未包含 llm）')
@@ -293,7 +207,7 @@ async function runLlmSegment(): Promise<SegmentResult> {
     const samples: number[] = []
     let streamingUnsupported = false
     for (let run = 1; run <= LLM_SAMPLES; run += 1) {
-      const measured = await streamFirstToken(baseUrl, apiKey, 24)
+      const measured = await measureFirstToken({ baseUrl, apiKey, messages: BENCH_PROMPT, maxTokens: 24 })
       if (measured === null) {
         streamingUnsupported = true
         break
@@ -301,7 +215,7 @@ async function runLlmSegment(): Promise<SegmentResult> {
       samples.push(measured.firstTokenMs)
     }
     if (streamingUnsupported || samples.length === 0) {
-      const nonStreamMs = await streamNonStreaming(baseUrl, apiKey)
+      const nonStreamMs = await measureNonStreaming({ baseUrl, apiKey, messages: BENCH_PROMPT, maxTokens: 32 })
       return blockedSegment(
         'stream 未验证：llama-server 未返回 SSE（application/json），首 token 无法测量；已记录非流式完成时间供参考',
         {
@@ -312,7 +226,7 @@ async function runLlmSegment(): Promise<SegmentResult> {
         }
       )
     }
-    const nonStreamMs = await streamNonStreaming(baseUrl, apiKey)
+    const nonStreamMs = await measureNonStreaming({ baseUrl, apiKey, messages: BENCH_PROMPT, maxTokens: 32 })
     return measuredSegment(
       samples.map((value) => Math.round(value)),
       {
@@ -335,69 +249,15 @@ async function runLlmSegment(): Promise<SegmentResult> {
   }
 }
 
-interface ProbePayload {
-  startMs: number[]
-  boundaryMs: number[]
-  errors: string[]
-  voiceCount: number
-  zhVoice: string | null
-}
-
-function electronBinary(): string {
-  return path.join(ROOT, 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron')
-}
-
 async function runTtsSegment(): Promise<SegmentResult> {
   if (!SEGMENTS.includes('tts')) return skippedSegment('未在本轮请求中（--segments 未包含 tts）')
-  const binary = electronBinary()
-  if (!existsSync(binary)) {
-    return blockedSegment(`Electron 不存在：${path.relative(ROOT, binary)}（需先安装依赖）`)
-  }
-  const probePath = path.join(ROOT, 'scripts/latency-harness/tts-probe.cjs')
-  const payload = await new Promise<ProbePayload | { spawnError: string }>((resolve) => {
-    const child = spawn(binary, [probePath, '--samples', String(TTS_SAMPLES), '--text', TTS_TEXT], {
-      cwd: ROOT,
-      env: { ...process.env },
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-    let stdout = ''
-    let stderr = ''
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL')
-      resolve({ spawnError: `探针超过 180 秒未返回（请求 ${TTS_SAMPLES} 次）` })
-    }, 180_000)
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString()
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString()
-    })
-    child.on('error', (error) => {
-      clearTimeout(timer)
-      resolve({ spawnError: error.message })
-    })
-    child.on('close', () => {
-      clearTimeout(timer)
-      const line = stdout.split('\n').find((value) => value.startsWith('HARNESS_RESULT '))
-      if (!line) {
-        resolve({ spawnError: `探针无结果输出：${stderr.slice(-300) || '(空)'}` })
-        return
-      }
-      try {
-        resolve(JSON.parse(line.slice('HARNESS_RESULT '.length)) as ProbePayload)
-      } catch (error) {
-        resolve({ spawnError: `探针结果无法解析：${error instanceof Error ? error.message : String(error)}` })
-      }
-    })
+  return probeTts({
+    electronBinary: electronBinaryPath(ROOT),
+    probePath: path.join(ROOT, 'scripts/latency-harness/tts-probe.cjs'),
+    cwd: ROOT,
+    samples: TTS_SAMPLES,
+    text: TTS_TEXT
   })
-
-  if ('spawnError' in payload) return blockedSegment(payload.spawnError)
-  if (payload.startMs.length < TTS_SAMPLES && payload.startMs.length > 0) {
-    console.warn(
-      `[latency] tts: 只拿到 ${payload.startMs.length}/${TTS_SAMPLES} 次样本，按实际次数统计`
-    )
-  }
-  return classifyTtsProbe(payload, TTS_SAMPLES)
 }
 
 async function main(): Promise<void> {

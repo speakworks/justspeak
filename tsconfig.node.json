@@ -23,6 +23,8 @@
     "scripts/llm-eval-smoke.ts",
     "electron.vite.config.ts",
     "vitest.config.ts",
-    "playwright.config.ts"
+    "playwright.config.ts",
+    "scripts/bench-speakpilot-latency.ts",
+    "scripts/collect-phase0-latency.ts"
   ]
 }
